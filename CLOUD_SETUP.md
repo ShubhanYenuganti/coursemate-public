@@ -151,33 +151,68 @@ SESSION_SECRET=<the-64-char-hex-string>
 
 ---
 
-## 4. Vercel Deployment
+## 4. Vercel Deployment (Import from GitHub)
 
-### Install Vercel CLI
+Follow these steps exactly to deploy OneShotCourseMate from your GitHub repository.
+
+### 4.1 Sign in to Vercel
+1. Open [vercel.com](https://vercel.com) in your browser.
+2. Click **Sign Up** or **Log In**.
+3. Choose **Continue with GitHub** and authorize Vercel to access your GitHub account.
+
+### 4.2 Import the project
+1. From the Vercel dashboard, click **Add New…** → **Project**.
+2. You should see **Import Git Repository**. If your GitHub account is not connected, click **Connect Git Repository** and connect **GitHub**, then return to **Add New…** → **Project**.
+3. Find your repository (e.g. `ShubhanYenuganti/coursemate-public`) in the list and click **Import** next to it.
+
+### 4.3 Configure the project
+1. **Project Name**: Leave the default (e.g. `coursemate-public`) or set a name like `coursemate`. This will be used in the URL: `https://<project-name>.vercel.app`.
+2. **Root Directory**: Leave as **.** (root). Do not change unless the app lives in a subfolder of the repo.
+3. **Framework Preset**: Vercel should auto-detect **Vite**. If not, select **Vite**.
+4. **Build and Output Settings** (usually correct by default):
+   - **Build Command**: `npm run build` or `vite build`
+   - **Output Directory**: `dist`
+   - **Install Command**: `npm install`
+5. Do **not** click **Deploy** yet. Click **Environment Variables** to expand it (or continue to the next step and add variables before deploying).
+
+### 4.4 Add environment variables (before first deploy)
+1. In the **Environment Variables** section on the same page, add each variable below. For **Environment**, select **Production**, **Preview**, and **Development** for each (or at least Production and Preview).
+2. Add these one by one:
+
+| Name | Value | Environments |
+|------|--------|--------------|
+| `VITE_GOOGLE_CLIENT_ID` | Your Google OAuth Client ID (e.g. `223353249861-xxx.apps.googleusercontent.com`) | Production, Preview, Development |
+| `GOOGLE_CLIENT_ID` | Same value as `VITE_GOOGLE_CLIENT_ID` | Production, Preview, Development |
+| `DATABASE_URL` | `postgresql://postgres:YOUR_PASSWORD@your-rds-endpoint:5432/coursemate` (your full RDS URL) | Production, Preview, Development |
+| `SESSION_SECRET` | The 64-character hex string you generated (see Section 3) | Production, Preview, Development |
+| `ALLOWED_ORIGIN` | Leave empty for now; you will set it after the first deploy (see 4.6) | Production |
+| `RATE_LIMIT_RPM` | `30` (optional) | Production |
+
+3. For **ALLOWED_ORIGIN**: After the first deploy you will get a URL like `https://coursemate-public.vercel.app`. You will come back and set `ALLOWED_ORIGIN` to that URL (including `https://`, no trailing slash).
+4. Click **Deploy** to start the first deployment.
+
+### 4.5 Wait for deployment
+1. Wait for the build to finish. If the build fails, check the build log (e.g. missing env var or wrong Node version).
+2. When it succeeds, Vercel shows **Congratulations!** and a **Visit** link. Click **Visit** to open the live site. Copy the URL (e.g. `https://coursemate-public.vercel.app`).
+
+### 4.6 Set production URL in Vercel and Google
+1. In Vercel, go to your project → **Settings** → **Environment Variables**.
+2. Find **ALLOWED_ORIGIN**. If you left it empty, add it now; if it exists, edit it. Set the value to your production URL exactly, e.g. `https://coursemate-public.vercel.app` (no trailing slash). Apply to **Production** (and optionally Preview).
+3. In **Google Cloud Console** → **APIs & Services** → **Credentials** → your OAuth 2.0 Client ID → edit.
+4. Under **Authorized JavaScript origins**, add: `https://coursemate-public.vercel.app` (use your actual Vercel URL). Save.
+5. In Vercel, go to **Deployments**, open the **⋯** menu on the latest deployment, and click **Redeploy** so that the new `ALLOWED_ORIGIN` and Google origin are used.
+
+### 4.7 Later deploys (automatic from GitHub)
+- Pushes to the default branch (e.g. `main`) trigger production deploys.
+- Other branches get Preview deployments with unique URLs. No need to run the CLI unless you want to deploy from your machine.
+
+### 4.8 Optional: deploy from your machine with CLI
 ```bash
 npm i -g vercel
 vercel login
-```
-
-### Set Environment Variables
-In the [Vercel Dashboard](https://vercel.com) > your project > **Settings** > **Environment Variables**, add:
-
-| Variable | Value | Environment |
-|----------|-------|-------------|
-| `VITE_GOOGLE_CLIENT_ID` | Your Google Client ID | Production, Preview, Development |
-| `GOOGLE_CLIENT_ID` | Same Google Client ID | Production, Preview, Development |
-| `DATABASE_URL` | Your PostgreSQL connection string | Production, Preview, Development |
-| `SESSION_SECRET` | Your generated secret | Production, Preview, Development |
-| `ALLOWED_ORIGIN` | `https://your-app.vercel.app` | Production |
-| `RATE_LIMIT_RPM` | `30` (optional) | Production |
-
-### Update Google Console
-Add your Vercel production URL to **Authorized JavaScript origins** in Google Cloud Console.
-
-### Deploy
-```bash
 vercel --prod
 ```
+Use this only if you are not using GitHub integration or want to deploy from a local branch.
 
 ---
 
@@ -185,11 +220,12 @@ vercel --prod
 
 - [ ] Google Cloud project created
 - [ ] OAuth consent screen configured with scopes
-- [ ] OAuth Client ID created with correct JavaScript origins
+- [ ] OAuth Client ID created (JavaScript origins can be updated after first Vercel deploy)
 - [ ] PostgreSQL database running (RDS or local)
-- [ ] Database schema initialized (`python init_db.py`)
-- [ ] `.env` file created with all variables from `.env.example`
+- [ ] RDS: database created (`python create_db.py`) and schema initialized (`python init_db.py`); local: `python init_db.py` only
+- [ ] `.env` file created locally with all variables from `.env.example`
 - [ ] `SESSION_SECRET` generated
-- [ ] `ALLOWED_ORIGIN` set correctly
-- [ ] (Production) Vercel environment variables configured
-- [ ] (Production) Production URL added to Google Console origins
+- [ ] (Vercel) GitHub repo connected and project imported
+- [ ] (Vercel) Environment variables set: `VITE_GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_ID`, `DATABASE_URL`, `SESSION_SECRET`; then `ALLOWED_ORIGIN` after first deploy
+- [ ] (Vercel) Production URL added to Google Console **Authorized JavaScript origins**
+- [ ] (Vercel) Redeployed after setting `ALLOWED_ORIGIN` and Google origin
