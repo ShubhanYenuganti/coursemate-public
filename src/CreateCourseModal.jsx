@@ -1,4 +1,5 @@
 import { useState, forwardRef, useImperativeHandle } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
 function NotebookIcon() {
@@ -87,13 +88,13 @@ const CreateCourseModal = forwardRef(function CreateCourseModal({ sessionToken }
         <NotebookIcon />
       </button>
 
-      {showModal && (
+      {showModal && createPortal(
         <div
           className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center px-4 z-50"
           onClick={closeModal}
         >
           <div
-            className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-2xl w-full max-w-md p-8 border border-gray-100"
+            className="bg-white/90 backdrop-blur-md rounded-2xl shadow-[0_8px_40px_rgba(0,0,0,0.2)] w-full max-w-md p-8 border border-white/60"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-xl font-bold text-gray-900 mb-6">New Course</h2>
@@ -160,7 +161,8 @@ const CreateCourseModal = forwardRef(function CreateCourseModal({ sessionToken }
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
