@@ -1,8 +1,14 @@
 import { useState } from "react";
-import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import SignInPage from "./SignInPage.jsx";
 import Dashboard from "./Dashboard.jsx";
+import CoursePage from "./CoursePage.jsx";
 import "./App.css";
+
+function CourseRoute({ userData, onSignOut }) {
+  const { state } = useLocation();
+  return <CoursePage course={state?.course} userData={userData} onSignOut={onSignOut} />;
+}
 
 export default function App() {
   const [userData, setUserData] = useState(null);
@@ -81,7 +87,17 @@ export default function App() {
         path="/dashboard"
         element={
           userData ? (
-            <Dashboard userData={userData} onSignOut={handleSignOut} />
+            <Dashboard userData={userData} sessionToken={sessionToken} onSignOut={handleSignOut} />
+          ) : (
+            <Navigate to="/" replace />
+          )
+        }
+      />
+      <Route
+        path="/course/:id"
+        element={
+          userData ? (
+            <CourseRoute userData={userData} onSignOut={handleSignOut} />
           ) : (
             <Navigate to="/" replace />
           )

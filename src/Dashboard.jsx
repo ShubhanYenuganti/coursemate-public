@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+
 function SignOutIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -8,7 +11,57 @@ function SignOutIcon() {
   );
 }
 
-export default function Dashboard({ userData, onSignOut }) {
+export default function Dashboard({ userData, sessionToken, onSignOut }) {
+  const navigate = useNavigate();
+  const [showModal, setShowModal] = useState(false);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState(null);
+
+  const openModal = () => {
+    setTitle("");
+    setDescription("");
+    setError(null);
+    setShowModal(true);
+  };
+
+  const closeModal = () => {
+    if (!creating) setShowModal(false);
+  };
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    if (!title.trim()) return;
+
+    setCreating(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/create_course", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ title: title.trim(), description: description.trim() || undefined }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      setShowModal(false);
+      navigate(`/course/${data.course.id}`, { state: { course: data.course } });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
       {/* Header */}
@@ -39,15 +92,99 @@ export default function Dashboard({ userData, onSignOut }) {
         </div>
       </header>
 
-      {/* Empty dashboard body */}
+      {/* Dashboard body */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="text-gray-500 text-center py-32">
-          <p className="text-lg font-medium text-gray-700 mb-1">
-            Welcome back, {userData?.user?.name || "User"}
-          </p>
-          <p className="text-sm text-gray-400">Your dashboard is empty for now.</p>
-        </div>
+        {/* Add course button */}
+        <button
+          type="button"
+          onClick={openModal}
+          className="flex items-center justify-center w-9 h-9 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white shadow transition-colors"
+          title="New course"
+          aria-label="Create new course"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+        </button>
       </main>
+
+      {/* New course modal */}
+      {showModal && (
+        <div
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center px-4 z-50"
+          onClick={closeModal}
+        >
+          <div
+            className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-2xl w-full max-w-md p-8 border border-gray-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-xl font-bold text-gray-900 mb-6">New Course</h2>
+
+            <form onSubmit={handleCreate} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="course-title">
+                  Title <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="course-title"
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="e.g. Introduction to Machine Learning"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 text-gray-900 placeholder-gray-400 text-sm"
+                  autoFocus
+                  disabled={creating}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="course-desc">
+                  Description <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
+                <textarea
+                  id="course-desc"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="What is this course about?"
+                  rows={3}
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 text-gray-900 placeholder-gray-400 text-sm resize-none"
+                  disabled={creating}
+                />
+              </div>
+
+              {error && (
+                <p className="text-red-600 text-sm">{error}</p>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  disabled={creating}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating || !title.trim()}
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {creating ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                      Creating…
+                    </>
+                  ) : (
+                    "Create Course"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
