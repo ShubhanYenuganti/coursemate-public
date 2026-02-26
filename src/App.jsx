@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import SignInPage from "./SignInPage.jsx";
 import Dashboard from "./Dashboard.jsx";
@@ -16,7 +16,34 @@ export default function App() {
   const [, setCsrfToken] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [restoring, setRestoring] = useState(true);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const stored = localStorage.getItem("cm_session");
+    if (!stored) {
+      setRestoring(false);
+      return;
+    }
+    fetch("/api/validate_session", {
+      headers: { Authorization: `Bearer ${stored}` },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("invalid");
+        return res.json();
+      })
+      .then((data) => {
+        if (data.session_token) setSessionToken(data.session_token);
+        if (data.csrf_token) setCsrfToken(data.csrf_token);
+        setUserData(data.user);
+      })
+      .catch(() => {
+        localStorage.removeItem("cm_session");
+      })
+      .finally(() => {
+        setRestoring(false);
+      });
+  }, []);
 
   const handleCredentialResponse = async (response) => {
     setLoading(true);
@@ -36,9 +63,12 @@ export default function App() {
 
       const data = await res.json();
 
-      if (data.session_token) setSessionToken(data.session_token);
+      if (data.session_token) {
+        setSessionToken(data.session_token);
+        localStorage.setItem("cm_session", data.session_token);
+      }
       if (data.csrf_token) setCsrfToken(data.csrf_token);
-      setUserData(data);
+      setUserData(data.user ?? data);
       navigate("/dashboard");
     } catch (e) {
       setError(e.message);
@@ -59,6 +89,7 @@ export default function App() {
       }
     }
 
+    localStorage.removeItem("cm_session");
     setUserData(null);
     setSessionToken(null);
     setCsrfToken(null);
@@ -66,6 +97,15 @@ export default function App() {
     window.google?.accounts?.id?.disableAutoSelect();
     navigate("/");
   };
+
+  if (restoring) {
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
+        <div style={{ width: 40, height: 40, border: "4px solid #ccc", borderTopColor: "#6c63ff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
 
   return (
     <Routes>
