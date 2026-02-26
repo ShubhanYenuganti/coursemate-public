@@ -5,9 +5,9 @@ import Dashboard from "./Dashboard.jsx";
 import CoursePage from "./CoursePage.jsx";
 import "./App.css";
 
-function CourseRoute({ userData, onSignOut }) {
+function CourseRoute({ userData, sessionToken, onSignOut }) {
   const { state } = useLocation();
-  return <CoursePage course={state?.course} userData={userData} onSignOut={onSignOut} />;
+  return <CoursePage course={state?.course} userData={userData} sessionToken={sessionToken} onSignOut={onSignOut} />;
 }
 
 export default function App() {
@@ -137,7 +137,7 @@ export default function App() {
         path="/course/:id"
         element={
           userData ? (
-            <CourseRoute userData={userData} onSignOut={handleSignOut} />
+            <CourseRoute userData={userData} sessionToken={sessionToken} onSignOut={handleSignOut} />
           ) : (
             <Navigate to="/" replace />
           )
