@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import CreateCourseModal from './CreateCourseModal.jsx';
+import SharingAccessModal from './SharingAccessModal.jsx';
 
 function ToolbarItem({ icon, label }) {
   return (
@@ -77,13 +78,12 @@ export default function CoursePage({ course, userData, sessionToken, onSignOut }
         </div>
       </header>
 
-      {/* Empty course body */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="text-gray-500 pt-8">
-          {course?.description && (
-            <p className="text-sm text-gray-600 leading-relaxed">{course.description}</p>
-          )}
-        </div>
+      {/* Course body */}
+      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-32 space-y-6">
+        {course?.description && (
+          <p className="text-sm text-gray-600 leading-relaxed">{course.description}</p>
+        )}
+        <SharingAccessModal />
       </main>
 
       {/* Floating toolbar */}
