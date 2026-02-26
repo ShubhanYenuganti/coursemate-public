@@ -1,3 +1,16 @@
+function ToolbarItem({ icon, label }) {
+  return (
+    <div className="group flex items-center gap-2">
+      <span className="max-w-0 overflow-hidden whitespace-nowrap text-sm font-medium text-gray-700 transition-all duration-200 ease-out group-hover:max-w-xs">
+        {label}
+      </span>
+      <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/80 border border-gray-200 shadow-sm text-gray-600 group-hover:text-indigo-600 group-hover:border-indigo-300 group-hover:shadow-md transition-all duration-200 cursor-default select-none text-lg">
+        {icon}
+      </div>
+    </div>
+  );
+}
+
 function SignOutIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -48,6 +61,15 @@ export default function CoursePage({ course, userData, onSignOut }) {
           )}
         </div>
       </main>
+
+      {/* Floating toolbar */}
+      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-gray-200 shadow-lg">
+        <ToolbarItem icon="📄" label="Materials" />
+        <div className="w-px h-6 bg-gray-200" />
+        <ToolbarItem icon="💬" label="Chat" />
+        <div className="w-px h-6 bg-gray-200" />
+        <ToolbarItem icon="💡" label="Generate Materials" />
+      </div>
     </div>
   );
 }
