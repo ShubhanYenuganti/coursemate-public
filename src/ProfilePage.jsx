@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 function BackIcon() {
@@ -26,40 +26,9 @@ export default function ProfilePage({ userData, sessionToken, csrfToken, onSignO
   const [usernameStatus, setUsernameStatus] = useState(null); // null | 'saving' | 'saved' | 'error'
   const [usernameError, setUsernameError] = useState("");
 
-  const [relinkStatus, setRelinkStatus] = useState(null); // null | 'loading' | 'error'
-  const [relinkError, setRelinkError] = useState("");
-
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteStatus, setDeleteStatus] = useState(null); // null | 'deleting' | 'error'
   const [deleteError, setDeleteError] = useState("");
-
-  const relinkButtonRef = useRef(null);
-
-  // Render Google Sign-In button for re-linking
-  useEffect(() => {
-    const initButton = () => {
-      if (window.google) {
-        window.google.accounts.id.initialize({
-          client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
-          callback: handleRelinkCredential,
-        });
-        const container = document.getElementById("relinkGoogleButton");
-        if (container) {
-          container.innerHTML = "";
-          window.google.accounts.id.renderButton(container, {
-            theme: "outline",
-            size: "large",
-            text: "signin_with",
-            shape: "rectangular",
-            width: 280,
-          });
-        }
-      } else {
-        setTimeout(initButton, 100);
-      }
-    };
-    initButton();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSaveUsername(e) {
     e.preventDefault();
@@ -90,32 +59,6 @@ export default function ProfilePage({ userData, sessionToken, csrfToken, onSignO
     } catch (err) {
       setUsernameError(err.message);
       setUsernameStatus("error");
-    }
-  }
-
-  async function handleRelinkCredential(response) {
-    setRelinkStatus("loading");
-    setRelinkError("");
-    try {
-      const res = await fetch("/api/relink_google", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-          "X-CSRF-Token": csrfToken,
-        },
-        body: JSON.stringify({ credential: response.credential }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || data.error || `HTTP ${res.status}`);
-      }
-      localStorage.setItem("cm_session", data.session_token);
-      onUserUpdate(data.user);
-      navigate("/dashboard");
-    } catch (err) {
-      setRelinkError(err.message);
-      setRelinkStatus("error");
     }
   }
 
@@ -229,27 +172,6 @@ export default function ProfilePage({ userData, sessionToken, csrfToken, onSignO
             )}
             {usernameError && (
               <p className="mt-2 text-sm text-red-600">{usernameError}</p>
-            )}
-          </div>
-
-          <div className="border-t border-gray-100" />
-
-          {/* Google account section */}
-          <div className="px-8 py-6">
-            <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-1">Google Account</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              Currently signed in as <span className="font-medium text-gray-700">{userData?.email}</span>
-            </p>
-            {relinkStatus === "loading" ? (
-              <div className="flex items-center gap-2 text-sm text-gray-500">
-                <div className="w-4 h-4 border-2 border-gray-300 border-t-indigo-500 rounded-full animate-spin" />
-                Switching account…
-              </div>
-            ) : (
-              <div id="relinkGoogleButton" ref={relinkButtonRef} />
-            )}
-            {relinkError && (
-              <p className="mt-2 text-sm text-red-600">{relinkError}</p>
             )}
           </div>
 

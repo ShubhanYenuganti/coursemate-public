@@ -142,37 +142,11 @@ class User:
             return dict(user) if user else None
 
     @staticmethod
-    def relink_google(
-        user_id: int,
-        new_google_id: str,
-        new_email: str,
-        new_name: Optional[str],
-        new_picture: Optional[str],
-        new_google_id_token: Optional[str],
-    ) -> Optional[Dict[str, Any]]:
-        """Swap the Google account linked to a CourseMate user (identified by integer PK)."""
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE users
-                SET google_id = %s,
-                    email = %s,
-                    name = %s,
-                    picture = %s,
-                    google_id_token = %s,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = %s
-                RETURNING *
-            """, (new_google_id, new_email, new_name, new_picture, new_google_id_token, user_id))
-            user = cursor.fetchone()
-            cursor.close()
-            return dict(user) if user else None
-
-    @staticmethod
     def delete_user(google_id: str) -> bool:
         """Delete a user record. Returns True if a row was deleted."""
         with get_db() as conn:
             cursor = conn.cursor()
+            cursor.execute("DELETE FROM sessions WHERE google_id = %s", (google_id,))
             cursor.execute(
                 "DELETE FROM users WHERE google_id = %s RETURNING id",
                 (google_id,)
