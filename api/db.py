@@ -60,7 +60,8 @@ def init_db():
                 google_id_token TEXT,
                 token_expires_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                username TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);

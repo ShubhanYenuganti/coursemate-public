@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import CardViewer from "./CardViewer.jsx";
 import CreateCourseModal from "./CreateCourseModal.jsx";
 
@@ -14,6 +15,7 @@ function SignOutIcon() {
 
 export default function Dashboard({ userData, sessionToken, onSignOut }) {
   const createModalRef = useRef(null);
+  const navigate = useNavigate();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
@@ -26,11 +28,19 @@ export default function Dashboard({ userData, sessionToken, onSignOut }) {
           {/* Right: Avatar + New course + Sign out */}
           <div className="flex items-center gap-3">
             {userData?.picture && (
-              <img
-                src={userData.picture}
-                alt={userData.name}
-                className="w-8 h-8 rounded-full border-2 border-gray-200"
-              />
+              <button
+                type="button"
+                onClick={() => navigate('/profile')}
+                className="rounded-full focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                title="View profile"
+                aria-label="View profile"
+              >
+                <img
+                  src={userData.picture}
+                  alt={userData.username || userData.name}
+                  className="w-8 h-8 rounded-full border-2 border-gray-200 hover:opacity-80 transition-opacity cursor-pointer"
+                />
+              </button>
             )}
             <CreateCourseModal ref={createModalRef} sessionToken={sessionToken} />
             <button

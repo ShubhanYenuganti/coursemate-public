@@ -65,14 +65,16 @@ class User:
                     INSERT INTO users (
                         google_id, email, email_verified, name, given_name, family_name,
                         picture, locale, address, google_id_token,
-                        google_access_token, google_refresh_token, token_expires_at
+                        google_access_token, google_refresh_token, token_expires_at,
+                        username
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *
                 """, (
                     google_id, email, email_verified, name, given_name, family_name,
                     picture, locale, address, google_id_token,
-                    google_access_token, google_refresh_token, token_expires_at
+                    google_access_token, google_refresh_token, token_expires_at,
+                    name  # seed username from name on first sign-in
                 ))
 
             user = cursor.fetchone()
@@ -122,6 +124,62 @@ class User:
             user = cursor.fetchone()
             cursor.close()
             return dict(user) if user else None
+
+    @staticmethod
+    def update_username(google_id: str, username: str) -> Optional[Dict[str, Any]]:
+        """Update user's display username (independent from the static Google name field)."""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE users
+                SET username = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE google_id = %s
+                RETURNING *
+            """, (username, google_id))
+            user = cursor.fetchone()
+            cursor.close()
+            return dict(user) if user else None
+
+    @staticmethod
+    def relink_google(
+        user_id: int,
+        new_google_id: str,
+        new_email: str,
+        new_name: Optional[str],
+        new_picture: Optional[str],
+        new_google_id_token: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Swap the Google account linked to a CourseMate user (identified by integer PK)."""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE users
+                SET google_id = %s,
+                    email = %s,
+                    name = %s,
+                    picture = %s,
+                    google_id_token = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                RETURNING *
+            """, (new_google_id, new_email, new_name, new_picture, new_google_id_token, user_id))
+            user = cursor.fetchone()
+            cursor.close()
+            return dict(user) if user else None
+
+    @staticmethod
+    def delete_user(google_id: str) -> bool:
+        """Delete a user record. Returns True if a row was deleted."""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM users WHERE google_id = %s RETURNING id",
+                (google_id,)
+            )
+            result = cursor.fetchone()
+            cursor.close()
+            return result is not None
 
 
 class Session:

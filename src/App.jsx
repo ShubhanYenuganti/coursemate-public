@@ -3,17 +3,18 @@ import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-
 import SignInPage from "./SignInPage.jsx";
 import Dashboard from "./Dashboard.jsx";
 import CoursePage from "./CoursePage.jsx";
+import ProfilePage from "./ProfilePage.jsx";
 import "./App.css";
 
-function CourseRoute({ userData, sessionToken, onSignOut }) {
+function CourseRoute({ userData, sessionToken, csrfToken, onSignOut, onUserUpdate }) {
   const { state } = useLocation();
-  return <CoursePage course={state?.course} userData={userData} sessionToken={sessionToken} onSignOut={onSignOut} />;
+  return <CoursePage course={state?.course} userData={userData} sessionToken={sessionToken} csrfToken={csrfToken} onSignOut={onSignOut} onUserUpdate={onUserUpdate} />;
 }
 
 export default function App() {
   const [userData, setUserData] = useState(null);
   const [sessionToken, setSessionToken] = useState(null);
-  const [, setCsrfToken] = useState(null);
+  const [csrfToken, setCsrfToken] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [restoring, setRestoring] = useState(true);
@@ -127,7 +128,7 @@ export default function App() {
         path="/dashboard"
         element={
           userData ? (
-            <Dashboard userData={userData} sessionToken={sessionToken} onSignOut={handleSignOut} />
+            <Dashboard userData={userData} sessionToken={sessionToken} csrfToken={csrfToken} onSignOut={handleSignOut} onUserUpdate={setUserData} />
           ) : (
             <Navigate to="/" replace />
           )
@@ -137,7 +138,17 @@ export default function App() {
         path="/course/:id"
         element={
           userData ? (
-            <CourseRoute userData={userData} sessionToken={sessionToken} onSignOut={handleSignOut} />
+            <CourseRoute userData={userData} sessionToken={sessionToken} csrfToken={csrfToken} onSignOut={handleSignOut} onUserUpdate={setUserData} />
+          ) : (
+            <Navigate to="/" replace />
+          )
+        }
+      />
+      <Route
+        path="/profile"
+        element={
+          userData ? (
+            <ProfilePage userData={userData} sessionToken={sessionToken} csrfToken={csrfToken} onSignOut={handleSignOut} onUserUpdate={setUserData} />
           ) : (
             <Navigate to="/" replace />
           )
