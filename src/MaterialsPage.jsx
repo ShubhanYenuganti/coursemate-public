@@ -289,7 +289,7 @@ function MaterialCard({ material, onVisibilityChange, onDelete, isOwner }) {
               await onDelete(material.id);
             }}
             disabled={deleting}
-            className="p-1 rounded text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+            className="p-1 rounded text-gray-300 hover:text-red-500 transition-colors"
             title="Delete material"
           >
             {deleting ? <Spinner size={14} className="text-gray-400" /> : <TrashIcon size={14} />}
@@ -327,18 +327,18 @@ function FilterBar({ ownerFilter, setOwnerFilter, typeFilter, setTypeFilter }) {
   ];
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2 rounded-full bg-gray-900 w-fit flex-wrap">
+    <div className="flex items-center gap-2 px-2 py-1.5 rounded-full bg-white border border-gray-200 shadow-sm w-fit flex-wrap">
       {/* Owner group */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5">
         {ownerPills.map(p => (
           <button
             key={p.id}
             type="button"
             onClick={() => setOwnerFilter(p.id)}
-            className={`px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors duration-150 focus:outline-none ${
+            className={`px-3.5 py-1 rounded-full text-sm font-medium transition-colors duration-150 focus:outline-none ${
               ownerFilter === p.id
-                ? 'bg-white text-gray-900'
-                : 'text-gray-400 hover:text-gray-200'
+                ? 'bg-indigo-600 text-white'
+                : 'text-gray-500 hover:text-gray-800'
             }`}
           >
             {p.label}
@@ -347,22 +347,22 @@ function FilterBar({ ownerFilter, setOwnerFilter, typeFilter, setTypeFilter }) {
       </div>
 
       {/* Divider */}
-      <div className="w-px h-5 bg-gray-600" />
+      <div className="w-px h-5 bg-gray-200" />
 
       {/* Type group label */}
-      <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-widest select-none">Show</span>
+      <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest select-none pl-1">Show</span>
 
       {/* Type group */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5">
         {typePills.map(p => (
           <button
             key={p.id}
             type="button"
             onClick={() => setTypeFilter(p.id)}
-            className={`flex items-center gap-1 px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors duration-150 focus:outline-none ${
+            className={`flex items-center gap-1 px-3.5 py-1 rounded-full text-sm font-medium transition-colors duration-150 focus:outline-none ${
               typeFilter === p.id
-                ? 'bg-gray-700 text-white'
-                : 'text-gray-400 hover:text-gray-200'
+                ? 'bg-indigo-600 text-white'
+                : 'text-gray-500 hover:text-gray-800'
             }`}
           >
             {p.prefix && <span className="text-xs">{p.prefix}</span>}
