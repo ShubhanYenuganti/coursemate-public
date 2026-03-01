@@ -129,7 +129,7 @@ export default function CardViewer({ sessionToken, onCreateNew }) {
   useEffect(() => {
     if (!sessionToken) return;
     setLoading(true);
-    fetch("/api/get_courses", {
+    fetch("/api/course", {
       headers: { Authorization: `Bearer ${sessionToken}` },
     })
       .then((res) => {
@@ -144,7 +144,7 @@ export default function CardViewer({ sessionToken, onCreateNew }) {
   const handleDelete = async (courseId) => {
     setCourses((prev) => prev.filter((c) => c.id !== courseId));
     try {
-      const res = await fetch("/api/delete_course", {
+      const res = await fetch("/api/course", {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
@@ -159,7 +159,7 @@ export default function CardViewer({ sessionToken, onCreateNew }) {
     } catch (e) {
       // Rollback optimistic removal on failure
       setError(`Failed to delete course: ${e.message}`);
-      fetch("/api/get_courses", { headers: { Authorization: `Bearer ${sessionToken}` } })
+      fetch("/api/course", { headers: { Authorization: `Bearer ${sessionToken}` } })
         .then((r) => r.json())
         .then((data) => setCourses(data.courses || []));
     }

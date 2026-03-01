@@ -52,7 +52,7 @@ const CreateCourseModal = forwardRef(function CreateCourseModal({ sessionToken }
     setError(null);
 
     try {
-      const res = await fetch("/api/create_course", {
+      const res = await fetch("/api/course", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

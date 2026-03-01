@@ -40,7 +40,7 @@ export default function ProfilePage({ userData, sessionToken, csrfToken, onSignO
     setUsernameStatus("saving");
     setUsernameError("");
     try {
-      const res = await fetch("/api/update_profile", {
+      const res = await fetch("/api/profile", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -66,8 +66,8 @@ export default function ProfilePage({ userData, sessionToken, csrfToken, onSignO
     setDeleteStatus("deleting");
     setDeleteError("");
     try {
-      const res = await fetch("/api/delete_account", {
-        method: "POST",
+      const res = await fetch("/api/profile", {
+        method: "DELETE",
         headers: {
           Authorization: `Bearer ${sessionToken}`,
           "X-CSRF-Token": csrfToken,
