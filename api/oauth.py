@@ -92,6 +92,7 @@ class handler(BaseHTTPRequestHandler):
 
                 user_response = {
                     "id": user.get("google_id"),
+                    "db_id": user.get("id"),
                     "email": user.get("email"),
                     "email_verified": user.get("email_verified"),
                     "name": user.get("name"),

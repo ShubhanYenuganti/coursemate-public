@@ -32,6 +32,12 @@
   75% { transform: translateX(10px); }
 }
 
+@keyframes loading-bar {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(60%); }
+  100% { transform: translateX(200%); }
+}
+
 * {
   box-sizing: border-box;
 }
