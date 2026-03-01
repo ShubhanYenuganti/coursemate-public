@@ -156,6 +156,85 @@ class User:
             return result is not None
 
 
+class Material:
+    """Material model for managing uploaded course materials."""
+
+    @staticmethod
+    def create(
+        course_id: int,
+        name: str,
+        file_url: str,
+        uploaded_by: int,
+        file_type: Optional[str] = None,
+        visibility: str = 'private',
+        source_type: str = 'upload',
+    ) -> Dict[str, Any]:
+        """Insert a new material record and return it."""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO materials (course_id, name, file_url, uploaded_by, file_type, visibility, source_type)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+            """, (course_id, name, file_url, uploaded_by, file_type, visibility, source_type))
+            material = cursor.fetchone()
+            cursor.close()
+            return dict(material)
+
+    @staticmethod
+    def get_by_id(material_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch a single material record by ID."""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM materials WHERE id = %s", (material_id,))
+            material = cursor.fetchone()
+            cursor.close()
+            return dict(material) if material else None
+
+    @staticmethod
+    def get_by_course(course_id: int, user_id: int) -> list:
+        """
+        Return all materials for a course visible to this user:
+        public materials + materials uploaded by the user.
+        """
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM materials
+                WHERE course_id = %s
+                  AND (visibility = 'public' OR uploaded_by = %s)
+                ORDER BY created_at DESC
+            """, (course_id, user_id))
+            materials = cursor.fetchall()
+            cursor.close()
+            return [dict(m) for m in materials]
+
+    @staticmethod
+    def update_visibility(material_id: int, visibility: str) -> Optional[Dict[str, Any]]:
+        """Change a material's visibility. Returns updated record or None if not found."""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE materials
+                SET visibility = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                RETURNING *
+            """, (visibility, material_id))
+            material = cursor.fetchone()
+            cursor.close()
+            return dict(material) if material else None
+
+    @staticmethod
+    def delete(material_id: int) -> bool:
+        """Delete a material record. Returns True if a row was deleted."""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM materials WHERE id = %s RETURNING id", (material_id,))
+            result = cursor.fetchone()
+            cursor.close()
+            return result is not None
+
+
 class Session:
     """Session model for server-side session management."""
 
