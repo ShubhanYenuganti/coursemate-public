@@ -55,9 +55,47 @@ function ToolbarItem({ icon, label, active, onClick }) {
 
 // ─── main component ───────────────────────────────────────────────────────────
 
-export default function CoursePage({ course, userData, sessionToken, onSignOut }) {
+export default function CoursePage({ course, userData, sessionToken, onSignOut, onCourseUpdate }) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('home');
+
+  // Description edit state
+  const [editingDesc, setEditingDesc] = useState(false);
+  const [descValue, setDescValue] = useState(course?.description || '');
+  const [descStatus, setDescStatus] = useState(null); // null | 'saving' | 'error'
+  const [descError, setDescError] = useState('');
+
+  const isOwner = course?.primary_creator === userData?.db_id;
+
+  async function handleSaveDesc() {
+    setDescStatus('saving');
+    setDescError('');
+    try {
+      const res = await fetch('/api/course', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ course_id: course.id, description: descValue }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      onCourseUpdate?.(data.course);
+      setEditingDesc(false);
+      setDescStatus(null);
+    } catch (err) {
+      setDescError(err.message);
+      setDescStatus('error');
+    }
+  }
+
+  function cancelEditDesc() {
+    setDescValue(course?.description || '');
+    setEditingDesc(false);
+    setDescStatus(null);
+    setDescError('');
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
@@ -108,9 +146,63 @@ export default function CoursePage({ course, userData, sessionToken, onSignOut }
       <main className="px-4 sm:px-6 lg:px-8 py-8 pb-32">
         {activeTab === 'home' && (
           <div className="space-y-6 max-w-3xl mx-auto">
-            {course?.description && (
-              <p className="text-sm text-gray-600 leading-relaxed">{course.description}</p>
-            )}
+            {/* Description */}
+            <div className="group relative">
+              {editingDesc ? (
+                <div className="space-y-2">
+                  <textarea
+                    autoFocus
+                    value={descValue}
+                    onChange={(e) => { setDescValue(e.target.value); setDescError(''); }}
+                    rows={4}
+                    maxLength={2000}
+                    placeholder="Add a description…"
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent resize-none transition-all"
+                  />
+                  {descError && <p className="text-xs text-red-600">{descError}</p>}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveDesc}
+                      disabled={descStatus === 'saving'}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                    >
+                      {descStatus === 'saving' ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelEditDesc}
+                      className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {course?.description ? (
+                    <p className="text-sm text-gray-600 leading-relaxed pr-8">{course.description}</p>
+                  ) : (
+                    isOwner && (
+                      <p className="text-sm text-gray-400 italic pr-8">No description yet.</p>
+                    )
+                  )}
+                  {isOwner && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingDesc(true)}
+                      title="Edit description"
+                      className="absolute top-0 right-0 p-1.5 rounded-lg text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 opacity-0 group-hover:opacity-100 transition-all"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                      </svg>
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
             <SharingAccessModal />
           </div>
         )}

@@ -8,7 +8,11 @@ import "./App.css";
 
 function CourseRoute({ userData, sessionToken, csrfToken, onSignOut, onUserUpdate }) {
   const { state } = useLocation();
-  return <CoursePage course={state?.course} userData={userData} sessionToken={sessionToken} csrfToken={csrfToken} onSignOut={onSignOut} onUserUpdate={onUserUpdate} />;
+  const navigate = useNavigate();
+  function handleCourseUpdate(updated) {
+    navigate(".", { replace: true, state: { ...state, course: updated } });
+  }
+  return <CoursePage course={state?.course} userData={userData} sessionToken={sessionToken} csrfToken={csrfToken} onSignOut={onSignOut} onUserUpdate={onUserUpdate} onCourseUpdate={handleCourseUpdate} />;
 }
 
 export default function App() {
