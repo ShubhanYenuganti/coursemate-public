@@ -153,6 +153,18 @@ def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_generations_course_visibility ON material_generations(course_id, visibility);
             CREATE INDEX IF NOT EXISTS idx_generations_creator_course_visibility ON material_generations(generated_by, course_id, visibility);
+
+            CREATE TABLE IF NOT EXISTS user_api_keys (
+                id            SERIAL PRIMARY KEY,
+                user_id       INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                provider      VARCHAR(20) NOT NULL CHECK (provider IN ('gemini', 'openai', 'claude')),
+                encrypted_key TEXT        NOT NULL,
+                created_at    TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at    TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, provider)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON user_api_keys(user_id);
         """)
 
         cursor.close()
