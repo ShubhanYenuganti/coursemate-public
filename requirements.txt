@@ -5,3 +5,4 @@ psycopg_pool==3.3.0
 python-dotenv==1.0.0
 boto3>=1.35.0
 cryptography>=41.0.0
+pgvector>=0.3.0

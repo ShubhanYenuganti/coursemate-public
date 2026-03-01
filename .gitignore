@@ -7,3 +7,6 @@ __pycache__/
 .vercel/
 .DS_Store
 Samples
+lambda/embed_materials/package/
+lambda/embed_materials/embed_materials.zip
+SEMANTIC_EMBEDDINGS_PLAN.md

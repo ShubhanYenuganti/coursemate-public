@@ -44,6 +44,8 @@ def init_db():
         cursor = conn.cursor()
 
         cursor.execute("""
+            CREATE EXTENSION IF NOT EXISTS vector;
+
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 google_id VARCHAR(255) UNIQUE NOT NULL,
@@ -165,6 +167,42 @@ def init_db():
             );
 
             CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON user_api_keys(user_id);
+
+            CREATE TABLE IF NOT EXISTS material_chunks (
+                id              SERIAL PRIMARY KEY,
+                material_id     INTEGER      NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+                course_id       INTEGER      NOT NULL REFERENCES courses(id)   ON DELETE CASCADE,
+                chunk_index     INTEGER      NOT NULL,
+                chunk_text      TEXT         NOT NULL,
+                chunk_type      VARCHAR(20)  NOT NULL DEFAULT 'paragraph',
+                page_number     INTEGER,
+                token_count     INTEGER      NOT NULL,
+                embedding       vector(384)  NOT NULL,
+                model_name      VARCHAR(100) NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+                created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(material_id, chunk_index)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chunks_material_id ON material_chunks(material_id);
+            CREATE INDEX IF NOT EXISTS idx_chunks_course_id   ON material_chunks(course_id);
+            CREATE INDEX IF NOT EXISTS idx_chunks_embedding
+                ON material_chunks USING ivfflat (embedding vector_cosine_ops)
+                WITH (lists = 100);
+
+            CREATE TABLE IF NOT EXISTS material_embed_jobs (
+                id              SERIAL PRIMARY KEY,
+                material_id     INTEGER      NOT NULL REFERENCES materials(id) ON DELETE CASCADE UNIQUE,
+                status          VARCHAR(20)  NOT NULL DEFAULT 'pending'
+                                CHECK (status IN ('pending', 'processing', 'done', 'failed', 'skipped')),
+                chunks_created  INTEGER,
+                error_message   TEXT,
+                started_at      TIMESTAMP,
+                completed_at    TIMESTAMP,
+                created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_embed_jobs_status      ON material_embed_jobs(status);
+            CREATE INDEX IF NOT EXISTS idx_embed_jobs_material_id ON material_embed_jobs(material_id);
         """)
 
         cursor.close()

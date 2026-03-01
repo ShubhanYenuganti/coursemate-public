@@ -15,6 +15,7 @@ try:
     from .middleware import send_json, handle_options, authenticate_request, sanitize_string
     from .models import User, Material
     from .courses import Course
+    from .db import get_db
     from .s3_utils import (
         validate_file_type, get_file_extension,
         generate_upload_presigned_url, generate_download_presigned_url,
@@ -24,6 +25,7 @@ except ImportError:
     from middleware import send_json, handle_options, authenticate_request, sanitize_string
     from models import User, Material
     from courses import Course
+    from db import get_db
     from s3_utils import (
         validate_file_type, get_file_extension,
         generate_upload_presigned_url, generate_download_presigned_url,
@@ -242,6 +244,16 @@ class handler(BaseHTTPRequestHandler):
             source_type='upload',
         )
         Course.add_material(course_id, material['id'])
+
+        # Create a pending embed job — Lambda will pick this up asynchronously
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO material_embed_jobs (material_id) VALUES (%s) ON CONFLICT DO NOTHING",
+                (material['id'],)
+            )
+            cursor.close()
+
         send_json(self, 201, {"material": material})
 
     def _update_visibility(self, google_id, data):
