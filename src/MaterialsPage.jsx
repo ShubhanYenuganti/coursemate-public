@@ -313,10 +313,75 @@ function MaterialCard({ material, onVisibilityChange, onDelete, isOwner }) {
 
 // ─── main component ───────────────────────────────────────────────────────────
 
+// ─── filter pill bar ──────────────────────────────────────────────────────────
+
+function FilterBar({ ownerFilter, setOwnerFilter, typeFilter, setTypeFilter }) {
+  const ownerPills = [
+    { id: 'all',  label: 'All materials' },
+    { id: 'mine', label: 'My materials' },
+  ];
+  const typePills = [
+    { id: 'all',       label: 'All types',  prefix: null },
+    { id: 'uploaded',  label: 'Uploaded',   prefix: '↑' },
+    { id: 'generated', label: 'Generated',  prefix: '✦' },
+  ];
+
+  return (
+    <div className="flex items-center gap-3 px-3 py-2 rounded-full bg-gray-900 w-fit flex-wrap">
+      {/* Owner group */}
+      <div className="flex items-center gap-1">
+        {ownerPills.map(p => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => setOwnerFilter(p.id)}
+            className={`px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors duration-150 focus:outline-none ${
+              ownerFilter === p.id
+                ? 'bg-white text-gray-900'
+                : 'text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Divider */}
+      <div className="w-px h-5 bg-gray-600" />
+
+      {/* Type group label */}
+      <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-widest select-none">Show</span>
+
+      {/* Type group */}
+      <div className="flex items-center gap-1">
+        {typePills.map(p => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => setTypeFilter(p.id)}
+            className={`flex items-center gap-1 px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors duration-150 focus:outline-none ${
+              typeFilter === p.id
+                ? 'bg-gray-700 text-white'
+                : 'text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            {p.prefix && <span className="text-xs">{p.prefix}</span>}
+            {p.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── main component ───────────────────────────────────────────────────────────
+
 export default function MaterialsPage({ courseId, sessionToken, userId }) {
   const [materials, setMaterials]       = useState([]);
   const [loadingMats, setLoadingMats]   = useState(true);
   const [uploadItems, setUploadItems]   = useState([]);
+  const [ownerFilter, setOwnerFilter]   = useState('all');
+  const [typeFilter,  setTypeFilter]    = useState('all');
 
   // ── fetch existing materials ──────────────────────────────────────────────
   const fetchMaterials = useCallback(async () => {
@@ -471,8 +536,15 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
 
   const dismissItem = (id) => setUploadItems(prev => prev.filter(i => i.id !== id));
 
-  const activeUploads = uploadItems.filter(i => i.status === 'uploading');
+  const activeUploads    = uploadItems.filter(i => i.status === 'uploading');
   const completedUploads = uploadItems.filter(i => i.status === 'done' || i.status === 'error');
+
+  const visibleMaterials = materials.filter(m => {
+    if (ownerFilter === 'mine' && m.uploaded_by !== userId) return false;
+    if (typeFilter  === 'uploaded'  && m.source_type !== 'upload')     return false;
+    if (typeFilter  === 'generated' && m.source_type !== 'generated')  return false;
+    return true;
+  });
 
   return (
     <div className="space-y-8 pb-4">
@@ -518,28 +590,41 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
 
       {/* Materials grid */}
       <div>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-gray-800">Course Materials</h2>
-          {!loadingMats && (
-            <span className="text-xs text-gray-400">{materials.length} file{materials.length !== 1 ? 's' : ''}</span>
-          )}
+        {/* Header + filter bar */}
+        <div className="flex flex-col gap-3 mb-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold text-gray-800">Course Materials</h2>
+            {!loadingMats && (
+              <span className="text-xs text-gray-400">
+                {visibleMaterials.length} file{visibleMaterials.length !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+          <FilterBar
+            ownerFilter={ownerFilter} setOwnerFilter={setOwnerFilter}
+            typeFilter={typeFilter}   setTypeFilter={setTypeFilter}
+          />
         </div>
 
         {loadingMats ? (
           <div className="flex items-center justify-center py-16">
             <Spinner size={28} className="text-indigo-400" />
           </div>
-        ) : materials.length === 0 ? (
+        ) : visibleMaterials.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-gray-400">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3 opacity-40">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
               <polyline points="14 2 14 8 20 8"/>
             </svg>
-            <p className="text-sm">No materials yet — upload your first file above.</p>
+            <p className="text-sm">
+              {materials.length === 0
+                ? 'No materials yet — upload your first file above.'
+                : 'No materials match the current filter.'}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {materials.map(m => (
+            {visibleMaterials.map(m => (
               <MaterialCard
                 key={m.id}
                 material={m}
