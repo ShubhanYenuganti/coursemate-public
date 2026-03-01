@@ -54,11 +54,11 @@ def get_file_extension(filename: str) -> str:
     return parts[1].lower() if len(parts) == 2 else ''
 
 
-def generate_upload_presigned_url(s3_key: str, file_type: str, max_size: int = 10 * 1024 * 1024):
+def generate_upload_presigned_url(s3_key: str, file_type: str, max_size: int = 50 * 1024 * 1024):
     """
     Generate a presigned POST for a direct browser-to-S3 upload.
     Returns {'url': ..., 'fields': {...}} or raises on error.
-    Expiration: 5 minutes. Max upload size: max_size bytes (default 10 MB).
+    Expiration: 5 minutes. Max upload size: max_size bytes (default 50 MB).
     """
     client = _get_client()
     bucket = os.environ.get('AWS_S3_BUCKET_NAME')

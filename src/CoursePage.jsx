@@ -105,9 +105,9 @@ export default function CoursePage({ course, userData, sessionToken, onSignOut }
       </header>
 
       {/* Tab content */}
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-32">
+      <main className="px-4 sm:px-6 lg:px-8 py-8 pb-32">
         {activeTab === 'home' && (
-          <div className="space-y-6 max-w-3xl">
+          <div className="space-y-6 max-w-3xl mx-auto">
             {course?.description && (
               <p className="text-sm text-gray-600 leading-relaxed">{course.description}</p>
             )}
@@ -116,21 +116,23 @@ export default function CoursePage({ course, userData, sessionToken, onSignOut }
         )}
 
         {activeTab === 'materials' && (
-          <MaterialsPage
-            courseId={course?.id}
-            sessionToken={sessionToken}
-            userId={userData?.db_id}
-          />
+          <div className="max-w-5xl mx-auto">
+            <MaterialsPage
+              courseId={course?.id}
+              sessionToken={sessionToken}
+              userId={userData?.db_id}
+            />
+          </div>
         )}
 
         {activeTab === 'chat' && (
-          <div className="flex items-center justify-center py-24 text-gray-400 text-sm">
+          <div className="max-w-3xl mx-auto flex items-center justify-center py-24 text-gray-400 text-sm">
             Chat — coming soon
           </div>
         )}
 
         {activeTab === 'generate' && (
-          <div className="flex items-center justify-center py-24 text-gray-400 text-sm">
+          <div className="max-w-3xl mx-auto flex items-center justify-center py-24 text-gray-400 text-sm">
             Generate Materials — coming soon
           </div>
         )}

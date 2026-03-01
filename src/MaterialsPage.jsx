@@ -400,7 +400,9 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
     for (let i = 0; i < items.length; i += 3) {
       await Promise.all(items.slice(i, i + 3).map(uploadOne));
     }
-    fetchMaterials();
+    await fetchMaterials();
+    // Files now appear in the grid — clear them from the upload list
+    setUploadItems(prev => prev.filter(i => i.status !== 'done'));
   }, [uploadOne, fetchMaterials]);
 
   // ── visibility toggle for upload items ───────────────────────────────────
