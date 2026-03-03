@@ -97,6 +97,76 @@ function SparkleIcon() {
   );
 }
 
+function ChevronDownIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+const FILE_TYPE_MAP = {
+  pdf:  { label: 'PDF', bg: 'bg-rose-100',   text: 'text-rose-600'   },
+  doc:  { label: 'DOC', bg: 'bg-blue-100',   text: 'text-blue-600'   },
+  docx: { label: 'DOC', bg: 'bg-blue-100',   text: 'text-blue-600'   },
+  xls:  { label: 'XLS', bg: 'bg-green-100',  text: 'text-green-700'  },
+  xlsx: { label: 'XLS', bg: 'bg-green-100',  text: 'text-green-700'  },
+  csv:  { label: 'CSV', bg: 'bg-green-100',  text: 'text-green-700'  },
+  png:  { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
+  jpg:  { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
+  jpeg: { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
+  gif:  { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
+  svg:  { label: 'SVG', bg: 'bg-orange-100', text: 'text-orange-600' },
+  txt:  { label: 'TXT', bg: 'bg-gray-100',   text: 'text-gray-500'   },
+};
+
+function FileTypeBadge({ name }) {
+  const ext = (name || '').split('.').pop().toLowerCase();
+  const style = FILE_TYPE_MAP[ext] || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-gray-100', text: 'text-gray-500' };
+  return (
+    <span className={`flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded text-[7px] font-bold tracking-tight ${style.bg} ${style.text}`}>
+      {style.label}
+    </span>
+  );
+}
+
+function MaterialCheckbox({ checked, onToggle }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+      className={`flex-shrink-0 w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${
+        checked
+          ? 'bg-indigo-500 border-indigo-500'
+          : 'border-gray-300 hover:border-indigo-400'
+      }`}
+    >
+      {checked && (
+        <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24"
+          fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
+const MODEL_LABELS = {
+  gemini: 'Gemini',
+  openai: 'GPT-4o',
+  claude: 'Claude',
+};
+
 // ─── sample data ──────────────────────────────────────────────────────────────
 
 const TODAY_CONVS = [
@@ -249,12 +319,89 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const [messages, setMessages] = useState(SAMPLE_MESSAGES);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(null);
+  const [availableModels, setAvailableModels] = useState([]);
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [switchBanner, setSwitchBanner] = useState('');
+  const [materials, setMaterials] = useState([]);
+  const [selectedMaterials, setSelectedMaterials] = useState(new Set());
+  const [selectAllMaterials, setSelectAllMaterials] = useState(true);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
+  const dropdownRef = useRef(null);
+  const bannerTimerRef = useRef(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (!course?.id || !sessionToken) return;
+    fetch(`/api/material?course_id=${course.id}`, {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    })
+      .then((r) => r.json())
+      .then((data) => setMaterials(Array.isArray(data) ? data : (data.materials || [])))
+      .catch(() => {});
+  }, [course?.id, sessionToken]);
+
+  useEffect(() => {
+    if (!sessionToken) return;
+    fetch('/api/user_api_keys', {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        const available = Object.entries(data)
+          .filter(([, hasKey]) => hasKey)
+          .map(([provider]) => provider);
+        setAvailableModels(available);
+        if (available.length > 0) setSelectedModel(available[0]);
+      })
+      .catch(() => {});
+  }, [sessionToken]);
+
+  useEffect(() => {
+    if (!modelDropdownOpen) return;
+    function handleClickOutside(e) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setModelDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [modelDropdownOpen]);
+
+  function handleModelSelect(provider) {
+    setSelectedModel(provider);
+    setModelDropdownOpen(false);
+    if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    setSwitchBanner(MODEL_LABELS[provider] || provider);
+    bannerTimerRef.current = setTimeout(() => setSwitchBanner(''), 2500);
+  }
+
+  function handleSelectAllMaterials() {
+    if (selectAllMaterials) {
+      setSelectAllMaterials(false);
+      setSelectedMaterials(new Set());
+    } else {
+      setSelectAllMaterials(true);
+      setSelectedMaterials(new Set());
+    }
+  }
+
+  function handleToggleMaterial(id) {
+    setSelectAllMaterials(false);
+    setSelectedMaterials((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function isMaterialChecked(id) {
+    return selectAllMaterials || selectedMaterials.has(id);
+  }
 
   function handleNewChat() {
     setMessages([]);
@@ -326,30 +473,83 @@ export default function ChatTab({ course, userData, sessionToken }) {
           </div>
         </div>
 
-        {/* Conversations */}
-        <div className="flex-1 overflow-y-auto px-2 space-y-4 pb-4">
-          <div>
-            <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider flex items-center justify-between">
-              <span>Your conversations</span>
-              <button type="button" className="text-indigo-500 hover:text-indigo-700 normal-case text-[10px] font-normal transition-colors">
-                Clear all
-              </button>
-            </p>
-            <div className="space-y-0.5">
-              {TODAY_CONVS.map((c) => (
-                <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} />
-              ))}
+        {/* Scrollable middle: conversations + materials */}
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+
+          {/* Conversations */}
+          <div className="overflow-y-auto px-2 space-y-4 pb-3 shrink-0" style={{ maxHeight: '45%' }}>
+            <div>
+              <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                <span>Your conversations</span>
+                <button type="button" className="text-indigo-500 hover:text-indigo-700 normal-case text-[10px] font-normal transition-colors">
+                  Clear all
+                </button>
+              </p>
+              <div className="space-y-0.5">
+                {TODAY_CONVS.map((c) => (
+                  <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} />
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider">Last 7 Days</p>
+              <div className="space-y-0.5">
+                {WEEK_CONVS.map((c) => (
+                  <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} />
+                ))}
+              </div>
             </div>
           </div>
 
-          <div>
-            <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider">Last 7 Days</p>
-            <div className="space-y-0.5">
-              {WEEK_CONVS.map((c) => (
-                <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} />
-              ))}
+          {/* Materials */}
+          <div className="flex-1 min-h-0 flex flex-col border-t border-gray-200 pt-2">
+            {/* Header row */}
+            <div className="px-3 py-1 flex items-center justify-between">
+              <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Your Materials</span>
+              <button
+                type="button"
+                onClick={handleSelectAllMaterials}
+                title={selectAllMaterials ? 'Deselect all' : 'Select all'}
+                className={`flex-shrink-0 w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${
+                  selectAllMaterials
+                    ? 'bg-indigo-500 border-indigo-500'
+                    : 'border-gray-300 hover:border-indigo-400'
+                }`}
+              >
+                {selectAllMaterials && (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24"
+                    fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+              </button>
+            </div>
+
+            {/* Materials list */}
+            <div className="flex-1 overflow-y-auto px-2 pb-3">
+              {materials.length === 0 ? (
+                <p className="px-3 py-2 text-[10px] text-gray-400 italic">No materials uploaded yet.</p>
+              ) : (
+                <div className="space-y-0.5">
+                  {materials.map((m) => (
+                    <div
+                      key={m.id}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default"
+                    >
+                      <FileTypeBadge name={m.name} />
+                      <span className="flex-1 truncate min-w-0">{m.name}</span>
+                      <MaterialCheckbox
+                        checked={isMaterialChecked(m.id)}
+                        onToggle={() => handleToggleMaterial(m.id)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
+
         </div>
 
         {/* Bottom: user */}
@@ -369,6 +569,13 @@ export default function ChatTab({ course, userData, sessionToken }) {
 
       {/* ── Main chat ── */}
       <div className="flex-1 flex flex-col min-w-0 relative">
+
+        {/* Switched-to banner */}
+        {switchBanner && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 px-4 py-1.5 rounded-full bg-gray-900 text-white text-xs font-medium shadow-lg whitespace-nowrap pointer-events-none select-none">
+            Switched to {switchBanner} ⚡
+          </div>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-6 pt-5 pb-20 space-y-6">
@@ -403,13 +610,12 @@ export default function ChatTab({ course, userData, sessionToken }) {
         {/* Input bar - floating overlay */}
         <div className="absolute bottom-0 left-0 right-0 px-4 pb-4 pt-6 bg-gradient-to-t from-white via-white/90 to-transparent">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-gray-200 bg-white hover:shadow-lg focus-within:border-indigo-300 focus-within:shadow-lg transition-all" style={{ boxShadow: '0 4px 24px 0 rgba(0,0,0,0.13)' }}>
-            <div className="w-7 flex-shrink-0" />
             <textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={`Ask about ${course?.title || 'this course'}…`}
+              placeholder="Reply…"
               rows={1}
               className="flex-1 bg-transparent resize-none text-xs text-gray-800 placeholder-gray-400 focus:outline-none leading-relaxed self-center"
               style={{ maxHeight: '80px', overflowY: 'auto' }}
@@ -418,6 +624,38 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 e.target.style.height = Math.min(e.target.scrollHeight, 80) + 'px';
               }}
             />
+            {/* Model selector */}
+            {availableModels.length > 0 && (
+              <div className="relative flex-shrink-0" ref={dropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setModelDropdownOpen((o) => !o)}
+                  className="flex items-center gap-0.5 text-gray-400 text-xs hover:text-gray-600 transition-colors"
+                >
+                  <span>{MODEL_LABELS[selectedModel] || selectedModel}</span>
+                  <ChevronDownIcon />
+                </button>
+                {modelDropdownOpen && (
+                  <div className="absolute bottom-full right-0 mb-2 bg-gray-900 rounded-xl shadow-xl py-1 min-w-[130px] z-50 border border-gray-700/60">
+                    {availableModels.map((provider) => (
+                      <button
+                        key={provider}
+                        type="button"
+                        onClick={() => handleModelSelect(provider)}
+                        className="w-full flex items-center justify-between px-3 py-2 text-[11px] text-left transition-colors rounded-lg hover:bg-gray-700/70"
+                      >
+                        <span className={selectedModel === provider ? 'text-white font-medium' : 'text-gray-300'}>
+                          {MODEL_LABELS[provider] || provider}
+                        </span>
+                        {selectedModel === provider && (
+                          <span className="text-indigo-400"><CheckIcon /></span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <button
               type="button"
               onClick={handleSend}
