@@ -326,10 +326,13 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const [materials, setMaterials] = useState([]);
   const [selectedMaterials, setSelectedMaterials] = useState(new Set());
   const [selectAllMaterials, setSelectAllMaterials] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(224);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const dropdownRef = useRef(null);
   const bannerTimerRef = useRef(null);
+  const containerRef = useRef(null);
+  const isDraggingRef = useRef(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -403,6 +406,38 @@ export default function ChatTab({ course, userData, sessionToken }) {
     return selectAllMaterials || selectedMaterials.has(id);
   }
 
+  function handleDownloadMaterial(m) {
+    if (!m.download_url) return;
+    const a = document.createElement('a');
+    a.href = m.download_url;
+    a.download = m.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  function handleDragStart(e) {
+    e.preventDefault();
+    isDraggingRef.current = true;
+
+    function onMouseMove(ev) {
+      if (!isDraggingRef.current || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const maxWidth = rect.width * 0.35;
+      const newWidth = Math.min(maxWidth, Math.max(160, ev.clientX - rect.left));
+      setSidebarWidth(newWidth);
+    }
+
+    function onMouseUp() {
+      isDraggingRef.current = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    }
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }
+
   function handleNewChat() {
     setMessages([]);
     setActiveConv(null);
@@ -442,10 +477,10 @@ export default function ChatTab({ course, userData, sessionToken }) {
   }
 
   return (
-    <div className="flex rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm" style={{ height: '68vh', minHeight: '520px' }}>
+    <div ref={containerRef} className="flex rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm" style={{ height: '68vh', minHeight: '520px' }}>
 
       {/* ── Sidebar ── */}
-      <div className="w-56 flex-shrink-0 border-r border-gray-100 bg-gray-50/80 flex flex-col">
+      <div className="flex-shrink-0 bg-gray-50/80 flex flex-col" style={{ width: sidebarWidth }}>
         {/* Logo / title */}
         <div className="px-4 pt-5 pb-3">
           <div className="flex items-center gap-2 mb-4">
@@ -527,7 +562,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
             </div>
 
             {/* Materials list */}
-            <div className="flex-1 overflow-y-auto px-2 pb-3">
+            <div className="flex-1 overflow-y-auto pb-3">
               {materials.length === 0 ? (
                 <p className="px-3 py-2 text-[10px] text-gray-400 italic">No materials uploaded yet.</p>
               ) : (
@@ -538,7 +573,11 @@ export default function ChatTab({ course, userData, sessionToken }) {
                       className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default"
                     >
                       <FileTypeBadge name={m.name} />
-                      <span className="flex-1 truncate min-w-0">{m.name}</span>
+                      <span
+                        className="flex-1 truncate min-w-0 hover:underline cursor-pointer"
+                        onClick={() => handleDownloadMaterial(m)}
+                        title={m.name}
+                      >{m.name}</span>
                       <MaterialCheckbox
                         checked={isMaterialChecked(m.id)}
                         onToggle={() => handleToggleMaterial(m.id)}
@@ -566,6 +605,12 @@ export default function ChatTab({ course, userData, sessionToken }) {
           </div>
         )}
       </div>
+
+      {/* ── Drag handle ── */}
+      <div
+        onMouseDown={handleDragStart}
+        className="w-1 flex-shrink-0 cursor-col-resize bg-gray-100 hover:bg-indigo-300 active:bg-indigo-400 transition-colors"
+      />
 
       {/* ── Main chat ── */}
       <div className="flex-1 flex flex-col min-w-0 relative">
