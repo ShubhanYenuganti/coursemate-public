@@ -141,7 +141,7 @@ function ConvItem({ conv, active, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
+      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-xs transition-colors ${
         active
           ? 'bg-indigo-50 text-indigo-700 font-medium'
           : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
@@ -206,17 +206,14 @@ function MessageBubble({ msg, courseName, userPicture }) {
   }
 
   return (
-    <div className="flex items-start gap-3">
-      <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0 mt-0.5">
-        <SparkleIcon />
-      </div>
+    <div className="flex items-start">
+      <div className="w-10 flex-shrink-0" />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-2">
           <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wide">
             {courseName || 'CourseMate AI'}
           </span>
           <span className="w-1 h-1 rounded-full bg-indigo-300" />
-          <SparkleIcon />
         </div>
         <div className="text-sm text-gray-700 leading-relaxed space-y-0.5">
           {renderContent(msg.content)}
@@ -305,27 +302,36 @@ export default function ChatTab({ course, userData, sessionToken }) {
         {/* Logo / title */}
         <div className="px-4 pt-5 pb-3">
           <div className="flex items-center gap-2 mb-4">
-            <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center">
-              <SparkleIcon />
-            </div>
             <span className="font-bold text-gray-900 text-sm">Course Chat</span>
           </div>
-          <button
-            type="button"
-            onClick={handleNewChat}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
-          >
-            <PlusIcon />
-            New chat
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleNewChat}
+              className="flex-1 flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-full bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-colors shadow-sm"
+            >
+              <PlusIcon />
+              New chat
+            </button>
+            <button
+              type="button"
+              className="flex-shrink-0 p-1.5 text-gray-800 hover:text-indigo-600 transition-colors"
+              title="Search"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Conversations */}
         <div className="flex-1 overflow-y-auto px-2 space-y-4 pb-4">
           <div>
-            <p className="px-3 py-1 text-xs font-medium text-gray-400 uppercase tracking-wide flex items-center justify-between">
+            <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider flex items-center justify-between">
               <span>Your conversations</span>
-              <button type="button" className="text-indigo-500 hover:text-indigo-700 normal-case text-xs font-normal transition-colors">
+              <button type="button" className="text-indigo-500 hover:text-indigo-700 normal-case text-[10px] font-normal transition-colors">
                 Clear all
               </button>
             </p>
@@ -337,7 +343,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
           </div>
 
           <div>
-            <p className="px-3 py-1 text-xs font-medium text-gray-400 uppercase tracking-wide">Last 7 Days</p>
+            <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider">Last 7 Days</p>
             <div className="space-y-0.5">
               {WEEK_CONVS.map((c) => (
                 <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} />
@@ -362,15 +368,12 @@ export default function ChatTab({ course, userData, sessionToken }) {
       </div>
 
       {/* ── Main chat ── */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 relative">
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+        <div className="flex-1 overflow-y-auto px-6 pt-5 pb-20 space-y-6">
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center gap-3 text-center">
-              <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center">
-                <div className="text-indigo-500 scale-150"><SparkleIcon /></div>
-              </div>
+            <div className="h-full flex flex-col items-center justify-center gap-2 text-center">
               <p className="text-base font-semibold text-gray-800">Ask me anything about {course?.title || 'this course'}</p>
               <p className="text-sm text-gray-400 max-w-xs">I can explain concepts, quiz you on the material, summarize lectures, and more.</p>
             </div>
@@ -385,10 +388,8 @@ export default function ChatTab({ course, userData, sessionToken }) {
             ))
           )}
           {sending && (
-            <div className="flex items-start gap-3">
-              <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
-                <SparkleIcon />
-              </div>
+            <div className="flex items-start">
+              <div className="w-10 flex-shrink-0" />
               <div className="flex items-center gap-1 pt-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }} />
                 <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }} />
@@ -399,12 +400,10 @@ export default function ChatTab({ course, userData, sessionToken }) {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input bar */}
-        <div className="border-t border-gray-100 p-4">
-          <div className="flex items-end gap-3 px-4 py-3 rounded-2xl border border-gray-200 bg-gray-50 focus-within:border-indigo-300 focus-within:bg-white transition-all shadow-sm">
-            <div className="w-5 h-5 flex-shrink-0 mb-0.5 text-indigo-400">
-              <SparkleIcon />
-            </div>
+        {/* Input bar - floating overlay */}
+        <div className="absolute bottom-0 left-0 right-0 px-4 pb-4 pt-6 bg-gradient-to-t from-white via-white/90 to-transparent">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-gray-200 bg-white hover:shadow-lg focus-within:border-indigo-300 focus-within:shadow-lg transition-all" style={{ boxShadow: '0 4px 24px 0 rgba(0,0,0,0.13)' }}>
+            <div className="w-7 flex-shrink-0" />
             <textarea
               ref={textareaRef}
               value={input}
@@ -412,23 +411,23 @@ export default function ChatTab({ course, userData, sessionToken }) {
               onKeyDown={handleKeyDown}
               placeholder={`Ask about ${course?.title || 'this course'}…`}
               rows={1}
-              className="flex-1 bg-transparent resize-none text-sm text-gray-800 placeholder-gray-400 focus:outline-none leading-relaxed"
-              style={{ maxHeight: '120px', overflowY: 'auto' }}
+              className="flex-1 bg-transparent resize-none text-xs text-gray-800 placeholder-gray-400 focus:outline-none leading-relaxed self-center"
+              style={{ maxHeight: '80px', overflowY: 'auto' }}
               onInput={(e) => {
                 e.target.style.height = 'auto';
-                e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+                e.target.style.height = Math.min(e.target.scrollHeight, 80) + 'px';
               }}
             />
             <button
               type="button"
               onClick={handleSend}
               disabled={!input.trim() || sending}
-              className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
+              className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
             >
               <SendIcon />
             </button>
           </div>
-          <p className="text-center text-xs text-gray-400 mt-2">
+          <p className="text-center text-[10px] text-gray-400 mt-1.5">
             AI responses are based on your uploaded course materials.
           </p>
         </div>
