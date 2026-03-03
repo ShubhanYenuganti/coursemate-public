@@ -477,7 +477,14 @@ export default function ChatTab({ course, userData, sessionToken }) {
   }
 
   return (
-    <div ref={containerRef} className="flex rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm" style={{ height: '68vh', minHeight: '520px' }}>
+    <div ref={containerRef} className="relative flex rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm" style={{ height: '68vh', minHeight: '520px' }}>
+
+      {/* Switched-to banner — centred over the full modal */}
+      {switchBanner && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full bg-gray-900 text-white text-xs font-medium shadow-lg whitespace-nowrap pointer-events-none select-none">
+          Switched to {switchBanner} ⚡
+        </div>
+      )}
 
       {/* ── Sidebar ── */}
       <div className="flex-shrink-0 bg-gray-50/80 flex flex-col" style={{ width: sidebarWidth }}>
@@ -615,12 +622,6 @@ export default function ChatTab({ course, userData, sessionToken }) {
       {/* ── Main chat ── */}
       <div className="flex-1 flex flex-col min-w-0 relative">
 
-        {/* Switched-to banner */}
-        {switchBanner && (
-          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 px-4 py-1.5 rounded-full bg-gray-900 text-white text-xs font-medium shadow-lg whitespace-nowrap pointer-events-none select-none">
-            Switched to {switchBanner} ⚡
-          </div>
-        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-6 pt-5 pb-20 space-y-6">
