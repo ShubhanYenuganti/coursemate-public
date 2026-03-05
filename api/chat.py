@@ -166,6 +166,8 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 403, {"error": "Access denied to this course"})
             return
 
+        show_archived = params.get('archived', ['false'])[0].lower() == 'true'
+
         with get_db() as conn:
             cursor = conn.cursor()
             if q:
@@ -175,19 +177,19 @@ class handler(BaseHTTPRequestHandler):
                     FROM chats
                     WHERE course_id = %s
                       AND user_id = %s
-                      AND is_archived = FALSE
+                      AND is_archived = %s
                       AND to_tsvector('english', title) @@ plainto_tsquery('english', %s)
                     ORDER BY rank DESC, updated_at DESC
-                """, (q, course_id, user['id'], q))
+                """, (q, course_id, user['id'], show_archived, q))
             else:
                 cursor.execute("""
                     SELECT id, title, course_id, message_count, last_message_at, created_at, is_archived
                     FROM chats
                     WHERE course_id = %s
                       AND user_id = %s
-                      AND is_archived = FALSE
+                      AND is_archived = %s
                     ORDER BY last_message_at DESC NULLS LAST, created_at DESC
-                """, (course_id, user['id']))
+                """, (course_id, user['id'], show_archived))
             chats = cursor.fetchall()
             cursor.close()
 

@@ -97,6 +97,18 @@ function SparkleIcon() {
   );
 }
 
+function TrashIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </svg>
+  );
+}
+
 function ArchiveIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24"
@@ -243,6 +255,30 @@ function ConvItem({ conv, active, onClick, onArchive }) {
   );
 }
 
+function ArchivedConvItem({ conv, onDelete, onUnarchive }) {
+  return (
+    <div className="group w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors">
+      <button
+        type="button"
+        onClick={() => onDelete(conv.id)}
+        title="Delete permanently"
+        className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 transition-all text-gray-400 hover:text-red-500 hover:bg-red-50"
+      >
+        <TrashIcon />
+      </button>
+      <button
+        type="button"
+        onClick={() => onUnarchive(conv.id)}
+        title="Unarchive"
+        className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 transition-all text-gray-400 hover:text-indigo-500 hover:bg-indigo-50"
+      >
+        <UnarchiveIcon />
+      </button>
+      <span className="flex-1 truncate min-w-0">{conv.title}</span>
+    </div>
+  );
+}
+
 function MessageBubble({ msg, courseName, userPicture }) {
   const isUser = msg.role === 'user';
 
@@ -336,6 +372,9 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const [activeConv, setActiveConv] = useState(null);
   const [chats, setChats] = useState([]);
   const [chatsLoading, setChatsLoading] = useState(false);
+  const [archivedChats, setArchivedChats] = useState([]);
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [archivedLoading, setArchivedLoading] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -382,9 +421,22 @@ export default function ChatTab({ course, userData, sessionToken }) {
       .finally(() => setChatsLoading(false));
   }, [course?.id, sessionToken]);
 
+  // Fetch archived chats when the archived dropdown is opened
+  useEffect(() => {
+    if (!archivedOpen || !course?.id || !sessionToken) return;
+    setArchivedLoading(true);
+    fetch(`/api/chat?resource=chat&course_id=${course.id}&archived=true`, {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    })
+      .then((r) => r.json())
+      .then((data) => setArchivedChats(data.chats || []))
+      .catch(() => {})
+      .finally(() => setArchivedLoading(false));
+  }, [archivedOpen, course?.id, sessionToken]);
+
   // Load messages when active conversation changes
   useEffect(() => {
-    if (!activeConv || !sessionToken) return;
+    if (!activeConv || activeConv === '__new__' || !sessionToken) return;
     fetch(`/api/chat?resource=message&chat_id=${activeConv}`, {
       headers: { Authorization: `Bearer ${sessionToken}` },
     })
@@ -485,8 +537,13 @@ export default function ChatTab({ course, userData, sessionToken }) {
   }
 
   function handleNewChat() {
+    // Remove any stale temp entry then add a fresh optimistic one
+    setChats((prev) => [
+      { id: '__new__', title: 'New Chat', course_id: course?.id, message_count: 0, last_message_at: null, created_at: new Date().toISOString(), is_archived: false },
+      ...prev.filter((c) => c.id !== '__new__'),
+    ]);
+    setActiveConv('__new__');
     setMessages([]);
-    setActiveConv(null);
     setInput('');
   }
 
@@ -501,15 +558,42 @@ export default function ChatTab({ course, userData, sessionToken }) {
         body: JSON.stringify({ resource: 'chat', action: 'archive', chat_id: chatId, is_archived: isArchived }),
       });
       if (!res.ok) return;
-      // Remove from visible list (archived chats aren't shown), or update if unarchiving
-      setChats((prev) => isArchived
-        ? prev.filter((c) => c.id !== chatId)
-        : prev.map((c) => c.id === chatId ? { ...c, is_archived: false } : c)
-      );
-      if (activeConv === chatId && isArchived) {
-        setActiveConv(null);
-        setMessages([]);
-      }
+      const archived = chats.find((c) => c.id === chatId);
+      setChats((prev) => prev.filter((c) => c.id !== chatId));
+      if (archived) setArchivedChats((prev) => [{ ...archived, is_archived: true }, ...prev]);
+      if (activeConv === chatId) { setActiveConv(null); setMessages([]); }
+    } catch {}
+  }
+
+  async function handleUnarchiveChat(chatId) {
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ resource: 'chat', action: 'archive', chat_id: chatId, is_archived: false }),
+      });
+      if (!res.ok) return;
+      const unarchived = archivedChats.find((c) => c.id === chatId);
+      setArchivedChats((prev) => prev.filter((c) => c.id !== chatId));
+      if (unarchived) setChats((prev) => [{ ...unarchived, is_archived: false }, ...prev]);
+    } catch {}
+  }
+
+  async function handleDeleteArchivedChat(chatId) {
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ resource: 'chat', chat_id: chatId }),
+      });
+      if (!res.ok) return;
+      setArchivedChats((prev) => prev.filter((c) => c.id !== chatId));
     } catch {}
   }
 
@@ -556,8 +640,8 @@ export default function ChatTab({ course, userData, sessionToken }) {
     try {
       let chatId = activeConv;
 
-      // Lazily create a chat thread on first message
-      if (!chatId) {
+      // Create a chat thread if none exists or if this is the optimistic temp entry
+      if (!chatId || chatId === '__new__') {
         const title = text.slice(0, 80);
         const res = await fetch('/api/chat', {
           method: 'POST',
@@ -571,7 +655,8 @@ export default function ChatTab({ course, userData, sessionToken }) {
         if (!res.ok) throw new Error(chatData.error || 'Failed to create chat');
         chatId = chatData.chat.id;
         setActiveConv(chatId);
-        setChats((prev) => [chatData.chat, ...prev]);
+        // Replace the optimistic __new__ entry (or prepend if there wasn't one)
+        setChats((prev) => [chatData.chat, ...prev.filter((c) => c.id !== '__new__')]);
       }
 
       const contextIds = selectAllMaterials
@@ -717,6 +802,40 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 </div>
               </div>
             )}
+
+            {/* Archived dropdown */}
+            <div className="mt-1">
+              <button
+                type="button"
+                onClick={() => setArchivedOpen((o) => !o)}
+                className="w-full flex items-center gap-1.5 px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider hover:text-gray-600 transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24"
+                  fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ transform: archivedOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+                Archived
+              </button>
+              {archivedOpen && (
+                <div className="space-y-0.5 mt-0.5">
+                  {archivedLoading && (
+                    <p className="px-3 py-1 text-[10px] text-gray-400">Loading...</p>
+                  )}
+                  {!archivedLoading && archivedChats.length === 0 && (
+                    <p className="px-3 py-1 text-[10px] text-gray-400 italic">No archived chats.</p>
+                  )}
+                  {archivedChats.map((c) => (
+                    <ArchivedConvItem
+                      key={c.id}
+                      conv={c}
+                      onDelete={handleDeleteArchivedChat}
+                      onUnarchive={handleUnarchiveChat}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Materials */}
