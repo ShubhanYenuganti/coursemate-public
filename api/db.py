@@ -127,19 +127,144 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_course_members_user_id ON course_members(user_id);
             CREATE INDEX IF NOT EXISTS idx_course_members_course_role ON course_members(course_id, role);
 
-            CREATE TABLE IF NOT EXISTS chat_messages (
+            CREATE TABLE IF NOT EXISTS chats (
                 id SERIAL PRIMARY KEY,
                 course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                message_text TEXT NOT NULL,
-                ai_response TEXT,
-                visibility VARCHAR(20) NOT NULL DEFAULT 'private' CHECK (visibility IN ('public','private')),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                title VARCHAR(500) NOT NULL,
+                visibility VARCHAR(20) NOT NULL DEFAULT 'private' CHECK (visibility IN ('public', 'private')),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_message_at TIMESTAMP,
+                message_count INTEGER NOT NULL DEFAULT 0,
+                is_archived BOOLEAN NOT NULL DEFAULT FALSE
             );
 
-            CREATE INDEX IF NOT EXISTS idx_chat_course_created ON chat_messages(course_id, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_chat_user_course ON chat_messages(user_id, course_id);
-            CREATE INDEX IF NOT EXISTS idx_chat_course_visibility_created ON chat_messages(course_id, visibility, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_chats_course_updated
+                ON chats(course_id, updated_at DESC)
+                WHERE is_archived = FALSE;
+
+            CREATE INDEX IF NOT EXISTS idx_chats_user_course
+                ON chats(user_id, course_id, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_chats_title_search
+                ON chats USING GIN (to_tsvector('english', title));
+
+            CREATE INDEX IF NOT EXISTS idx_chats_course_visibility
+                ON chats(course_id, visibility, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id SERIAL PRIMARY KEY,
+                chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+                course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                parent_message_id INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL,
+                role VARCHAR(20) NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+                content TEXT NOT NULL,
+                ai_provider VARCHAR(20) CHECK (ai_provider IN ('gemini', 'openai', 'claude')),
+                ai_model VARCHAR(100),
+                temperature DECIMAL(3,2) CHECK (temperature >= 0 AND temperature <= 2),
+                max_tokens INTEGER CHECK (max_tokens > 0),
+                context_material_ids JSONB NOT NULL DEFAULT '[]',
+                retrieved_chunk_ids JSONB DEFAULT '[]',
+                context_token_count INTEGER,
+                response_token_count INTEGER,
+                response_time_ms INTEGER,
+                finish_reason VARCHAR(50),
+                message_index INTEGER NOT NULL,
+                is_edited BOOLEAN NOT NULL DEFAULT FALSE,
+                edited_at TIMESTAMP,
+                is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(chat_id, message_index)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_messages_chat_index
+                ON chat_messages(chat_id, message_index)
+                WHERE is_deleted = FALSE;
+
+            CREATE INDEX IF NOT EXISTS idx_messages_chat_content_search
+                ON chat_messages USING GIN (to_tsvector('english', content))
+                WHERE is_deleted = FALSE;
+
+            CREATE INDEX IF NOT EXISTS idx_messages_course_content_search
+                ON chat_messages(course_id)
+                INCLUDE (chat_id, content, created_at)
+                WHERE is_deleted = FALSE;
+
+            CREATE INDEX IF NOT EXISTS idx_messages_content_fulltext
+                ON chat_messages USING GIN (to_tsvector('english', content))
+                WHERE is_deleted = FALSE;
+
+            CREATE INDEX IF NOT EXISTS idx_messages_user_course
+                ON chat_messages(user_id, course_id, created_at DESC)
+                WHERE is_deleted = FALSE;
+
+            CREATE INDEX IF NOT EXISTS idx_messages_materials
+                ON chat_messages USING GIN (context_material_ids)
+                WHERE jsonb_array_length(context_material_ids) > 0;
+
+            CREATE INDEX IF NOT EXISTS idx_messages_created
+                ON chat_messages(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS chat_material_usage (
+                id SERIAL PRIMARY KEY,
+                chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+                material_id INTEGER NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+                first_used_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                usage_count INTEGER NOT NULL DEFAULT 1,
+                UNIQUE(chat_id, material_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_usage_chat ON chat_material_usage(chat_id);
+            CREATE INDEX IF NOT EXISTS idx_usage_material ON chat_material_usage(material_id);
+
+            CREATE OR REPLACE FUNCTION update_chat_on_message()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                UPDATE chats
+                SET
+                    updated_at = NEW.created_at,
+                    last_message_at = NEW.created_at,
+                    message_count = message_count + 1
+                WHERE id = NEW.chat_id;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            DROP TRIGGER IF EXISTS trigger_update_chat_on_message ON chat_messages;
+            CREATE TRIGGER trigger_update_chat_on_message
+                AFTER INSERT ON chat_messages
+                FOR EACH ROW
+                EXECUTE FUNCTION update_chat_on_message();
+
+            CREATE OR REPLACE FUNCTION track_material_usage()
+            RETURNS TRIGGER AS $$
+            DECLARE
+                material_id_val INTEGER;
+            BEGIN
+                IF jsonb_array_length(NEW.context_material_ids) > 0 THEN
+                    FOR material_id_val IN
+                        SELECT jsonb_array_elements_text(NEW.context_material_ids)::INTEGER
+                    LOOP
+                        INSERT INTO chat_material_usage (chat_id, material_id)
+                        VALUES (NEW.chat_id, material_id_val)
+                        ON CONFLICT (chat_id, material_id)
+                        DO UPDATE SET
+                            last_used_at = CURRENT_TIMESTAMP,
+                            usage_count = chat_material_usage.usage_count + 1;
+                    END LOOP;
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            DROP TRIGGER IF EXISTS trigger_track_material_usage ON chat_messages;
+            CREATE TRIGGER trigger_track_material_usage
+                AFTER INSERT ON chat_messages
+                FOR EACH ROW
+                EXECUTE FUNCTION track_material_usage();
 
             CREATE TABLE IF NOT EXISTS material_generations (
                 id SERIAL PRIMARY KEY,

@@ -1,0 +1,532 @@
+# Vercel Python Serverless Function — Chat
+# GET    /api/chat?resource=chat&course_id=<id>              → list chats
+# GET    /api/chat?resource=chat&course_id=<id>&q=<query>    → search chat titles
+# GET    /api/chat?resource=message&chat_id=<id>             → list messages
+# GET    /api/chat?resource=message&chat_id=<id>&q=<query>   → search within chat
+# GET    /api/chat?resource=message&course_id=<id>&q=<query> → search across course
+# POST   /api/chat  resource="chat"    action="create"       → create chat
+# POST   /api/chat  resource="chat"    action="update"       → rename chat
+# POST   /api/chat  resource="chat"    action="archive"      → archive/unarchive chat
+# POST   /api/chat  resource="message" action="send"         → send message + AI reply
+# POST   /api/chat  resource="message" action="delete"       → soft-delete message
+# DELETE /api/chat  resource="chat"                          → hard-delete chat
+
+import json
+from http.server import BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+
+try:
+    from .middleware import send_json, handle_options, authenticate_request, sanitize_string, check_rate_limit
+    from .models import User
+    from .courses import Course
+    from .db import get_db
+except ImportError:
+    from middleware import send_json, handle_options, authenticate_request, sanitize_string, check_rate_limit
+    from models import User
+    from courses import Course
+    from db import get_db
+
+
+# ------------------------------------------------------------------ helpers --
+
+def _get_chat(conn, chat_id):
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM chats WHERE id = %s", (chat_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    return row
+
+
+def _next_message_index(conn, chat_id):
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COALESCE(MAX(message_index) + 1, 0) AS next_idx FROM chat_messages WHERE chat_id = %s",
+        (chat_id,)
+    )
+    row = cursor.fetchone()
+    cursor.close()
+    return row['next_idx']
+
+
+def _parse_body(handler):
+    try:
+        content_length = int(handler.headers.get('Content-Length', 0))
+        body = handler.rfile.read(content_length).decode('utf-8')
+        return json.loads(body) if body else {}, None
+    except (ValueError, json.JSONDecodeError):
+        return None, "Invalid request body"
+
+
+class handler(BaseHTTPRequestHandler):
+    def do_OPTIONS(self):
+        handle_options(self)
+
+    # ------------------------------------------------------------------ GET --
+    def do_GET(self):
+        google_id, _ = authenticate_request(self)
+        if not google_id:
+            send_json(self, 401, {"error": "Unauthorized"})
+            return
+
+        user = User.get_by_google_id(google_id)
+        if not user:
+            send_json(self, 404, {"error": "User not found"})
+            return
+
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+
+        resource = params.get('resource', ['chat'])[0]
+        q = params.get('q', [None])[0]
+
+        if resource == 'chat':
+            self._list_or_search_chats(user, params, q)
+        elif resource == 'message':
+            self._list_or_search_messages(user, params, q)
+        else:
+            send_json(self, 400, {"error": f"Unknown resource '{resource}'"})
+
+    # ----------------------------------------------------------------- POST --
+    def do_POST(self):
+        google_id, _ = authenticate_request(self)
+        if not google_id:
+            send_json(self, 401, {"error": "Unauthorized"})
+            return
+
+        user = User.get_by_google_id(google_id)
+        if not user:
+            send_json(self, 404, {"error": "User not found"})
+            return
+
+        data, err = _parse_body(self)
+        if err:
+            send_json(self, 400, {"error": err})
+            return
+
+        resource = data.get('resource', 'chat')
+        action = data.get('action')
+
+        if resource == 'chat':
+            if action == 'create':
+                self._create_chat(user, data)
+            elif action == 'update':
+                self._update_chat(user, data)
+            elif action == 'archive':
+                self._archive_chat(user, data)
+            else:
+                send_json(self, 400, {"error": f"Unknown action '{action}' for resource 'chat'"})
+        elif resource == 'message':
+            if action == 'send':
+                if not check_rate_limit(self, max_rpm=10):
+                    send_json(self, 429, {"error": "Rate limit exceeded"})
+                    return
+                self._send_message(user, data)
+            elif action == 'delete':
+                self._delete_message(user, data)
+            else:
+                send_json(self, 400, {"error": f"Unknown action '{action}' for resource 'message'"})
+        else:
+            send_json(self, 400, {"error": f"Unknown resource '{resource}'"})
+
+    # --------------------------------------------------------------- DELETE --
+    def do_DELETE(self):
+        google_id, _ = authenticate_request(self)
+        if not google_id:
+            send_json(self, 401, {"error": "Unauthorized"})
+            return
+
+        user = User.get_by_google_id(google_id)
+        if not user:
+            send_json(self, 404, {"error": "User not found"})
+            return
+
+        data, err = _parse_body(self)
+        if err:
+            send_json(self, 400, {"error": err})
+            return
+
+        resource = data.get('resource', 'chat')
+        if resource == 'chat':
+            self._delete_chat(user, data)
+        else:
+            send_json(self, 400, {"error": f"Unknown resource '{resource}'"})
+
+    # ----------------------------------------------------------- GET helpers --
+
+    def _list_or_search_chats(self, user, params, q):
+        course_id_raw = params.get('course_id', [None])[0]
+        if not course_id_raw or not course_id_raw.isdigit():
+            send_json(self, 400, {"error": "course_id query parameter is required"})
+            return
+        course_id = int(course_id_raw)
+
+        if not Course.verify_access(course_id, user['id']):
+            send_json(self, 403, {"error": "Access denied to this course"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            if q:
+                cursor.execute("""
+                    SELECT id, title, course_id, message_count, last_message_at, created_at, is_archived,
+                           ts_rank(to_tsvector('english', title), plainto_tsquery('english', %s)) AS rank
+                    FROM chats
+                    WHERE course_id = %s
+                      AND user_id = %s
+                      AND is_archived = FALSE
+                      AND to_tsvector('english', title) @@ plainto_tsquery('english', %s)
+                    ORDER BY rank DESC, updated_at DESC
+                """, (q, course_id, user['id'], q))
+            else:
+                cursor.execute("""
+                    SELECT id, title, course_id, message_count, last_message_at, created_at, is_archived
+                    FROM chats
+                    WHERE course_id = %s
+                      AND user_id = %s
+                      AND is_archived = FALSE
+                    ORDER BY last_message_at DESC NULLS LAST, created_at DESC
+                """, (course_id, user['id']))
+            chats = cursor.fetchall()
+            cursor.close()
+
+        send_json(self, 200, {"chats": chats})
+
+    def _list_or_search_messages(self, user, params, q):
+        chat_id_raw = params.get('chat_id', [None])[0]
+        course_id_raw = params.get('course_id', [None])[0]
+
+        # Search across a course
+        if q and course_id_raw and not chat_id_raw:
+            if not course_id_raw.isdigit():
+                send_json(self, 400, {"error": "course_id must be an integer"})
+                return
+            course_id = int(course_id_raw)
+            if not Course.verify_access(course_id, user['id']):
+                send_json(self, 403, {"error": "Access denied to this course"})
+                return
+
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT cm.id, cm.chat_id, c.title AS chat_title,
+                           cm.role, cm.content, cm.created_at,
+                           ts_rank(to_tsvector('english', cm.content), plainto_tsquery('english', %s)) AS rank
+                    FROM chat_messages cm
+                    JOIN chats c ON c.id = cm.chat_id
+                    WHERE cm.course_id = %s
+                      AND cm.user_id = %s
+                      AND cm.is_deleted = FALSE
+                      AND to_tsvector('english', cm.content) @@ plainto_tsquery('english', %s)
+                    ORDER BY rank DESC, cm.created_at DESC
+                    LIMIT 50
+                """, (q, course_id, user['id'], q))
+                results = cursor.fetchall()
+                cursor.close()
+            send_json(self, 200, {"results": results})
+            return
+
+        # Require chat_id for all other message queries
+        if not chat_id_raw or not chat_id_raw.isdigit():
+            send_json(self, 400, {"error": "chat_id query parameter is required"})
+            return
+        chat_id = int(chat_id_raw)
+
+        with get_db() as conn:
+            chat = _get_chat(conn, chat_id)
+            if not chat:
+                send_json(self, 404, {"error": "Chat not found"})
+                return
+            if chat['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Access denied to this chat"})
+                return
+
+            cursor = conn.cursor()
+            if q:
+                cursor.execute("""
+                    SELECT id, role, content, message_index, created_at,
+                           ts_rank(to_tsvector('english', content), plainto_tsquery('english', %s)) AS rank
+                    FROM chat_messages
+                    WHERE chat_id = %s
+                      AND is_deleted = FALSE
+                      AND to_tsvector('english', content) @@ plainto_tsquery('english', %s)
+                    ORDER BY rank DESC, message_index
+                """, (q, chat_id, q))
+                results = cursor.fetchall()
+                cursor.close()
+                send_json(self, 200, {"results": results})
+            else:
+                limit_raw = params.get('limit', ['100'])[0]
+                before_raw = params.get('before_index', [None])[0]
+                limit = min(int(limit_raw) if limit_raw.isdigit() else 100, 200)
+
+                if before_raw and before_raw.isdigit():
+                    cursor.execute("""
+                        SELECT id, chat_id, role, content, ai_provider, ai_model,
+                               context_material_ids, retrieved_chunk_ids, context_token_count,
+                               response_token_count, response_time_ms, finish_reason,
+                               message_index, created_at
+                        FROM chat_messages
+                        WHERE chat_id = %s
+                          AND is_deleted = FALSE
+                          AND message_index < %s
+                        ORDER BY message_index DESC
+                        LIMIT %s
+                    """, (chat_id, int(before_raw), limit))
+                else:
+                    cursor.execute("""
+                        SELECT id, chat_id, role, content, ai_provider, ai_model,
+                               context_material_ids, retrieved_chunk_ids, context_token_count,
+                               response_token_count, response_time_ms, finish_reason,
+                               message_index, created_at
+                        FROM chat_messages
+                        WHERE chat_id = %s
+                          AND is_deleted = FALSE
+                        ORDER BY message_index ASC
+                        LIMIT %s
+                    """, (chat_id, limit))
+                messages = cursor.fetchall()
+                cursor.close()
+                send_json(self, 200, {"messages": messages})
+
+    # ---------------------------------------------------------- POST helpers --
+
+    def _create_chat(self, user, data):
+        course_id = data.get('course_id')
+        title = sanitize_string(data.get('title', '') or '', max_length=500)
+
+        if not isinstance(course_id, int):
+            send_json(self, 400, {"error": "course_id is required"})
+            return
+        if not title:
+            send_json(self, 400, {"error": "title is required"})
+            return
+
+        if not Course.verify_access(course_id, user['id']):
+            send_json(self, 403, {"error": "Access denied to this course"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO chats (course_id, user_id, title)
+                VALUES (%s, %s, %s)
+                RETURNING id, course_id, user_id, title, visibility, message_count,
+                          last_message_at, created_at, updated_at, is_archived
+            """, (course_id, user['id'], title))
+            chat = cursor.fetchone()
+            cursor.close()
+
+        send_json(self, 201, {"chat": chat})
+
+    def _update_chat(self, user, data):
+        chat_id = data.get('chat_id')
+        title = sanitize_string(data.get('title', '') or '', max_length=500)
+
+        if not isinstance(chat_id, int):
+            send_json(self, 400, {"error": "chat_id is required"})
+            return
+        if not title:
+            send_json(self, 400, {"error": "title is required"})
+            return
+
+        with get_db() as conn:
+            chat = _get_chat(conn, chat_id)
+            if not chat:
+                send_json(self, 404, {"error": "Chat not found"})
+                return
+            if chat['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Only the chat owner can rename it"})
+                return
+
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE chats SET title = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                RETURNING id, course_id, user_id, title, visibility, message_count,
+                          last_message_at, created_at, updated_at, is_archived
+            """, (title, chat_id))
+            updated = cursor.fetchone()
+            cursor.close()
+
+        send_json(self, 200, {"chat": updated})
+
+    def _archive_chat(self, user, data):
+        chat_id = data.get('chat_id')
+        is_archived = data.get('is_archived')
+
+        if not isinstance(chat_id, int):
+            send_json(self, 400, {"error": "chat_id is required"})
+            return
+        if not isinstance(is_archived, bool):
+            send_json(self, 400, {"error": "is_archived (boolean) is required"})
+            return
+
+        with get_db() as conn:
+            chat = _get_chat(conn, chat_id)
+            if not chat:
+                send_json(self, 404, {"error": "Chat not found"})
+                return
+            if chat['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Only the chat owner can archive it"})
+                return
+
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE chats SET is_archived = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                RETURNING id, course_id, user_id, title, visibility, message_count,
+                          last_message_at, created_at, updated_at, is_archived
+            """, (is_archived, chat_id))
+            updated = cursor.fetchone()
+            cursor.close()
+
+        send_json(self, 200, {"chat": updated})
+
+    def _send_message(self, user, data):
+        chat_id = data.get('chat_id')
+        content = sanitize_string(data.get('content', '') or '', max_length=10000)
+        context_material_ids = data.get('context_material_ids') or []
+        ai_provider = data.get('ai_provider')
+        ai_model = data.get('ai_model')
+        temperature = data.get('temperature')
+        max_tokens = data.get('max_tokens')
+
+        if not isinstance(chat_id, int):
+            send_json(self, 400, {"error": "chat_id is required"})
+            return
+        if not content:
+            send_json(self, 400, {"error": "content is required"})
+            return
+        if ai_provider not in ('gemini', 'openai', 'claude'):
+            send_json(self, 400, {"error": "ai_provider must be one of: gemini, openai, claude"})
+            return
+        if not ai_model:
+            send_json(self, 400, {"error": "ai_model is required"})
+            return
+        if not isinstance(context_material_ids, list):
+            send_json(self, 400, {"error": "context_material_ids must be a list"})
+            return
+
+        with get_db() as conn:
+            chat = _get_chat(conn, chat_id)
+            if not chat:
+                send_json(self, 404, {"error": "Chat not found"})
+                return
+            if chat['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Access denied to this chat"})
+                return
+
+            # Validate material IDs belong to the chat's course
+            if context_material_ids:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id FROM materials
+                    WHERE id = ANY(%s::int[])
+                      AND course_id = %s
+                """, (context_material_ids, chat['course_id']))
+                valid_ids = {row['id'] for row in cursor.fetchall()}
+                cursor.close()
+                invalid = [mid for mid in context_material_ids if mid not in valid_ids]
+                if invalid:
+                    send_json(self, 400, {"error": f"Invalid material IDs for this course: {invalid}"})
+                    return
+
+            next_idx = _next_message_index(conn, chat_id)
+
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO chat_messages
+                    (chat_id, course_id, user_id, role, content,
+                     ai_provider, ai_model, temperature, max_tokens,
+                     context_material_ids, message_index)
+                VALUES (%s, %s, %s, 'user', %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, chat_id, role, content, context_material_ids,
+                          ai_provider, ai_model, message_index, created_at
+            """, (
+                chat_id, chat['course_id'], user['id'], content,
+                ai_provider, ai_model, temperature, max_tokens,
+                json.dumps(context_material_ids), next_idx,
+            ))
+            user_message = cursor.fetchone()
+
+            # AI reply placeholder — RAG + provider call not yet implemented
+            assistant_content = (
+                "AI response is currently in development. "
+                "RAG retrieval and provider integration coming soon."
+            )
+            cursor.execute("""
+                INSERT INTO chat_messages
+                    (chat_id, course_id, user_id, role, content,
+                     ai_provider, ai_model, context_material_ids,
+                     retrieved_chunk_ids, message_index)
+                VALUES (%s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
+                RETURNING id, chat_id, role, content, retrieved_chunk_ids,
+                          context_token_count, response_token_count,
+                          response_time_ms, finish_reason, message_index, created_at
+            """, (
+                chat_id, chat['course_id'], user['id'], assistant_content,
+                ai_provider, ai_model, json.dumps([]), json.dumps([]),
+                next_idx + 1,
+            ))
+            assistant_message = cursor.fetchone()
+            cursor.close()
+
+        send_json(self, 201, {
+            "user_message": user_message,
+            "assistant_message": assistant_message,
+        })
+
+    def _delete_message(self, user, data):
+        message_id = data.get('message_id')
+        if not isinstance(message_id, int):
+            send_json(self, 400, {"error": "message_id is required"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM chat_messages WHERE id = %s AND is_deleted = FALSE",
+                (message_id,)
+            )
+            msg = cursor.fetchone()
+            if not msg:
+                send_json(self, 404, {"error": "Message not found"})
+                cursor.close()
+                return
+            if msg['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Only the message author can delete it"})
+                cursor.close()
+                return
+
+            # Soft-delete the user message and the immediately following assistant reply
+            cursor.execute("""
+                UPDATE chat_messages
+                SET is_deleted = TRUE
+                WHERE chat_id = %s
+                  AND message_index IN (%s, %s)
+                  AND is_deleted = FALSE
+            """, (msg['chat_id'], msg['message_index'], msg['message_index'] + 1))
+            cursor.close()
+
+        send_json(self, 200, {"success": True})
+
+    def _delete_chat(self, user, data):
+        chat_id = data.get('chat_id')
+        if not isinstance(chat_id, int):
+            send_json(self, 400, {"error": "chat_id is required"})
+            return
+
+        with get_db() as conn:
+            chat = _get_chat(conn, chat_id)
+            if not chat:
+                send_json(self, 404, {"error": "Chat not found"})
+                return
+            if chat['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Only the chat owner can delete it"})
+                return
+
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM chats WHERE id = %s", (chat_id,))
+            cursor.close()
+
+        send_json(self, 200, {"success": True})
