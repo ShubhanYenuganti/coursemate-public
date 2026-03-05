@@ -97,6 +97,29 @@ function SparkleIcon() {
   );
 }
 
+function ArchiveIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="21 8 21 21 3 21 3 8" />
+      <rect x="1" y="3" width="22" height="5" />
+      <line x1="10" y1="12" x2="14" y2="12" />
+    </svg>
+  );
+}
+
+function UnarchiveIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="21 8 21 21 3 21 3 8" />
+      <rect x="1" y="3" width="22" height="5" />
+      <polyline points="10 15 12 12 14 15" />
+      <line x1="12" y1="12" x2="12" y2="17" />
+    </svg>
+  );
+}
+
 function ChevronDownIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
@@ -167,61 +190,56 @@ const MODEL_LABELS = {
   claude: 'Claude',
 };
 
-// ─── sample data ──────────────────────────────────────────────────────────────
+const MODEL_DEFAULTS = {
+  gemini: 'gemini-1.5-pro',
+  openai: 'gpt-4o',
+  claude: 'claude-opus-4-6',
+};
 
-const TODAY_CONVS = [
-  { id: 1, title: 'Explain key concepts from Week 3' },
-  { id: 2, title: 'Quiz me on Chapter 5' },
-  { id: 3, title: 'Summarize the lecture notes' },
-];
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
-const WEEK_CONVS = [
-  { id: 4, title: 'What topics will be on the exam?' },
-  { id: 5, title: 'Help with assignment 2' },
-  { id: 6, title: 'Clarify the homework instructions' },
-];
-
-const SAMPLE_MESSAGES = [
-  {
-    id: 1,
-    role: 'user',
-    content: 'Can you explain the key concepts from this week\'s lecture materials?',
-  },
-  {
-    id: 2,
-    role: 'assistant',
-    content: `Sure! Based on the course materials, here are the key concepts from this week:\n\n**1. Core Principles**\nThe foundational ideas introduced this week build on prior concepts and establish the framework for upcoming topics. Understanding these principles is essential for the assignments ahead.\n\n**2. Practical Applications**\nThe lecture demonstrates how theory maps to real-world scenarios. Pay close attention to the worked examples — they are commonly tested.\n\n**3. Common Pitfalls**\nStudents often confuse related terms. Review the definitions carefully and use the provided examples to distinguish between them.\n\nWould you like me to go deeper on any of these points, or quiz you on the material?`,
-  },
-  {
-    id: 3,
-    role: 'user',
-    content: 'Yes, please quiz me on the key concepts.',
-  },
-  {
-    id: 4,
-    role: 'assistant',
-    content: `Great! Let's start with a few questions:\n\n**Question 1:** In your own words, what is the primary objective introduced in the first section of this week's material?\n\nTake your time — when you're ready, type your answer and I'll give you feedback!`,
-  },
-];
+function groupChatsByDate(chats) {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const weekStart = new Date(todayStart.getTime() - 6 * 24 * 60 * 60 * 1000);
+  const today = [], lastWeek = [], older = [];
+  for (const chat of chats) {
+    const d = new Date(chat.last_message_at || chat.created_at);
+    if (d >= todayStart) today.push(chat);
+    else if (d >= weekStart) lastWeek.push(chat);
+    else older.push(chat);
+  }
+  return { today, lastWeek, older };
+}
 
 // ─── sub-components ───────────────────────────────────────────────────────────
 
-function ConvItem({ conv, active, onClick }) {
+function ConvItem({ conv, active, onClick, onArchive }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-xs transition-colors ${
-        active
-          ? 'bg-indigo-50 text-indigo-700 font-medium'
-          : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-      }`}
-    >
-      <span className={`flex-shrink-0 ${active ? 'text-indigo-500' : 'text-gray-400'}`}>
-        <ChatBubbleIcon />
-      </span>
-      <span className="truncate">{conv.title}</span>
-    </button>
+    <div className={`group w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs transition-colors ${
+      active
+        ? 'bg-indigo-50 text-indigo-700 font-medium'
+        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+    }`}>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onArchive(conv.id, !conv.is_archived); }}
+        title={conv.is_archived ? 'Unarchive' : 'Archive'}
+        className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 transition-all text-gray-400 hover:text-indigo-500 hover:bg-indigo-50"
+      >
+        {conv.is_archived ? <UnarchiveIcon /> : <ArchiveIcon />}
+      </button>
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex-1 flex items-center gap-2 min-w-0 text-left"
+      >
+        <span className={`flex-shrink-0 ${active ? 'text-indigo-500' : 'text-gray-400'}`}>
+          <ChatBubbleIcon />
+        </span>
+        <span className="truncate">{conv.title}</span>
+      </button>
+    </div>
   );
 }
 
@@ -315,8 +333,10 @@ function MessageBubble({ msg, courseName, userPicture }) {
 // ─── main component ───────────────────────────────────────────────────────────
 
 export default function ChatTab({ course, userData, sessionToken }) {
-  const [activeConv, setActiveConv] = useState(1);
-  const [messages, setMessages] = useState(SAMPLE_MESSAGES);
+  const [activeConv, setActiveConv] = useState(null);
+  const [chats, setChats] = useState([]);
+  const [chatsLoading, setChatsLoading] = useState(false);
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [selectedModel, setSelectedModel] = useState(null);
@@ -338,6 +358,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Load materials for this course
   useEffect(() => {
     if (!course?.id || !sessionToken) return;
     fetch(`/api/material?course_id=${course.id}`, {
@@ -348,6 +369,31 @@ export default function ChatTab({ course, userData, sessionToken }) {
       .catch(() => {});
   }, [course?.id, sessionToken]);
 
+  // Load chats for this course
+  useEffect(() => {
+    if (!course?.id || !sessionToken) return;
+    setChatsLoading(true);
+    fetch(`/api/chat?resource=chat&course_id=${course.id}`, {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    })
+      .then((r) => r.json())
+      .then((data) => setChats(data.chats || []))
+      .catch(() => {})
+      .finally(() => setChatsLoading(false));
+  }, [course?.id, sessionToken]);
+
+  // Load messages when active conversation changes
+  useEffect(() => {
+    if (!activeConv || !sessionToken) return;
+    fetch(`/api/chat?resource=message&chat_id=${activeConv}`, {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    })
+      .then((r) => r.json())
+      .then((data) => setMessages(data.messages || []))
+      .catch(() => {});
+  }, [activeConv, sessionToken]);
+
+  // Load available API-key-backed models
   useEffect(() => {
     if (!sessionToken) return;
     fetch('/api/user_api_keys', {
@@ -444,9 +490,50 @@ export default function ChatTab({ course, userData, sessionToken }) {
     setInput('');
   }
 
+  async function handleArchiveChat(chatId, isArchived) {
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ resource: 'chat', action: 'archive', chat_id: chatId, is_archived: isArchived }),
+      });
+      if (!res.ok) return;
+      // Remove from visible list (archived chats aren't shown), or update if unarchiving
+      setChats((prev) => isArchived
+        ? prev.filter((c) => c.id !== chatId)
+        : prev.map((c) => c.id === chatId ? { ...c, is_archived: false } : c)
+      );
+      if (activeConv === chatId && isArchived) {
+        setActiveConv(null);
+        setMessages([]);
+      }
+    } catch {}
+  }
+
+  async function handleClearAll() {
+    if (!course?.id) return;
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ resource: 'chat', action: 'archive_all', course_id: course.id }),
+      });
+      if (!res.ok) return;
+      setChats([]);
+      setActiveConv(null);
+      setMessages([]);
+    } catch {}
+  }
+
   function handleConvSelect(id) {
     setActiveConv(id);
-    setMessages(SAMPLE_MESSAGES);
+    setMessages([]);
   }
 
   function handleKeyDown(e) {
@@ -458,23 +545,76 @@ export default function ChatTab({ course, userData, sessionToken }) {
 
   async function handleSend() {
     const text = input.trim();
-    if (!text || sending) return;
+    if (!text || sending || !selectedModel) return;
     setInput('');
     setSending(true);
 
-    const userMsg = { id: Date.now(), role: 'user', content: text };
-    setMessages((prev) => [...prev, userMsg]);
+    const tempId = Date.now();
+    const tempUserMsg = { id: tempId, role: 'user', content: text };
+    setMessages((prev) => [...prev, tempUserMsg]);
 
-    // Placeholder — replace with real API call
-    await new Promise((r) => setTimeout(r, 800));
-    const aiMsg = {
-      id: Date.now() + 1,
-      role: 'assistant',
-      content: `I'm working on connecting to the course materials API. For now, here's a placeholder response to your question: "${text}"`,
-    };
-    setMessages((prev) => [...prev, aiMsg]);
-    setSending(false);
+    try {
+      let chatId = activeConv;
+
+      // Lazily create a chat thread on first message
+      if (!chatId) {
+        const title = text.slice(0, 80);
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${sessionToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ resource: 'chat', action: 'create', course_id: course.id, title }),
+        });
+        const chatData = await res.json();
+        if (!res.ok) throw new Error(chatData.error || 'Failed to create chat');
+        chatId = chatData.chat.id;
+        setActiveConv(chatId);
+        setChats((prev) => [chatData.chat, ...prev]);
+      }
+
+      const contextIds = selectAllMaterials
+        ? materials.map((m) => m.id)
+        : Array.from(selectedMaterials);
+
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          resource: 'message',
+          action: 'send',
+          chat_id: chatId,
+          content: text,
+          context_material_ids: contextIds,
+          ai_provider: selectedModel,
+          ai_model: MODEL_DEFAULTS[selectedModel] || selectedModel,
+        }),
+      });
+      const msgData = await res.json();
+      if (!res.ok) throw new Error(msgData.error || 'Failed to send message');
+
+      setMessages((prev) => [
+        ...prev.filter((m) => m.id !== tempId),
+        msgData.user_message,
+        msgData.assistant_message,
+      ]);
+      setChats((prev) => prev.map((c) =>
+        c.id === chatId
+          ? { ...c, last_message_at: msgData.assistant_message.created_at, message_count: (c.message_count || 0) + 2 }
+          : c
+      ));
+    } catch {
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+    } finally {
+      setSending(false);
+    }
   }
+
+  const { today, lastWeek, older } = groupChatsByDate(chats);
 
   return (
     <div ref={containerRef} className="relative flex rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm" style={{ height: '68vh', minHeight: '520px' }}>
@@ -520,28 +660,63 @@ export default function ChatTab({ course, userData, sessionToken }) {
 
           {/* Conversations */}
           <div className="overflow-y-auto px-2 space-y-4 pb-3 shrink-0" style={{ maxHeight: '45%' }}>
-            <div>
-              <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider flex items-center justify-between">
-                <span>Your conversations</span>
-                <button type="button" className="text-indigo-500 hover:text-indigo-700 normal-case text-[10px] font-normal transition-colors">
-                  Clear all
-                </button>
-              </p>
-              <div className="space-y-0.5">
-                {TODAY_CONVS.map((c) => (
-                  <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} />
-                ))}
+            {chatsLoading && (
+              <p className="px-3 py-2 text-[10px] text-gray-400">Loading...</p>
+            )}
+            {!chatsLoading && chats.length === 0 && (
+              <p className="px-3 py-2 text-[10px] text-gray-400 italic">No conversations yet.</p>
+            )}
+            {today.length > 0 && (
+              <div>
+                <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                  <span>Today</span>
+                  {chats.length > 0 && (
+                    <button type="button" onClick={handleClearAll} className="text-indigo-500 hover:text-indigo-700 normal-case text-[10px] font-normal transition-colors">
+                      Clear all
+                    </button>
+                  )}
+                </p>
+                <div className="space-y-0.5">
+                  {today.map((c) => (
+                    <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} onArchive={handleArchiveChat} />
+                  ))}
+                </div>
               </div>
-            </div>
-
-            <div>
-              <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider">Last 7 Days</p>
-              <div className="space-y-0.5">
-                {WEEK_CONVS.map((c) => (
-                  <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} />
-                ))}
+            )}
+            {lastWeek.length > 0 && (
+              <div>
+                <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                  <span>Last 7 Days</span>
+                  {today.length === 0 && chats.length > 0 && (
+                    <button type="button" onClick={handleClearAll} className="text-indigo-500 hover:text-indigo-700 normal-case text-[10px] font-normal transition-colors">
+                      Clear all
+                    </button>
+                  )}
+                </p>
+                <div className="space-y-0.5">
+                  {lastWeek.map((c) => (
+                    <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} onArchive={handleArchiveChat} />
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
+            {older.length > 0 && (
+              <div>
+                <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                  <span>Older</span>
+                  {today.length === 0 && lastWeek.length === 0 && (
+                    <button type="button" onClick={handleClearAll} className="text-indigo-500 hover:text-indigo-700 normal-case text-[10px] font-normal transition-colors">
+                      Clear all
+                    </button>
+                  )}
+                </p>
+                <div className="space-y-0.5">
+                  {older.map((c) => (
+                    <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} onArchive={handleArchiveChat} />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Materials */}
@@ -621,7 +796,6 @@ export default function ChatTab({ course, userData, sessionToken }) {
 
       {/* ── Main chat ── */}
       <div className="flex-1 flex flex-col min-w-0 relative">
-
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-6 pt-5 pb-20 space-y-6">
@@ -705,7 +879,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
             <button
               type="button"
               onClick={handleSend}
-              disabled={!input.trim() || sending}
+              disabled={!input.trim() || sending || !selectedModel}
               className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
             >
               <SendIcon />

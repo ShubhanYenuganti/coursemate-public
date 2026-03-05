@@ -113,6 +113,8 @@ class handler(BaseHTTPRequestHandler):
                 self._update_chat(user, data)
             elif action == 'archive':
                 self._archive_chat(user, data)
+            elif action == 'archive_all':
+                self._archive_all_chats(user, data)
             else:
                 send_json(self, 400, {"error": f"Unknown action '{action}' for resource 'chat'"})
         elif resource == 'message':
@@ -381,6 +383,26 @@ class handler(BaseHTTPRequestHandler):
             cursor.close()
 
         send_json(self, 200, {"chat": updated})
+
+    def _archive_all_chats(self, user, data):
+        course_id = data.get('course_id')
+        if not isinstance(course_id, int):
+            send_json(self, 400, {"error": "course_id is required"})
+            return
+
+        if not Course.verify_access(course_id, user['id']):
+            send_json(self, 403, {"error": "Access denied to this course"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE chats SET is_archived = TRUE, updated_at = CURRENT_TIMESTAMP
+                WHERE course_id = %s AND user_id = %s AND is_archived = FALSE
+            """, (course_id, user['id']))
+            cursor.close()
+
+        send_json(self, 200, {"success": True})
 
     def _send_message(self, user, data):
         chat_id = data.get('chat_id')
