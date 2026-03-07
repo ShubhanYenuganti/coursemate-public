@@ -58,7 +58,15 @@ function ToolbarItem({ icon, label, active, onClick }) {
 
 export default function CoursePage({ course, userData, sessionToken, onSignOut, onCourseUpdate }) {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('home');
+  const storageKey = `coursemate_active_tab_${course?.id}`;
+  const [activeTab, setActiveTab] = useState(
+    () => localStorage.getItem(storageKey) || 'home'
+  );
+
+  function handleTabChange(tab) {
+    localStorage.setItem(storageKey, tab);
+    setActiveTab(tab);
+  }
 
   // Description edit state
   const [editingDesc, setEditingDesc] = useState(false);
@@ -233,11 +241,11 @@ export default function CoursePage({ course, userData, sessionToken, onSignOut, 
 
       {/* Floating toolbar */}
       <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-gray-200 shadow-lg">
-        <ToolbarItem icon="📄" label="Materials" active={activeTab === 'materials'} onClick={() => setActiveTab('materials')} />
+        <ToolbarItem icon="📄" label="Materials" active={activeTab === 'materials'} onClick={() => handleTabChange('materials')} />
         <div className="w-px h-6 bg-gray-200" />
-        <ToolbarItem icon="💬" label="Chat"      active={activeTab === 'chat'}      onClick={() => setActiveTab('chat')} />
+        <ToolbarItem icon="💬" label="Chat"      active={activeTab === 'chat'}      onClick={() => handleTabChange('chat')} />
         <div className="w-px h-6 bg-gray-200" />
-        <ToolbarItem icon="💡" label="Generate"  active={activeTab === 'generate'}  onClick={() => setActiveTab('generate')} />
+        <ToolbarItem icon="💡" label="Generate"  active={activeTab === 'generate'}  onClick={() => handleTabChange('generate')} />
       </div>
     </div>
   );

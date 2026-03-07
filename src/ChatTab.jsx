@@ -386,9 +386,13 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const [selectedMaterials, setSelectedMaterials] = useState(new Set());
   const [selectAllMaterials, setSelectAllMaterials] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(224);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleValue, setTitleValue] = useState('');
+  const [titleSaving, setTitleSaving] = useState(false);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const dropdownRef = useRef(null);
+  const titleInputRef = useRef(null);
   const bannerTimerRef = useRef(null);
   const containerRef = useRef(null);
   const isDraggingRef = useRef(false);
@@ -618,6 +622,50 @@ export default function ChatTab({ course, userData, sessionToken }) {
   function handleConvSelect(id) {
     setActiveConv(id);
     setMessages([]);
+    setEditingTitle(false);
+  }
+
+  function handleTitleDoubleClick() {
+    const chat = chats.find((c) => c.id === activeConv);
+    if (!chat || activeConv === '__new__') return;
+    setTitleValue(chat.title || '');
+    setEditingTitle(true);
+    setTimeout(() => titleInputRef.current?.select(), 0);
+  }
+
+  async function handleTitleSave() {
+    const trimmed = titleValue.trim();
+    if (!trimmed || !activeConv || activeConv === '__new__') {
+      setEditingTitle(false);
+      return;
+    }
+    const chat = chats.find((c) => c.id === activeConv);
+    if (chat && trimmed === chat.title) {
+      setEditingTitle(false);
+      return;
+    }
+    setTitleSaving(true);
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ resource: 'chat', action: 'update', chat_id: activeConv, title: trimmed }),
+      });
+      const data = await res.json();
+      if (res.ok && data.chat) {
+        setChats((prev) => prev.map((c) => c.id === activeConv ? { ...c, title: data.chat.title } : c));
+      }
+    } catch {}
+    setTitleSaving(false);
+    setEditingTitle(false);
+  }
+
+  function handleTitleKeyDown(e) {
+    if (e.key === 'Enter') { e.preventDefault(); handleTitleSave(); }
+    if (e.key === 'Escape') { setEditingTitle(false); }
   }
 
   function handleKeyDown(e) {
@@ -915,6 +963,39 @@ export default function ChatTab({ course, userData, sessionToken }) {
 
       {/* ── Main chat ── */}
       <div className="flex-1 flex flex-col min-w-0 relative">
+
+        {/* Chat title header */}
+        {activeConv && activeConv !== '__new__' && (() => {
+          const activeChat = chats.find((c) => c.id === activeConv);
+          if (!activeChat) return null;
+          return (
+            <div className="flex-shrink-0 px-6 pt-4 pb-2 border-b border-gray-100">
+              {editingTitle ? (
+                <input
+                  ref={titleInputRef}
+                  value={titleValue}
+                  onChange={(e) => setTitleValue(e.target.value)}
+                  onBlur={handleTitleSave}
+                  onKeyDown={handleTitleKeyDown}
+                  disabled={titleSaving}
+                  className="w-full text-sm font-semibold text-gray-900 bg-transparent border-b-2 border-indigo-400 focus:outline-none px-0 py-0.5 disabled:opacity-50"
+                  maxLength={500}
+                />
+              ) : (
+                <p
+                  role="button"
+                  tabIndex={0}
+                  className="text-sm font-semibold text-gray-900 truncate cursor-text select-none"
+                  title="Double-click to rename"
+                  onDoubleClick={handleTitleDoubleClick}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'F2') handleTitleDoubleClick(); }}
+                >
+                  {activeChat.title}
+                </p>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-6 pt-5 pb-20 space-y-6">
