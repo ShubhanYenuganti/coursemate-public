@@ -1,25 +1,37 @@
 """
-RAG retrieval — embed a query and run cosine similarity search against material_chunks.
-Uses the same model as the Lambda embedder (all-MiniLM-L6-v2, vector dim 384).
+RAG retrieval — embed a query via the embed_query Lambda, then run cosine
+similarity search against material_chunks using pgvector.
+
+Embedding is intentionally offloaded to a separate Lambda (Docker image on ECR)
+because sentence-transformers cannot be installed in the Vercel Python runtime.
+
+Required environment variable:
+    EMBED_QUERY_LAMBDA_URL  — Lambda Function URL for the embed_query function
+                              e.g. https://<id>.lambda-url.<region>.on.aws/
 """
+
+import json
+import os
+
+import requests
 
 TOP_K = 5
 
-_model = None
 
+def _embed_query(query: str) -> list:
+    url = os.environ.get('EMBED_QUERY_LAMBDA_URL')
+    if not url:
+        raise RuntimeError("EMBED_QUERY_LAMBDA_URL environment variable is not set")
 
-def _get_model():
-    global _model
-    if _model is None:
-        from sentence_transformers import SentenceTransformer
-        _model = SentenceTransformer('all-MiniLM-L6-v2')
-    return _model
+    resp = requests.post(url, json={'query': query}, timeout=30)
+    resp.raise_for_status()
+    return resp.json()['embedding']
 
 
 def retrieve_chunks(conn, query: str, material_ids: list, top_k: int = TOP_K) -> list:
     """
-    Embed `query`, run cosine similarity search against material_chunks
-    filtered to `material_ids`, return top_k rows ordered by similarity.
+    Embed `query` via the embed_query Lambda, run cosine similarity search
+    against material_chunks filtered to `material_ids`, return top_k rows.
 
     Returns a list of dicts with keys:
         id, chunk_text, chunk_type, page_number, material_id, token_count, similarity
@@ -27,7 +39,7 @@ def retrieve_chunks(conn, query: str, material_ids: list, top_k: int = TOP_K) ->
     if not material_ids:
         return []
 
-    vec = _get_model().encode(query).tolist()
+    vec = _embed_query(query)
     vec_str = '[' + ','.join(str(x) for x in vec) + ']'
 
     cursor = conn.cursor()
