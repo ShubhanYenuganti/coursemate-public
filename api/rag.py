@@ -23,7 +23,12 @@ def _embed_query(query: str) -> list:
     if not url:
         raise RuntimeError("EMBED_QUERY_LAMBDA_URL environment variable is not set")
 
-    resp = requests.post(url, json={'query': query}, timeout=30)
+    headers = {'Content-Type': 'application/json'}
+    print(f"[DEBUG embed_query] POST {url}")
+    print(f"[DEBUG embed_query] Request headers: {headers}")
+    resp = requests.post(url, json={'query': query}, headers=headers, timeout=30)
+    print(f"[DEBUG embed_query] Response status: {resp.status_code}")
+    print(f"[DEBUG embed_query] Response body: {resp.text[:500]}")
     resp.raise_for_status()
     return resp.json()['embedding']
 
