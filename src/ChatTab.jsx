@@ -435,6 +435,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const bannerTimerRef = useRef(null);
   const containerRef = useRef(null);
   const isDraggingRef = useRef(false);
+  const sendingRef = useRef(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -480,6 +481,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
   // Load messages when active conversation changes
   useEffect(() => {
     if (!activeConv || activeConv === '__new__' || !sessionToken) return;
+    if (sendingRef.current) return;
     fetch(`/api/chat?resource=message&chat_id=${activeConv}`, {
       headers: { Authorization: `Bearer ${sessionToken}` },
     })
@@ -747,6 +749,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
     if (!text || sending || !selectedModel) return;
     setInput('');
     setSending(true);
+    sendingRef.current = true;
 
     const tempId = Date.now();
     const tempUserMsg = { id: tempId, role: 'user', content: text };
@@ -811,6 +814,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
     } finally {
       setSending(false);
+      sendingRef.current = false;
     }
   }
 
