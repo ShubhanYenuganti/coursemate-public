@@ -13,7 +13,9 @@ Required environment variable:
 import json
 import os
 
+import boto3
 import requests
+from requests_aws4auth import AWS4Auth
 
 TOP_K = 5
 
@@ -23,12 +25,17 @@ def _embed_query(query: str) -> list:
     if not url:
         raise RuntimeError("EMBED_QUERY_LAMBDA_URL environment variable is not set")
 
-    headers = {'Content-Type': 'application/json'}
-    print(f"[DEBUG embed_query] POST {url}")
-    print(f"[DEBUG embed_query] Request headers: {headers}")
-    resp = requests.post(url, json={'query': query}, headers=headers, timeout=30)
-    print(f"[DEBUG embed_query] Response status: {resp.status_code}")
-    print(f"[DEBUG embed_query] Response body: {resp.text[:500]}")
+    region = os.environ.get('AWS_REGION', 'us-east-1')
+    credentials = boto3.Session().get_credentials().get_frozen_credentials()
+    auth = AWS4Auth(
+        credentials.access_key,
+        credentials.secret_key,
+        region,
+        'lambda',
+        session_token=credentials.token,
+    )
+
+    resp = requests.post(url, json={'query': query}, auth=auth, timeout=30)
     resp.raise_for_status()
     return resp.json()['embedding']
 
