@@ -202,10 +202,45 @@ const MODEL_LABELS = {
   claude: 'Claude',
 };
 
-const MODEL_DEFAULTS = {
-  gemini: 'gemini-1.5-pro',
-  openai: 'gpt-4o',
-  claude: 'claude-opus-4-6',
+const PROVIDER_MODELS = {
+  claude: [
+    { label: 'Claude Opus 4.6',   id: 'claude-opus-4-6' },
+    { label: 'Claude Sonnet 4.6', id: 'claude-sonnet-4-6' },
+    { label: 'Claude Haiku 4.5',  id: 'claude-haiku-4-5-20251001' },
+    { label: 'Claude Sonnet 4.5', id: 'claude-sonnet-4-5-20250929' },
+    { label: 'Claude Sonnet 4',   id: 'claude-sonnet-4-20250514' },
+    { label: 'Claude Opus 4',     id: 'claude-opus-4-20250514' },
+  ],
+  gemini: [
+    { label: 'Gemini 3.1 Pro',        id: 'gemini-3.1-pro-preview' },
+    { label: 'Gemini 3 Flash',        id: 'gemini-3-flash-preview' },
+    { label: 'Gemini 2.5 Pro',        id: 'gemini-2.5-pro' },
+    { label: 'Gemini 2.5 Flash',      id: 'gemini-2.5-flash' },
+    { label: 'Gemini 2.5 Flash-Lite', id: 'gemini-2.5-flash-lite' },
+    { label: 'Deep Research',         id: 'deep-research-pro-preview-12-2025' },
+    { label: 'Gemini 2.0 Flash',      id: 'gemini-2.0-flash' },
+    { label: 'Gemini 2.0 Flash-Lite', id: 'gemini-2.0-flash-lite' },
+  ],
+  openai: [
+    { label: 'GPT-5.2',               id: 'gpt-5.2' },
+    { label: 'GPT-5.1',               id: 'gpt-5.1' },
+    { label: 'GPT-5 Mini',            id: 'gpt-5-mini' },
+    { label: 'GPT-5 Nano',            id: 'gpt-5-nano' },
+    { label: 'GPT-4.1',               id: 'gpt-4.1' },
+    { label: 'GPT-4.1 mini',          id: 'gpt-4.1-mini' },
+    { label: 'GPT-4.1 nano',          id: 'gpt-4.1-nano' },
+    { label: 'GPT-4o',                id: 'gpt-4o' },
+    { label: 'GPT-4o mini',           id: 'gpt-4o-mini' },
+    { label: 'o3',                    id: 'o3' },
+    { label: 'o3-mini',               id: 'o3-mini' },
+    { label: 'o3-pro',                id: 'o3-pro' },
+    { label: 'o4-mini',               id: 'o4-mini' },
+    { label: 'o1',                    id: 'o1' },
+    { label: 'o1-pro',                id: 'o1-pro' },
+    { label: 'o3 Deep Research',      id: 'o3-deep-research' },
+    { label: 'o4-mini Deep Research', id: 'o4-mini-deep-research' },
+    { label: 'GPT-OSS 120B',          id: 'gpt-oss-120b' },
+  ],
 };
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -382,6 +417,8 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const [selectedModel, setSelectedModel] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [selectedModelId, setSelectedModelId] = useState(null);
+  const [modelListDropdownOpen, setModelListDropdownOpen] = useState(false);
   const [switchBanner, setSwitchBanner] = useState('');
   const [materials, setMaterials] = useState([]);
   const [selectedMaterials, setSelectedMaterials] = useState(new Set());
@@ -393,6 +430,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const dropdownRef = useRef(null);
+  const modelListDropdownRef = useRef(null);
   const titleInputRef = useRef(null);
   const bannerTimerRef = useRef(null);
   const containerRef = useRef(null);
@@ -462,7 +500,10 @@ export default function ChatTab({ course, userData, sessionToken }) {
           .filter(([, hasKey]) => hasKey)
           .map(([provider]) => provider);
         setAvailableModels(available);
-        if (available.length > 0) setSelectedModel(available[0]);
+        if (available.length > 0) {
+          setSelectedModel(available[0]);
+          setSelectedModelId(PROVIDER_MODELS[available[0]]?.[0]?.id ?? null);
+        }
       })
       .catch(() => {});
   }, [sessionToken]);
@@ -478,12 +519,29 @@ export default function ChatTab({ course, userData, sessionToken }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [modelDropdownOpen]);
 
+  useEffect(() => {
+    if (!modelListDropdownOpen) return;
+    function handleClickOutside(e) {
+      if (modelListDropdownRef.current && !modelListDropdownRef.current.contains(e.target)) {
+        setModelListDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [modelListDropdownOpen]);
+
   function handleModelSelect(provider) {
     setSelectedModel(provider);
     setModelDropdownOpen(false);
+    setSelectedModelId(PROVIDER_MODELS[provider]?.[0]?.id ?? null);
     if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
     setSwitchBanner(MODEL_LABELS[provider] || provider);
     bannerTimerRef.current = setTimeout(() => setSwitchBanner(''), 2500);
+  }
+
+  function handleModelIdSelect(modelId) {
+    setSelectedModelId(modelId);
+    setModelListDropdownOpen(false);
   }
 
   function handleSelectAllMaterials() {
@@ -733,7 +791,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
           content: text,
           context_material_ids: contextIds,
           ai_provider: selectedModel,
-          ai_model: MODEL_DEFAULTS[selectedModel] || selectedModel,
+          ai_model: selectedModelId || selectedModel,
         }),
       });
       const msgData = await res.json();
@@ -1055,32 +1113,56 @@ export default function ChatTab({ course, userData, sessionToken }) {
             />
             {/* Model selector */}
             {availableModels.length > 0 && (
-              <div className="relative flex-shrink-0" ref={dropdownRef}>
-                <button
-                  type="button"
-                  onClick={() => setModelDropdownOpen((o) => !o)}
-                  className="flex items-center gap-0.5 text-gray-400 text-xs hover:text-gray-600 transition-colors"
-                >
-                  <span>{MODEL_LABELS[selectedModel] || selectedModel}</span>
-                  <ChevronDownIcon />
-                </button>
-                {modelDropdownOpen && (
-                  <div className="absolute bottom-full right-0 mb-2 bg-gray-900 rounded-xl shadow-xl py-1 min-w-[130px] z-50 border border-gray-700/60">
-                    {availableModels.map((provider) => (
-                      <button
-                        key={provider}
-                        type="button"
-                        onClick={() => handleModelSelect(provider)}
-                        className="w-full flex items-center justify-between px-3 py-2 text-[11px] text-left transition-colors rounded-lg hover:bg-gray-700/70"
-                      >
-                        <span className={selectedModel === provider ? 'text-white font-medium' : 'text-gray-300'}>
-                          {MODEL_LABELS[provider] || provider}
-                        </span>
-                        {selectedModel === provider && (
-                          <span className="text-indigo-400"><CheckIcon /></span>
-                        )}
-                      </button>
-                    ))}
+              <div className="flex items-center gap-1 flex-shrink-0">
+                {/* Provider dropdown */}
+                <div className="relative" ref={dropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setModelDropdownOpen((o) => !o)}
+                    className="flex items-center gap-0.5 text-gray-400 text-xs hover:text-gray-600 transition-colors"
+                  >
+                    <span>{MODEL_LABELS[selectedModel] || selectedModel}</span>
+                    <ChevronDownIcon />
+                  </button>
+                  {modelDropdownOpen && (
+                    <div className="absolute bottom-full right-0 mb-2 bg-gray-900 rounded-xl shadow-xl py-1 min-w-[130px] z-50 border border-gray-700/60">
+                      {availableModels.map((provider) => (
+                        <button key={provider} type="button" onClick={() => handleModelSelect(provider)}
+                          className="w-full flex items-center justify-between px-3 py-2 text-[11px] text-left transition-colors rounded-lg hover:bg-gray-700/70">
+                          <span className={selectedModel === provider ? 'text-white font-medium' : 'text-gray-300'}>
+                            {MODEL_LABELS[provider] || provider}
+                          </span>
+                          {selectedModel === provider && <span className="text-indigo-400"><CheckIcon /></span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Specific model dropdown */}
+                {selectedModel && PROVIDER_MODELS[selectedModel] && (
+                  <div className="relative ml-1" ref={modelListDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setModelListDropdownOpen((o) => !o)}
+                      className="flex items-center gap-0.5 text-gray-400 text-xs hover:text-gray-600 transition-colors"
+                    >
+                      <span>{PROVIDER_MODELS[selectedModel]?.find((m) => m.id === selectedModelId)?.label || selectedModelId}</span>
+                      <ChevronDownIcon />
+                    </button>
+                    {modelListDropdownOpen && (
+                      <div className="absolute bottom-full right-0 mb-2 bg-gray-900 rounded-xl shadow-xl py-1 min-w-[180px] z-50 border border-gray-700/60">
+                        {PROVIDER_MODELS[selectedModel].map((m) => (
+                          <button key={m.id} type="button" onClick={() => handleModelIdSelect(m.id)}
+                            className="w-full flex items-center justify-between px-3 py-2 text-[11px] text-left transition-colors rounded-lg hover:bg-gray-700/70">
+                            <span className={selectedModelId === m.id ? 'text-white font-medium' : 'text-gray-300'}>
+                              {m.label}
+                            </span>
+                            {selectedModelId === m.id && <span className="text-indigo-400"><CheckIcon /></span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
