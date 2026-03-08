@@ -1,34 +1,66 @@
 """
-RAG retrieval — embed a query via the embed_query Lambda, then run cosine
-similarity search against material_chunks using pgvector.
+RAG retrieval — embed a query via the embed_query Lambda (boto3 direct invoke),
+then run cosine similarity search against material_chunks using pgvector.
 
 Embedding is intentionally offloaded to a separate Lambda (Docker image on ECR)
 because sentence-transformers cannot be installed in the Vercel Python runtime.
 
-Required environment variable:
-    EMBED_QUERY_LAMBDA_URL  — Lambda Function URL for the embed_query function
-                              e.g. https://<id>.lambda-url.<region>.on.aws/
+Required environment variables:
+    AWS_ACCESS_KEY_ID       — IAM credentials for the coursemate-s3-uploader user
+    AWS_SECRET_ACCESS_KEY   — IAM credentials for the coursemate-s3-uploader user
+    AWS_REGION              — (optional) defaults to us-east-1
 """
 
 import json
 import os
 
-import requests
+import boto3
 
 TOP_K = 5
 
+LAMBDA_FUNCTION_NAME = 'embed_query'
+
 
 def _embed_query(query: str) -> list:
-    url = os.environ.get('EMBED_QUERY_LAMBDA_URL')
-    if not url:
-        raise RuntimeError("EMBED_QUERY_LAMBDA_URL environment variable is not set")
+    region = os.environ.get('AWS_REGION', 'us-east-1')
+    print(f"[DEBUG] Invoking Lambda '{LAMBDA_FUNCTION_NAME}' in region '{region}'")
 
-    resp = requests.post(url, json={'query': query}, headers={"Content-Type": "application/json"}, timeout=30)
-    print("[DEBUG] Response status:", resp.status_code)
-    print("[DEBUG] Response body:", resp.text)
-    print("[DEBUG] Response headers:", dict(resp.headers))
-    resp.raise_for_status()
-    return resp.json()['embedding']
+    client = boto3.client(
+        'lambda',
+        region_name=region,
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+    )
+
+    payload = json.dumps({'query': query})
+    print(f"[DEBUG] Lambda invoke payload: {payload}")
+
+    response = client.invoke(
+        FunctionName=LAMBDA_FUNCTION_NAME,
+        InvocationType='RequestResponse',
+        Payload=payload,
+    )
+
+    print(f"[DEBUG] Lambda StatusCode: {response.get('StatusCode')}")
+    print(f"[DEBUG] Lambda FunctionError: {response.get('FunctionError')}")
+
+    raw = response['Payload'].read()
+    print(f"[DEBUG] Lambda raw payload response: {raw[:500]}")
+
+    result = json.loads(raw)
+    print(f"[DEBUG] Lambda parsed result keys: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+
+    if response.get('FunctionError'):
+        raise RuntimeError(f"Lambda function error: {result}")
+
+    # Lambda handler wraps the response in {statusCode, body}
+    if 'body' in result:
+        body = json.loads(result['body']) if isinstance(result['body'], str) else result['body']
+        print(f"[DEBUG] Embedding dim: {body.get('dim')}")
+        return body['embedding']
+
+    # Direct result (no HTTP wrapper)
+    return result['embedding']
 
 
 def retrieve_chunks(conn, query: str, material_ids: list, top_k: int = TOP_K) -> list:
