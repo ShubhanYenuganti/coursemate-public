@@ -20,11 +20,13 @@ try:
     from .models import User
     from .courses import Course
     from .db import get_db
+    from .rag import retrieve_chunks
 except ImportError:
     from middleware import send_json, handle_options, authenticate_request, sanitize_string, check_rate_limit
     from models import User
     from courses import Course
     from db import get_db
+    from rag import retrieve_chunks
 
 
 # ------------------------------------------------------------------ helpers --
@@ -473,11 +475,23 @@ class handler(BaseHTTPRequestHandler):
             ))
             user_message = cursor.fetchone()
 
-            # AI reply placeholder — RAG + provider call not yet implemented
-            assistant_content = (
-                "AI response is currently in development. "
-                "RAG retrieval and provider integration coming soon."
-            )
+            # RAG retrieval
+            chunks = retrieve_chunks(conn, content, context_material_ids)
+
+            if chunks:
+                parts = []
+                for i, c in enumerate(chunks, 1):
+                    header = f"[{i}] (type={c['chunk_type']}"
+                    if c['page_number']:
+                        header += f", page {c['page_number']}"
+                    header += f", similarity={c['similarity']:.3f})"
+                    parts.append(f"{header}\n{c['chunk_text']}")
+                assistant_content = "\n\n---\n\n".join(parts)
+            else:
+                assistant_content = "No relevant chunks found in the selected materials."
+
+            retrieved_ids = [c['id'] for c in chunks]
+
             cursor.execute("""
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, role, content,
@@ -489,7 +503,9 @@ class handler(BaseHTTPRequestHandler):
                           response_time_ms, finish_reason, message_index, created_at
             """, (
                 chat_id, chat['course_id'], user['id'], assistant_content,
-                ai_provider, ai_model, json.dumps([]), json.dumps([]),
+                ai_provider, ai_model,
+                json.dumps(context_material_ids),
+                json.dumps(retrieved_ids),
                 next_idx + 1,
             ))
             assistant_message = cursor.fetchone()
