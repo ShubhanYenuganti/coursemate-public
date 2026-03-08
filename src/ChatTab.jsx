@@ -198,7 +198,7 @@ function MaterialCheckbox({ checked, onToggle }) {
 
 const MODEL_LABELS = {
   gemini: 'Gemini',
-  openai: 'GPT-4o',
+  openai: 'GPT',
   claude: 'Claude',
 };
 
@@ -1151,7 +1151,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
                       <ChevronDownIcon />
                     </button>
                     {modelListDropdownOpen && (
-                      <div className="absolute bottom-full right-0 mb-2 bg-gray-900 rounded-xl shadow-xl py-1 min-w-[180px] z-50 border border-gray-700/60">
+                      <div className="absolute bottom-full right-0 mb-2 bg-gray-900 rounded-xl shadow-xl py-1 min-w-[180px] z-50 border border-gray-700/60 max-h-48 overflow-y-auto">
                         {PROVIDER_MODELS[selectedModel].map((m) => (
                           <button key={m.id} type="button" onClick={() => handleModelIdSelect(m.id)}
                             className="w-full flex items-center justify-between px-3 py-2 text-[11px] text-left transition-colors rounded-lg hover:bg-gray-700/70">
