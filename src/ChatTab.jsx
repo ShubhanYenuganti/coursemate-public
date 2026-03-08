@@ -226,7 +226,7 @@ function groupChatsByDate(chats) {
 
 // ─── sub-components ───────────────────────────────────────────────────────────
 
-function ConvItem({ conv, active, onClick, onArchive }) {
+function ConvItem({ conv, active, onClick, onDoubleClick, onArchive }) {
   return (
     <div className={`group w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs transition-colors ${
       active
@@ -244,6 +244,7 @@ function ConvItem({ conv, active, onClick, onArchive }) {
       <button
         type="button"
         onClick={onClick}
+        onDoubleClick={onDoubleClick}
         className="flex-1 flex items-center gap-2 min-w-0 text-left"
       >
         <span className={`flex-shrink-0 ${active ? 'text-indigo-500' : 'text-gray-400'}`}>
@@ -625,6 +626,14 @@ export default function ChatTab({ course, userData, sessionToken }) {
     setEditingTitle(false);
   }
 
+  function handleConvDoubleClick(conv) {
+    setActiveConv(conv.id);
+    setMessages([]);
+    setTitleValue(conv.title || '');
+    setEditingTitle(true);
+    setTimeout(() => titleInputRef.current?.select(), 0);
+  }
+
   function handleTitleDoubleClick() {
     const chat = chats.find((c) => c.id === activeConv);
     if (!chat || activeConv === '__new__') return;
@@ -811,7 +820,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 </p>
                 <div className="space-y-0.5">
                   {today.map((c) => (
-                    <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} onArchive={handleArchiveChat} />
+                    <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} onDoubleClick={() => handleConvDoubleClick(c)} onArchive={handleArchiveChat} />
                   ))}
                 </div>
               </div>
@@ -828,7 +837,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 </p>
                 <div className="space-y-0.5">
                   {lastWeek.map((c) => (
-                    <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} onArchive={handleArchiveChat} />
+                    <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} onDoubleClick={() => handleConvDoubleClick(c)} onArchive={handleArchiveChat} />
                   ))}
                 </div>
               </div>
@@ -845,7 +854,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 </p>
                 <div className="space-y-0.5">
                   {older.map((c) => (
-                    <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} onArchive={handleArchiveChat} />
+                    <ConvItem key={c.id} conv={c} active={activeConv === c.id} onClick={() => handleConvSelect(c.id)} onDoubleClick={() => handleConvDoubleClick(c)} onArchive={handleArchiveChat} />
                   ))}
                 </div>
               </div>
