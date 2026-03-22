@@ -1,27 +1,28 @@
 """
 AWS Lambda handler — embed_query
 
-Accepts a query string and returns its sentence-transformer embedding.
-Called from api/rag.py on Vercel via a Lambda Function URL.
+Accepts a query string and returns its Cohere embedding.
+Called from api/rag.py on Vercel via boto3 direct invoke.
 
-Input (Function URL or direct invoke):
+Input (direct boto3 invoke):
     {"query": "text to embed"}
 
 Output:
-    {"embedding": [0.12, ...], "dim": 384}
+    {"embedding": [0.12, ...], "dim": 1024}
 """
 import json
+import os
 
-from sentence_transformers import SentenceTransformer
+import cohere
 
-_model = None
+_co = None
 
 
-def _get_model():
-    global _model
-    if _model is None:
-        _model = SentenceTransformer('all-MiniLM-L6-v2')
-    return _model
+def _get_client() -> cohere.Client:
+    global _co
+    if _co is None:
+        _co = cohere.Client(os.environ['COHERE_API_KEY'])
+    return _co
 
 
 def lambda_handler(event, context):
@@ -39,7 +40,12 @@ def lambda_handler(event, context):
     if not query or not isinstance(query, str):
         return _error(400, "'query' (non-empty string) is required")
 
-    embedding = _get_model().encode(query).tolist()
+    response = _get_client().embed(
+        texts=[query],
+        model='embed-english-v3.0',
+        input_type='search_query',
+    )
+    embedding = response.embeddings[0]
 
     return {
         'statusCode': 200,

@@ -748,6 +748,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
     const text = input.trim();
     if (!text || sending || !selectedModel) return;
     setInput('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setSending(true);
     sendingRef.current = true;
 

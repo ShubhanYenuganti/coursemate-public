@@ -16,36 +16,34 @@ cd "$(dirname "$0")"
 echo "=== Building Lambda container image ==="
 echo ""
 
-# ─── Step 1: Build the Docker image (explicitly for x86_64 / linux/amd64) ──
 if [[ "${SKIP_BUILD:-}" != "1" ]]; then
-  echo "1. Building Docker image for linux/amd64..."
-  docker buildx build --platform linux/amd64 \
-    -t "${REPO_NAME}:${IMAGE_TAG}" \
-    -t "${FULL_URI}" \
-    --push .
-  echo "   Done."
-else
-  echo "1. Skipping Docker build (SKIP_BUILD=1)"
-fi
-echo ""
-
-# ─── Step 2: Create ECR repository (if it doesn't exist) ──────────────────
-if [[ "${SKIP_BUILD:-}" != "1" ]]; then
-  echo "2. Ensuring ECR repository exists..."
+  # ─── Step 1: Create ECR repository (if it doesn't exist) ──────────────────
+  echo "1. Ensuring ECR repository exists..."
   aws ecr describe-repositories --repository-names "${REPO_NAME}" --region "${AWS_REGION}" 2>/dev/null \
     || aws ecr create-repository --repository-name "${REPO_NAME}" --region "${AWS_REGION}" \
          --image-scanning-configuration scanOnPush=true
   echo "   Done."
   echo ""
-  
-  # ─── Step 3: Authenticate Docker with ECR ──────────────────────────────────
-  echo "3. Logging in to ECR..."
+
+  # ─── Step 2: Authenticate Docker with ECR ─────────────────────────────────
+  echo "2. Logging in to ECR..."
   aws ecr get-login-password --region "${AWS_REGION}" \
     | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
   echo "   Done."
   echo ""
+
+  # ─── Step 3: Build image locally, then push ───────────────────────────────
+  echo "3. Building Docker image for linux/amd64..."
+  docker buildx build --platform linux/amd64 \
+    -t "${REPO_NAME}:${IMAGE_TAG}" \
+    -t "${FULL_URI}" \
+    --load .
+  echo "   Pushing image to ECR..."
+  docker push "${FULL_URI}"
+  echo "   Done."
+  echo ""
 else
-  echo "2–3. Skipping ECR setup and login (SKIP_BUILD=1)"
+  echo "1–3. Skipping ECR setup, login, and build (SKIP_BUILD=1)"
   echo ""
 fi
 

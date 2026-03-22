@@ -1,28 +1,41 @@
 """
-Sentence-transformers wrapper. Model is loaded once at module level so Lambda
-warm starts reuse the in-memory model without re-loading from disk.
+Cohere Embed v3.5 document embedder for the embed_materials Lambda.
+Uses input_type='search_document' for asymmetric retrieval alignment with
+query-side input_type='search_query' in embed_query Lambda.
+Model is instantiated once at module level so Lambda warm starts reuse it.
 """
-from sentence_transformers import SentenceTransformer
+import os
 from typing import List, Dict, Any
 
-_model = None
+import cohere
+
+_co = None
 
 
-def _get_model() -> SentenceTransformer:
-    global _model
-    if _model is None:
-        _model = SentenceTransformer('all-MiniLM-L6-v2')
-    return _model
+def _get_client() -> cohere.Client:
+    global _co
+    if _co is None:
+        _co = cohere.Client(os.environ['COHERE_API_KEY'])
+    return _co
 
 
-def embed_chunks(chunks: List[Dict[str, Any]], batch_size: int = 64) -> List[Dict[str, Any]]:
+def embed_chunks(chunks: List[Dict[str, Any]], batch_size: int = 96) -> List[Dict[str, Any]]:
     """
-    Add an 'embedding' key (list[float], length 384) to every chunk dict.
+    Add an 'embedding' key (list[float], length 1024) to every chunk dict.
+    Processes in batches of 96 (Cohere API maximum per call).
     Returns the same list mutated in-place for memory efficiency.
     """
-    model = _get_model()
+    client = _get_client()
     texts = [c['text'] for c in chunks]
-    embeddings = model.encode(texts, batch_size=batch_size, show_progress_bar=False)
-    for chunk, vec in zip(chunks, embeddings):
-        chunk['embedding'] = vec.tolist()
+
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        response = client.embed(
+            texts=batch,
+            model='embed-english-v3.0',
+            input_type='search_document',
+        )
+        for chunk, vec in zip(chunks[i:i + batch_size], response.embeddings):
+            chunk['embedding'] = vec
+
     return chunks

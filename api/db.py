@@ -18,7 +18,7 @@ def _get_pool():
             raise ValueError("DATABASE_URL environment variable is not set")
         _pool = ConnectionPool(
             conninfo=database_url,
-            min_size=2,
+            min_size=1,
             max_size=10,
             kwargs={"row_factory": psycopg.rows.dict_row},
         )
@@ -302,8 +302,8 @@ def init_db():
                 chunk_type      VARCHAR(20)  NOT NULL DEFAULT 'paragraph',
                 page_number     INTEGER,
                 token_count     INTEGER      NOT NULL,
-                embedding       vector(384)  NOT NULL,
-                model_name      VARCHAR(100) NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+                embedding       vector(1024) NOT NULL,
+                model_name      VARCHAR(100) NOT NULL DEFAULT 'cohere-embed-english-v3.0',
                 created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(material_id, chunk_index)
             );
@@ -328,6 +328,30 @@ def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_embed_jobs_status      ON material_embed_jobs(status);
             CREATE INDEX IF NOT EXISTS idx_embed_jobs_material_id ON material_embed_jobs(material_id);
+        """)
+
+        # Phase 1 migration: message embeddings for conversation grounding (Phase 2)
+        cursor.execute("""
+            ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS message_embedding vector(1024);
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_embedding
+                ON chat_messages USING ivfflat (message_embedding vector_cosine_ops)
+                WITH (lists = 50);
+        """)
+
+        # Phase 1 migration: web search cache (Phase 2)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS web_cache (
+                id           SERIAL PRIMARY KEY,
+                query_hash   TEXT        NOT NULL UNIQUE,
+                url          TEXT        NOT NULL,
+                snippet      TEXT        NOT NULL,
+                embedding    vector(1024),
+                fetched_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                ttl_seconds  INT         NOT NULL DEFAULT 3600
+            );
+            CREATE INDEX IF NOT EXISTS idx_web_cache_hash ON web_cache(query_hash);
         """)
 
         cursor.close()

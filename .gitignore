@@ -11,3 +11,7 @@ lambda/embed_materials/package/
 lambda/embed_materials/embed_materials.zip
 SEMANTIC_EMBEDDINGS_PLAN.md
 .cursor/plans/
+AGENTIC_RAG_IMPLEMENTATION.md
+AGENTIC_RAG_PLAN.md
+rds_dump.sql
+restore_log.txt

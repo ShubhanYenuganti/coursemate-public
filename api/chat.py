@@ -21,12 +21,14 @@ try:
     from .courses import Course
     from .db import get_db
     from .rag import retrieve_chunks
+    from .llm import synthesize
 except ImportError:
     from middleware import send_json, handle_options, authenticate_request, sanitize_string, check_rate_limit
     from models import User
     from courses import Course
     from db import get_db
     from rag import retrieve_chunks
+    from llm import synthesize
 
 
 # ------------------------------------------------------------------ helpers --
@@ -475,22 +477,16 @@ class handler(BaseHTTPRequestHandler):
             ))
             user_message = cursor.fetchone()
 
-            # RAG retrieval
+            # RAG retrieval + LLM synthesis
             chunks = retrieve_chunks(conn, content, context_material_ids)
 
-            if chunks:
-                parts = []
-                for i, c in enumerate(chunks, 1):
-                    header = f"[{i}] (type={c['chunk_type']}"
-                    if c['page_number']:
-                        header += f", page {c['page_number']}"
-                    header += f", similarity={c['similarity']:.3f})"
-                    parts.append(f"{header}\n{c['chunk_text']}")
-                assistant_content = "\n\n---\n\n".join(parts)
-            else:
-                assistant_content = "No relevant chunks found in the selected materials."
-
-            retrieved_ids = [c['id'] for c in chunks]
+            try:
+                assistant_content, retrieved_ids = synthesize(
+                    conn, user['id'], ai_provider, ai_model, content, chunks
+                )
+            except ValueError as e:
+                send_json(self, 400, {"error": str(e)})
+                return
 
             cursor.execute("""
                 INSERT INTO chat_messages
