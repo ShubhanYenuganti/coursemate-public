@@ -1,12 +1,18 @@
 """
 Multi-provider LLM synthesis for OneShotCourseMate.
 
+Calls provider REST APIs directly via `requests` to avoid adding heavy SDK
+packages (anthropic, openai, google-generativeai) that would exceed Vercel's
+250 MB bundle limit.
+
 Phase 1: Single-turn synthesis — retrieved chunks injected as system context.
 Phase 2 (agentic loop): Each provider's tool-calling format will extend this module:
   - Claude:  Anthropic tool_use / tool_result blocks
   - OpenAI:  tools + tool_calls function-calling format
   - Gemini:  tools with function_declarations + FunctionCall/FunctionResponse
 """
+import requests
+
 try:
     from .crypto_utils import decrypt_api_key
 except ImportError:
@@ -19,6 +25,8 @@ SYSTEM_PROMPT = (
     "information to answer fully, say so clearly."
 )
 
+_TIMEOUT = 60  # seconds
+
 
 def _get_api_key(conn, user_id: int, provider: str) -> str:
     """Fetch and decrypt the user's stored API key for the given provider."""
@@ -30,9 +38,7 @@ def _get_api_key(conn, user_id: int, provider: str) -> str:
     row = cursor.fetchone()
     cursor.close()
     if not row:
-        raise ValueError(
-            f"No {provider} API key found. Add your key in Settings."
-        )
+        raise ValueError(f"No {provider} API key found. Add your key in Settings.")
     return decrypt_api_key(row['encrypted_key'])
 
 
@@ -51,48 +57,71 @@ def _format_context(chunks: list) -> str:
 
 
 def _synthesize_claude(context: str, user_message: str, model: str, api_key: str) -> str:
-    import anthropic
-    client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model=model,
-        max_tokens=4096,
-        system=f"{SYSTEM_PROMPT}\n\nCourse material excerpts:\n{context}",
-        messages=[{"role": "user", "content": user_message}],
+    response = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={
+            "model": model,
+            "max_tokens": 4096,
+            "system": f"{SYSTEM_PROMPT}\n\nCourse material excerpts:\n{context}",
+            "messages": [{"role": "user", "content": user_message}],
+        },
+        timeout=_TIMEOUT,
     )
-    return response.content[0].text
+    response.raise_for_status()
+    return response.json()["content"][0]["text"]
 
 
 def _synthesize_openai(context: str, user_message: str, model: str, api_key: str) -> str:
-    from openai import OpenAI
-    client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {
-                "role": "system",
-                "content": f"{SYSTEM_PROMPT}\n\nCourse material excerpts:\n{context}",
-            },
-            {"role": "user", "content": user_message},
-        ],
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": f"{SYSTEM_PROMPT}\n\nCourse material excerpts:\n{context}",
+                },
+                {"role": "user", "content": user_message},
+            ],
+        },
+        timeout=_TIMEOUT,
     )
-    return response.choices[0].message.content
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
 
 
 def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str) -> str:
-    import google.generativeai as genai
-    genai.configure(api_key=api_key)
-    llm = genai.GenerativeModel(
-        model_name=model,
-        system_instruction=f"{SYSTEM_PROMPT}\n\nCourse material excerpts:\n{context}",
+    response = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        headers={
+            "x-goog-api-key": api_key,
+            "Content-Type": "application/json",
+        },
+        json={
+            "system_instruction": {
+                "parts": [{"text": f"{SYSTEM_PROMPT}\n\nCourse material excerpts:\n{context}"}]
+            },
+            "contents": [{"parts": [{"text": user_message}]}],
+        },
+        timeout=_TIMEOUT,
     )
-    response = llm.generate_content(user_message)
-    return response.text
+    response.raise_for_status()
+    return response.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 
 _PROVIDERS = {
-    'claude': _synthesize_claude,
-    'openai': _synthesize_openai,
-    'gemini': _synthesize_gemini,
+    "claude": _synthesize_claude,
+    "openai": _synthesize_openai,
+    "gemini": _synthesize_gemini,
 }
 
 
@@ -112,6 +141,7 @@ def synthesize(
 
     Raises:
         ValueError: if no API key is stored for the provider, or unsupported provider.
+        requests.HTTPError: if the provider API returns a non-2xx response.
     """
     if ai_provider not in _PROVIDERS:
         raise ValueError(f"Unsupported provider: {ai_provider}")
@@ -120,5 +150,5 @@ def synthesize(
     context = _format_context(chunks)
     fn = _PROVIDERS[ai_provider]
     text = fn(context, user_message, ai_model, api_key)
-    chunk_ids = [c['id'] for c in chunks]
+    chunk_ids = [c["id"] for c in chunks]
     return text, chunk_ids
