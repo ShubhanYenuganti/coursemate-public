@@ -1,33 +1,28 @@
 """
-AWS Lambda handler — embed_query
+AWS Lambda handler — embed_query (legacy)
 
-Accepts a query string and returns its Cohere embedding.
-Called from api/rag.py on Vercel via boto3 direct invoke.
+Embeds a query string using Voyage AI voyage-3.5.
+Still called by api/rag.py as a fallback for old material_chunks data.
 
-Input (direct boto3 invoke):
-    {"query": "text to embed"}
-
-Output:
-    {"embedding": [0.12, ...], "dim": 1024}
+Input:  {"query": "text to embed"}
+Output: {"embedding": [0.12, ...], "dim": 1024}
 """
 import json
 import os
 
-import cohere
+import voyageai
 
-_co = None
+_vo = None
 
 
-def _get_client() -> cohere.Client:
-    global _co
-    if _co is None:
-        _co = cohere.Client(os.environ['COHERE_API_KEY'])
-    return _co
+def _get_client() -> voyageai.Client:
+    global _vo
+    if _vo is None:
+        _vo = voyageai.Client(api_key=os.environ['VOYAGE_API_KEY'])
+    return _vo
 
 
 def lambda_handler(event, context):
-    # Support both Function URL invocation (body is a JSON string) and
-    # direct boto3 invoke (event is already the parsed dict).
     if 'body' in event:
         try:
             body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
@@ -40,12 +35,12 @@ def lambda_handler(event, context):
     if not query or not isinstance(query, str):
         return _error(400, "'query' (non-empty string) is required")
 
-    response = _get_client().embed(
+    result = _get_client().embed(
         texts=[query],
-        model='embed-english-v3.0',
-        input_type='search_query',
+        model='voyage-3.5',
+        input_type='query',
     )
-    embedding = response.embeddings[0]
+    embedding = result.embeddings[0]
 
     return {
         'statusCode': 200,

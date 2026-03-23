@@ -305,6 +305,36 @@ function StagingItemRow({ item, onDocTypeChange, onUpload, onRemove }) {
   );
 }
 
+// ─── embed status badge ───────────────────────────────────────────────────────
+
+function EmbedStatusBadge({ status }) {
+  if (!status || status === 'done') return null;
+
+  if (status === 'pending' || status === 'processing') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5 leading-none">
+        <Spinner size={9} className="text-amber-500" />
+        {status === 'processing' ? 'Indexing…' : 'Queued'}
+      </span>
+    );
+  }
+  if (status === 'failed') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-red-500 bg-red-50 border border-red-200 rounded-full px-1.5 py-0.5 leading-none">
+        ✕ Index failed
+      </span>
+    );
+  }
+  if (status === 'skipped') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-gray-400 bg-gray-50 border border-gray-200 rounded-full px-1.5 py-0.5 leading-none">
+        — Not indexed
+      </span>
+    );
+  }
+  return null;
+}
+
 // ─── material grid card (existing materials) ──────────────────────────────────
 
 function MaterialCard({ material, onVisibilityChange, onDelete, isOwner }) {
@@ -330,10 +360,13 @@ function MaterialCard({ material, onVisibilityChange, onDelete, isOwner }) {
         >
           {material.name}
         </a>
-        <p className="text-xs text-gray-400">
-          {getMeta(material.file_type).label}
-          {material.visibility === 'public' ? ' · Public' : ' · Private'}
-        </p>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <p className="text-xs text-gray-400">
+            {getMeta(material.file_type).label}
+            {material.visibility === 'public' ? ' · Public' : ' · Private'}
+          </p>
+          <EmbedStatusBadge status={material.embed_status} />
+        </div>
       </div>
 
       {/* Actions */}
@@ -458,6 +491,16 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
   }, [courseId, sessionToken]);
 
   useEffect(() => { fetchMaterials(); }, [fetchMaterials]);
+
+  // ── poll while any material is still being indexed ────────────────────────
+  useEffect(() => {
+    const hasActive = materials.some(
+      m => m.embed_status === 'pending' || m.embed_status === 'processing'
+    );
+    if (!hasActive) return;
+    const timer = setTimeout(fetchMaterials, 5000);
+    return () => clearTimeout(timer);
+  }, [materials, fetchMaterials]);
 
   // ── upload one file ──────────────────────────────────────────────────────
   const uploadOne = useCallback(async (item) => {

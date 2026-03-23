@@ -24,7 +24,7 @@ def _vec_str(emb: list) -> str:
 def embed_query_visual(query: str) -> list:
     vo = _get_client()
     result = vo.multimodal_embed(
-        inputs=[[{"type": "text", "text": query}]],
+        inputs=[[query]],
         model="voyage-multimodal-3.5",
         input_type="query",
     )

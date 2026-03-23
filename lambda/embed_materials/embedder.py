@@ -1,13 +1,16 @@
 """
 Voyage AI async embedder for the embed_materials Lambda.
 
-Provides two embedding functions:
-- embed_visual: voyage-multimodal-3.5 for image/page embeddings
-- embed_text:   voyage-3.5 for text embeddings
+The Python SDK's multimodal_embed accepts:
+  - PIL Image objects  (for image inputs)
+  - plain str          (for text inputs inside a multimodal sequence)
+NOT the REST API dict format {"type": "image_base64", ...}.
 """
-import base64
+import io
 import os
+
 import voyageai
+from PIL import Image
 
 _vo = None
 
@@ -20,11 +23,11 @@ def _get_client() -> voyageai.AsyncClient:
 
 
 async def embed_visual(png_bytes: bytes) -> list[float]:
-    """Embed a page image using voyage-multimodal-3.5."""
-    b64 = base64.standard_b64encode(png_bytes).decode()
+    """Embed a page image using voyage-multimodal-3.5 (PIL Image input)."""
+    img = Image.open(io.BytesIO(png_bytes))
     vo = _get_client()
     result = await vo.multimodal_embed(
-        inputs=[[{"type": "image_base64", "image_base64": f"data:image/png;base64,{b64}"}]],
+        inputs=[[img]],
         model="voyage-multimodal-3.5",
         input_type="document",
     )
@@ -45,12 +48,12 @@ async def embed_text(text: str) -> list[float] | None:
 
 
 async def embed_visual_text(text: str) -> list[float] | None:
-    """Embed text using voyage-multimodal-3.5 (for parent visual embedding)."""
+    """Embed text via voyage-multimodal-3.5 (fallback when image render fails)."""
     if not text or not text.strip():
         return None
     vo = _get_client()
     result = await vo.multimodal_embed(
-        inputs=[[{"type": "text", "text": text[:2000]}]],
+        inputs=[[text[:2000]]],
         model="voyage-multimodal-3.5",
         input_type="document",
     )

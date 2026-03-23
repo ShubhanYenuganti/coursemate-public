@@ -4,7 +4,7 @@ Chunker for: coding_spec
 Splits at numbered milestone/requirement boundaries.
 """
 import re
-from chunkers import ChunkSpec
+from chunkers.base import ChunkSpec
 
 _MILESTONE_RE = re.compile(
     r'^##\s*(Milestone|Requirement|Req\.?)\s*([\d\.]+)',

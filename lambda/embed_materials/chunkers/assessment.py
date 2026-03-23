@@ -5,7 +5,7 @@ Each question + answer choices is one atomic chunk (never split).
 Extracts question number and point value from the text.
 """
 import re
-from chunkers import ChunkSpec
+from chunkers.base import ChunkSpec
 
 _QUESTION_RE = re.compile(
     r'^(?:Q|Question|Problem)\s*(\d+)\.?|^(\d+)\.',

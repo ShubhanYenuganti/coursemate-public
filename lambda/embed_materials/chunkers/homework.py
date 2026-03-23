@@ -5,7 +5,7 @@ Splits at problem/question boundaries. For hw_instruction, prepends
 the preamble to each problem chunk.
 """
 import re
-from chunkers import ChunkSpec
+from chunkers.base import ChunkSpec
 
 _PROBLEM_RE = re.compile(
     r'^(?:Problem|Question|Part|Exercise)\s+(\d+[\.\w]*)|^(\d+)[\.\)]',

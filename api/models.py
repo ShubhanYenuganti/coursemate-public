@@ -197,14 +197,17 @@ class Material:
         """
         Return all materials for a course visible to this user:
         public materials + materials uploaded by the user.
+        Includes embed_status from material_embed_jobs.
         """
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT * FROM materials
-                WHERE course_id = %s
-                  AND (visibility = 'public' OR uploaded_by = %s)
-                ORDER BY created_at DESC
+                SELECT m.*, j.status AS embed_status
+                FROM materials m
+                LEFT JOIN material_embed_jobs j ON j.material_id = m.id
+                WHERE m.course_id = %s
+                  AND (m.visibility = 'public' OR m.uploaded_by = %s)
+                ORDER BY m.created_at DESC
             """, (course_id, user_id))
             materials = cursor.fetchall()
             cursor.close()

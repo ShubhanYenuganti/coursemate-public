@@ -7,7 +7,7 @@ import re
 import fitz  # PyMuPDF
 import pymupdf4llm
 
-from chunkers import ChunkSpec
+from chunkers.base import ChunkSpec
 
 
 def chunk(pdf_path: str, full_md: str) -> list[ChunkSpec]:

@@ -4,7 +4,7 @@ Chunker for: code_file
 Splits Python/JS source at function and class boundaries.
 """
 import re
-from chunkers import ChunkSpec
+from chunkers.base import ChunkSpec
 
 # Python: def/async def/class at start of line
 _PY_RE = re.compile(r'^(?:async\s+)?def\s+\w+|^class\s+\w+', re.MULTILINE)

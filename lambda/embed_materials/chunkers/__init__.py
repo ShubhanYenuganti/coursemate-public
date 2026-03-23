@@ -1,20 +1,8 @@
 """
 Document type dispatcher — routes a PDF to the appropriate chunker.
 """
-from dataclasses import dataclass, field
-from typing import Any
-
+from chunkers.base import ChunkSpec
 from chunkers import notes, slides, reading, homework, assessment, coding_spec, code_file
-
-
-@dataclass
-class ChunkSpec:
-    text: str
-    visual_page: int        # 0-based page index for visual embedding
-    chunk_index: int
-    modal_meta: dict = field(default_factory=dict)
-    problem_id: str = None
-
 
 _DISPATCH = {
     'general':         notes.chunk,

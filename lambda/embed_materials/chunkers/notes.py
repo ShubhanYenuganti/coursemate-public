@@ -5,7 +5,7 @@ Splits markdown at heading boundaries. Merges indivisible blocks
 (equations, worked examples) into their enclosing section.
 """
 import re
-from chunkers import ChunkSpec
+from chunkers.base import ChunkSpec
 
 # Indivisible block patterns
 _EQUATION_RE  = re.compile(r'^\$\$', re.MULTILINE)

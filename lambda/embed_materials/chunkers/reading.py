@@ -5,7 +5,7 @@ Heading-based split (same logic as notes.py) but prefixes each chunk
 with the document title and section heading for better retrieval context.
 """
 import re
-from chunkers import ChunkSpec
+from chunkers.base import ChunkSpec
 
 
 def _extract_page_breaks(full_md: str) -> list[int]:
