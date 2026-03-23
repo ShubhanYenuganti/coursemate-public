@@ -169,6 +169,11 @@ class handler(BaseHTTPRequestHandler):
                 self._revert_message(user, data)
             elif action == 'restore':
                 self._restore_message(user, data)
+            elif action == 'regenerate':
+                if not check_rate_limit(self, max_rpm=10):
+                    send_json(self, 429, {"error": "Rate limit exceeded"})
+                    return
+                self._regenerate_message(user, data)
             elif action == 'delete':
                 self._delete_message(user, data)
             else:
@@ -1154,6 +1159,176 @@ class handler(BaseHTTPRequestHandler):
                     msg.get('ai_provider'),
                     msg.get('ai_model'),
                     json.dumps(user_msg.get('context_material_ids') or []),
+                    next_idx,
+                )
+            )
+            new_assistant = cursor.fetchone()
+            cursor.close()
+
+        send_json(self, 200, {
+            "user_message": updated_user_msg,
+            "assistant_message": new_assistant,
+        })
+
+    def _regenerate_message(self, user, data):
+        """Re-run the parent user query through a (possibly different) model.
+
+        Displaces the current assistant response into reply_history.back (clearing forward),
+        then synthesizes a fresh response without modifying the user message content.
+        """
+        message_id = data.get('message_id')
+        ai_provider = data.get('ai_provider')
+        ai_model = data.get('ai_model')
+
+        if not isinstance(message_id, int):
+            send_json(self, 400, {"error": "message_id is required"})
+            return
+        if ai_provider not in ('gemini', 'openai', 'claude'):
+            send_json(self, 400, {"error": "ai_provider must be one of: gemini, openai, claude"})
+            return
+        if not ai_model:
+            send_json(self, 400, {"error": "ai_model is required"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, chat_id, course_id, user_id, role, content, message_index,
+                       ai_provider, ai_model, context_material_ids, parent_message_id
+                FROM chat_messages
+                WHERE id = %s AND is_deleted = FALSE
+                """,
+                (message_id,)
+            )
+            msg = cursor.fetchone()
+            if not msg:
+                send_json(self, 404, {"error": "Message not found"})
+                cursor.close()
+                return
+            if msg['role'] != 'assistant':
+                send_json(self, 400, {"error": "Can only regenerate assistant messages"})
+                cursor.close()
+                return
+            if msg['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Access denied"})
+                cursor.close()
+                return
+
+            chat = _get_chat(conn, msg['chat_id'])
+            if not chat or chat['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Access denied"})
+                cursor.close()
+                return
+
+            if msg.get('parent_message_id'):
+                cursor.execute(
+                    """
+                    SELECT id, chat_id, role, content, message_index, reply_history,
+                           context_material_ids, ai_provider, ai_model
+                    FROM chat_messages
+                    WHERE id = %s AND role = 'user' AND is_deleted = FALSE
+                    """,
+                    (msg['parent_message_id'],)
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, chat_id, role, content, message_index, reply_history,
+                           context_material_ids, ai_provider, ai_model
+                    FROM chat_messages
+                    WHERE chat_id = %s
+                      AND message_index < %s
+                      AND role = 'user'
+                      AND is_deleted = FALSE
+                    ORDER BY message_index DESC
+                    LIMIT 1
+                    """,
+                    (msg['chat_id'], msg['message_index'])
+                )
+            user_msg = cursor.fetchone()
+            if not user_msg:
+                send_json(self, 400, {"error": "No preceding user message found"})
+                cursor.close()
+                return
+
+            context_material_ids = user_msg.get('context_material_ids') or []
+            chunks = retrieve_chunks(conn, user_msg['content'], context_material_ids)
+
+            try:
+                assistant_content, retrieved_ids = synthesize(
+                    conn, user['id'], ai_provider, ai_model, user_msg['content'], chunks
+                )
+            except ValueError as e:
+                send_json(self, 400, {"error": str(e)})
+                cursor.close()
+                return
+            except Exception as e:
+                import requests as _requests
+                if isinstance(e, _requests.HTTPError) and e.response is not None and e.response.status_code == 429:
+                    send_json(self, 429, {"error": (
+                        f"Rate limit exceeded for {ai_provider}. "
+                        "You have sent too many requests — please wait a moment and try again, "
+                        "or check your API usage and quota in your provider's dashboard."
+                    )})
+                    cursor.close()
+                    return
+                cursor.close()
+                raise
+
+            # Displace current response to back, clear forward (new branch).
+            back, _ = _parse_reply_history(user_msg.get('reply_history'))
+            back = back + [{
+                'content': msg['content'],
+                'user_query': user_msg['content'],
+                'ts': datetime.now(timezone.utc).isoformat(),
+            }]
+            new_reply_history = _build_reply_history(back, [])
+
+            cursor.execute(
+                """
+                UPDATE chat_messages
+                SET reply_history = %s::jsonb
+                WHERE id = %s
+                RETURNING id, chat_id, role, content, context_material_ids, ai_provider, ai_model,
+                          is_edited, reply_history, edited_at, message_index, created_at
+                """,
+                (new_reply_history, user_msg['id'])
+            )
+            updated_user_msg = cursor.fetchone()
+
+            cursor.execute(
+                """
+                UPDATE chat_messages
+                SET is_deleted = TRUE
+                WHERE chat_id = %s
+                  AND message_index >= %s
+                  AND is_deleted = FALSE
+                """,
+                (msg['chat_id'], msg['message_index'])
+            )
+
+            next_idx = _next_message_index(conn, msg['chat_id'])
+
+            cursor.execute(
+                """
+                INSERT INTO chat_messages
+                    (chat_id, course_id, user_id, parent_message_id, role, content,
+                     ai_provider, ai_model, context_material_ids, retrieved_chunk_ids, message_index)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
+                RETURNING id, chat_id, role, content, retrieved_chunk_ids,
+                          message_index, created_at
+                """,
+                (
+                    msg['chat_id'],
+                    chat['course_id'],
+                    user['id'],
+                    user_msg['id'],
+                    assistant_content,
+                    ai_provider,
+                    ai_model,
+                    json.dumps(context_material_ids),
+                    json.dumps(retrieved_ids),
                     next_idx,
                 )
             )

@@ -451,9 +451,23 @@ function MessageBubble({
   replyHistory,
   onRevert,
   onRestore,
+  onRegenerate,
+  availableModels,
 }) {
   const isUser = msg.role === 'user';
   const [copied, setCopied] = useState(false);
+  const [regenOpen, setRegenOpen] = useState(false);
+  const [regenProvider, setRegenProvider] = useState(null);
+  const regenRef = useRef(null);
+
+  useEffect(() => {
+    if (!regenOpen) return;
+    function handleClickOutside(e) {
+      if (regenRef.current && !regenRef.current.contains(e.target)) setRegenOpen(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [regenOpen]);
 
   function processCitations(children) {
     const nodes = Array.isArray(children) ? children : [children];
@@ -600,6 +614,11 @@ function MessageBubble({
             {courseName || 'CourseMate AI'}
           </span>
           <span className="w-1 h-1 rounded-full bg-indigo-300" />
+          {msg.ai_provider && (
+            <span className="text-xs text-gray-400">
+              {PROVIDER_MODELS[msg.ai_provider]?.find((m) => m.id === msg.ai_model)?.label || msg.ai_model || MODEL_LABELS[msg.ai_provider] || msg.ai_provider}
+            </span>
+          )}
         </div>
         <div className="text-sm text-gray-700 leading-relaxed space-y-0.5">
           {renderContent(msg.content)}
@@ -623,10 +642,66 @@ function MessageBubble({
             <MoreIcon />
           </button>
           <div className="flex-1" />
-          <button type="button" className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors border border-gray-200 hover:border-indigo-200">
-            <RefreshIcon />
-            Regenerate
-          </button>
+          {onRegenerate && availableModels?.length > 0 && (
+            <div className="relative" ref={regenRef}>
+              <button
+                type="button"
+                onClick={() => { setRegenOpen((o) => !o); setRegenProvider(null); }}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors border border-gray-200 hover:border-indigo-200"
+              >
+                <RefreshIcon />
+                Regenerate
+              </button>
+              {regenOpen && (
+                <div className="absolute bottom-full right-0 mb-2 bg-gray-900 rounded-xl shadow-xl border border-gray-700/60 z-50 overflow-hidden min-w-[190px]">
+                  {regenProvider === null ? (
+                    /* Provider list */
+                    <div className="py-1">
+                      <p className="px-3 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500">Choose model</p>
+                      {availableModels.map((provider) => (
+                        <button
+                          key={provider}
+                          type="button"
+                          onClick={() => setRegenProvider(provider)}
+                          className="w-full flex items-center justify-between px-3 py-2 text-[11px] text-left text-gray-300 hover:bg-gray-700/70 transition-colors"
+                        >
+                          <span>{MODEL_LABELS[provider] || provider}</span>
+                          <ChevronDownIcon />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    /* Model list for selected provider */
+                    <div className="py-1 max-h-52 overflow-y-auto">
+                      <button
+                        type="button"
+                        onClick={() => setRegenProvider(null)}
+                        className="w-full flex items-center gap-1.5 px-3 py-2 text-[11px] text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 transition-colors"
+                      >
+                        <span>←</span>
+                        {MODEL_LABELS[regenProvider] || regenProvider}
+                      </button>
+                      <div className="border-t border-gray-700/50 my-0.5" />
+                      {(PROVIDER_MODELS[regenProvider] || []).map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setRegenOpen(false);
+                            setRegenProvider(null);
+                            onRegenerate(msg.id, regenProvider, m.id);
+                          }}
+                          className="w-full px-3 py-2 text-[11px] text-left text-gray-300 hover:bg-gray-700/70 transition-colors"
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         {(replyHistory?.back?.length > 0 || replyHistory?.forward?.length > 0) && (
           <div className="flex items-center gap-2 mt-2">
@@ -1255,6 +1330,53 @@ export default function ChatTab({ course, userData, sessionToken }) {
     }
   }
 
+  async function handleRegenerateMessage(assistantMsgId, provider, modelId) {
+    if (sending) return;
+    const assistantMsg = messages.find((m) => m.id === assistantMsgId);
+    if (!assistantMsg) return;
+    const userMsg = messages
+      .filter((m) => m.role === 'user' && m.message_index < assistantMsg.message_index)
+      .sort((a, b) => b.message_index - a.message_index)[0];
+    if (!userMsg) return;
+
+    const prevMessages = messages;
+    const prevMsgChunks = msgChunks;
+    const keptPrefix = prevMessages.filter((m) => (m.message_index ?? Number.POSITIVE_INFINITY) < userMsg.message_index);
+
+    setSending(true);
+    sendingRef.current = true;
+    setSourcesPanel({ open: false, messageId: null, focusIndex: null });
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resource: 'message',
+          action: 'regenerate',
+          message_id: assistantMsgId,
+          ai_provider: provider,
+          ai_model: modelId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to regenerate');
+
+      const nextMessages = [...keptPrefix, data.user_message, data.assistant_message];
+      setMessages(nextMessages);
+      setMsgChunks((prev) => {
+        const keptIds = new Set(nextMessages.map((m) => m.id));
+        return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
+      });
+    } catch {
+      setMessages(prevMessages);
+      setMsgChunks(prevMsgChunks);
+    } finally {
+      setSending(false);
+      sendingRef.current = false;
+    }
+  }
+
   const { today, lastWeek, older } = groupChatsByDate(chats);
 
   return (
@@ -1545,6 +1667,8 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 replyHistory={replyHistory}
                 onRevert={replyHistory?.back?.length ? handleRevertMessage : null}
                 onRestore={replyHistory?.forward?.length ? handleRestoreMessage : null}
+                onRegenerate={msg.role === 'assistant' && !sending ? handleRegenerateMessage : null}
+                availableModels={availableModels}
               />
               );
             })
