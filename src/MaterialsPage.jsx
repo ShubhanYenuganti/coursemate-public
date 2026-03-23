@@ -2,19 +2,19 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
-const DOC_TYPES = [
-  { id: 'slide',          label: 'Slides' },
-  { id: 'lecture_note',   label: 'Lecture Notes' },
-  { id: 'reading',        label: 'Reading' },
-  { id: 'hw_instruction', label: 'HW Instructions' },
-  { id: 'hw_solution',    label: 'HW Solutions' },
-  { id: 'quiz',           label: 'Quiz / Exam' },
-  { id: 'coding_spec',    label: 'Project Spec' },
-  { id: 'code_file',      label: 'Code File' },
-  { id: 'default',        label: 'Other' },
+const DOCUMENT_TYPES = [
+  { value: 'general',         label: 'General / other' },
+  { value: 'lecture_slide',   label: 'Lecture slides' },
+  { value: 'lecture_note',    label: 'Lecture notes' },
+  { value: 'discussion_note', label: 'Discussion notes' },
+  { value: 'reading',         label: 'Reading' },
+  { value: 'hw_instruction',  label: 'Homework instructions' },
+  { value: 'hw_solution',     label: 'Homework solutions' },
+  { value: 'quiz',            label: 'Quiz' },
+  { value: 'exam',            label: 'Exam' },
+  { value: 'coding_spec',     label: 'Coding project spec' },
+  { value: 'code_file',       label: 'Code file' },
 ];
-
-const DOC_TYPE_LABELS = Object.fromEntries(DOC_TYPES.map(d => [d.id, d.label]));
 
 const ACCEPTED_TYPES = new Set([
   'application/pdf',
@@ -189,15 +189,14 @@ function UploadZone({ onFiles, disabled }) {
 
 // ─── upload item row ──────────────────────────────────────────────────────────
 
-function UploadItemRow({ item, onVisibilityChange, onDismiss, onTypeSelect }) {
-  const isPendingType = item.status === 'pending_type';
+function UploadItemRow({ item, onVisibilityChange, onDismiss }) {
   const isLoading = item.status === 'uploading';
   const isDone    = item.status === 'done';
   const isError   = item.status === 'error';
 
   return (
     <div className={`rounded-lg border bg-white transition-all ${
-      isError ? 'border-red-200 bg-red-50/40' : isPendingType ? 'border-indigo-200 bg-indigo-50/30' : 'border-gray-200'
+      isError ? 'border-red-200 bg-red-50/40' : 'border-gray-200'
     }`}>
       {/* Main row */}
       <div className="flex items-center gap-3 px-3 py-2.5">
@@ -234,25 +233,6 @@ function UploadItemRow({ item, onVisibilityChange, onDismiss, onTypeSelect }) {
         </div>
       </div>
 
-      {/* Doc type selection — shown when waiting for type */}
-      {isPendingType && (
-        <div className="px-3 pb-3">
-          <p className="text-xs text-indigo-600 font-medium mb-2">Select document type to start upload:</p>
-          <div className="flex flex-wrap gap-1.5">
-            {DOC_TYPES.map(dt => (
-              <button
-                key={dt.id}
-                type="button"
-                onClick={() => onTypeSelect(item.id, dt.id)}
-                className="px-2.5 py-1 rounded-full text-xs font-medium border border-indigo-200 text-indigo-700 bg-white hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-colors"
-              >
-                {dt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Loading progress banner — shown while uploading */}
       {isLoading && (
         <div className="mx-3 mb-2.5 h-1 rounded-full bg-gray-100 overflow-hidden">
@@ -278,6 +258,49 @@ function UploadItemRow({ item, onVisibilityChange, onDismiss, onTypeSelect }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── staging item row (pre-upload, doc type selection) ───────────────────────
+
+function StagingItemRow({ item, onDocTypeChange, onUpload, onRemove }) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-indigo-100 bg-indigo-50/30 px-3 py-2.5">
+      <FileTypeIcon type={item.file.type} />
+
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-gray-800 truncate">{item.file.name}</p>
+        <p className="text-xs text-gray-400">{fmtSize(item.file.size)}</p>
+      </div>
+
+      <select
+        value={item.docType}
+        onChange={e => onDocTypeChange(item.id, e.target.value)}
+        className="text-xs rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400 shrink-0"
+      >
+        {DOCUMENT_TYPES.map(dt => (
+          <option key={dt.value} value={dt.value}>{dt.label}</option>
+        ))}
+      </select>
+
+      <button
+        type="button"
+        onClick={() => onUpload(item)}
+        disabled={!item.docType}
+        className="shrink-0 px-3 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        Upload
+      </button>
+
+      <button
+        type="button"
+        onClick={() => onRemove(item.id)}
+        className="p-1 rounded text-gray-300 hover:text-gray-500 transition-colors shrink-0"
+        title="Remove"
+      >
+        <TrashIcon size={14} />
+      </button>
     </div>
   );
 }
@@ -308,8 +331,6 @@ function MaterialCard({ material, onVisibilityChange, onDelete, isOwner }) {
           {material.name}
         </a>
         <p className="text-xs text-gray-400">
-          {material.doc_type && DOC_TYPE_LABELS[material.doc_type]
-            ? `${DOC_TYPE_LABELS[material.doc_type]} · ` : ''}
           {getMeta(material.file_type).label}
           {material.visibility === 'public' ? ' · Public' : ' · Private'}
         </p>
@@ -415,6 +436,7 @@ function FilterBar({ ownerFilter, setOwnerFilter, typeFilter, setTypeFilter }) {
 export default function MaterialsPage({ courseId, sessionToken, userId }) {
   const [materials, setMaterials]       = useState([]);
   const [loadingMats, setLoadingMats]   = useState(true);
+  const [stagingItems, setStagingItems] = useState([]);
   const [uploadItems, setUploadItems]   = useState([]);
   const [ownerFilter, setOwnerFilter]   = useState('all');
   const [typeFilter,  setTypeFilter]    = useState('all');
@@ -455,7 +477,6 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
           filename: item.file.name,
           file_type: item.file.type,
           visibility: 'private',
-          doc_type: item.docType || null,
         }),
       });
       if (!r1.ok) throw new Error('Failed to get upload URL');
@@ -479,41 +500,55 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
           filename: item.file.name,
           file_type: item.file.type,
           visibility: 'private',
-          doc_type: item.docType || null,
+          source_type: item.docType || 'general',
         }),
       });
       if (!r3.ok) throw new Error('Upload confirmation failed');
       const { material } = await r3.json();
 
       update({ status: 'done', materialId: material.id, isPublic: false, visibilityUpdating: false });
-      await fetchMaterials();
-      setUploadItems(prev => prev.filter(i => i.status !== 'done'));
     } catch (e) {
       update({ status: 'error', error: e.message });
     }
-  }, [courseId, sessionToken, fetchMaterials]);
+  }, [courseId, sessionToken]);
 
-  // ── queue files — enter pending_type state, wait for doc type selection ──
+  // ── stage files (no upload yet) ──────────────────────────────────────────
   const handleFiles = useCallback((files) => {
     const items = files.map(f => ({
-      id: uid(), file: f, status: 'pending_type',
-      docType: null, materialId: null, isPublic: false,
-      visibilityUpdating: false, error: null,
+      id: uid(), file: f, docType: 'general',
     }));
-    setUploadItems(prev => [...prev, ...items]);
+    setStagingItems(prev => [...prev, ...items]);
   }, []);
 
-  // ── doc type selected — set type and start upload for that item ───────────
-  const handleTypeSelect = useCallback((id, docType) => {
-    setUploadItems(prev => prev.map(i => i.id === id ? { ...i, docType } : i));
-    setUploadItems(prev => {
-      const item = prev.find(i => i.id === id);
-      if (item) {
-        uploadOne({ ...item, docType });
-      }
-      return prev;
-    });
-  }, [uploadOne]);
+  // ── update doc type for a staging item ───────────────────────────────────
+  const handleStagingDocType = useCallback((id, docType) => {
+    setStagingItems(prev => prev.map(i => i.id === id ? { ...i, docType } : i));
+  }, []);
+
+  // ── upload a single staged item ───────────────────────────────────────────
+  const handleStagingUpload = useCallback(async (stagingItem) => {
+    // Move from staging to upload queue
+    setStagingItems(prev => prev.filter(i => i.id !== stagingItem.id));
+    const uploadItem = {
+      id: stagingItem.id,
+      file: stagingItem.file,
+      docType: stagingItem.docType,
+      status: 'queued',
+      materialId: null,
+      isPublic: false,
+      visibilityUpdating: false,
+      error: null,
+    };
+    setUploadItems(prev => [...prev, uploadItem]);
+    await uploadOne(uploadItem);
+    await fetchMaterials();
+    setUploadItems(prev => prev.filter(i => i.id !== uploadItem.id || i.status !== 'done'));
+  }, [uploadOne, fetchMaterials]);
+
+  // ── remove a staging item ─────────────────────────────────────────────────
+  const removeStagingItem = useCallback((id) => {
+    setStagingItems(prev => prev.filter(i => i.id !== id));
+  }, []);
 
   // ── visibility toggle for upload items ───────────────────────────────────
   const handleUploadItemVisibility = useCallback(async (id, isPublic) => {
@@ -581,7 +616,6 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
 
   const dismissItem = (id) => setUploadItems(prev => prev.filter(i => i.id !== id));
 
-  const pendingTypeItems = uploadItems.filter(i => i.status === 'pending_type');
   const activeUploads    = uploadItems.filter(i => i.status === 'uploading');
   const completedUploads = uploadItems.filter(i => i.status === 'done' || i.status === 'error');
 
@@ -601,17 +635,17 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
           disabled={false}
         />
 
-        {/* Pending type selection */}
-        {pendingTypeItems.length > 0 && (
+        {/* Staging queue — doc type selection before upload starts */}
+        {stagingItems.length > 0 && (
           <div className="space-y-2">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Select Type</p>
-            {pendingTypeItems.map(item => (
-              <UploadItemRow
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ready to upload</p>
+            {stagingItems.map(item => (
+              <StagingItemRow
                 key={item.id}
                 item={item}
-                onVisibilityChange={handleUploadItemVisibility}
-                onDismiss={dismissItem}
-                onTypeSelect={handleTypeSelect}
+                onDocTypeChange={handleStagingDocType}
+                onUpload={handleStagingUpload}
+                onRemove={removeStagingItem}
               />
             ))}
           </div>
@@ -627,7 +661,6 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
                 item={item}
                 onVisibilityChange={handleUploadItemVisibility}
                 onDismiss={dismissItem}
-                onTypeSelect={handleTypeSelect}
               />
             ))}
           </div>
@@ -645,7 +678,6 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
                 item={item}
                 onVisibilityChange={handleUploadItemVisibility}
                 onDismiss={dismissItem}
-                onTypeSelect={handleTypeSelect}
               />
             ))}
           </div>

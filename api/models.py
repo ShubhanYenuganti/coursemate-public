@@ -168,15 +168,16 @@ class Material:
         file_type: Optional[str] = None,
         visibility: str = 'private',
         source_type: str = 'upload',
+        doc_type: str = 'general',
     ) -> Dict[str, Any]:
         """Insert a new material record and return it."""
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO materials (course_id, name, file_url, uploaded_by, file_type, visibility, source_type)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO materials (course_id, name, file_url, uploaded_by, file_type, visibility, source_type, doc_type)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
-            """, (course_id, name, file_url, uploaded_by, file_type, visibility, source_type))
+            """, (course_id, name, file_url, uploaded_by, file_type, visibility, source_type, doc_type))
             material = cursor.fetchone()
             cursor.close()
             return dict(material)

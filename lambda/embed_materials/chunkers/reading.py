@@ -1,63 +1,73 @@
 """
-Reading chunker: heading-based splitting, preserving chapter structure.
-Sections are never merged across headings even if short.
+Chunker for: reading
+
+Heading-based split (same logic as notes.py) but prefixes each chunk
+with the document title and section heading for better retrieval context.
 """
-from .lecture_notes import _split_at_headings, _single_parent
+import re
+from chunkers import ChunkSpec
 
 
-def chunk_reading(raw_chunks, material_meta):
-    """
-    Split at heading boundaries, preserving section structure.
-    Returns (parent_dict, [child_dict, ...]).
-    """
-    doc_type = material_meta.get('doc_type', 'reading')
-    week = material_meta.get('week')
+def _extract_page_breaks(full_md: str) -> list[int]:
+    breaks = [0]
+    for m in re.finditer(r'^---+$', full_md, re.MULTILINE):
+        breaks.append(m.start())
+    return breaks
 
-    sections = _split_at_headings(raw_chunks)
-    total = len(sections)
-    if total == 0:
-        return _single_parent(raw_chunks, doc_type, week), []
 
-    children = []
-    heading_texts = []
-    for idx, section in enumerate(sections):
-        heading = section.get('heading', '')
-        if heading:
-            heading_texts.append(heading)
-        combined = f"{heading}\n\n{section['body']}".strip() if heading else section['body'].strip()
-        pn = section.get('page_number')
+def _find_page(text: str, full_md: str, page_breaks: list[int]) -> int:
+    pos = full_md.find(text[:100]) if len(text) >= 100 else full_md.find(text)
+    if pos == -1:
+        return 0
+    for i, bp in enumerate(page_breaks):
+        if pos < bp:
+            return max(0, i - 1)
+    return max(0, len(page_breaks) - 1)
 
-        children.append({
-            'chunk_text': combined,
-            'chunk_type': 'section',
-            'page_number': pn,
-            'page_numbers': section.get('page_numbers', [pn] if pn else []),
-            'source_type': doc_type,
-            'is_parent': False,
-            'parent_id': None,
-            'section_title': heading or None,
-            'week': week,
-            'position_in_doc': idx / total,
-            'problem_id': None,
-            'related_chunk_ids': [],
-            'token_count': len(combined.split()),
-        })
 
-    parent_text = ' | '.join(heading_texts) if heading_texts else \
-                  (children[0]['chunk_text'][:200] if children else '')
-    parent = {
-        'chunk_text': parent_text,
-        'chunk_type': 'parent',
-        'page_number': None,
-        'page_numbers': [],
-        'source_type': doc_type,
-        'is_parent': True,
-        'parent_id': None,
-        'section_title': None,
-        'week': week,
-        'position_in_doc': 0.0,
-        'problem_id': None,
-        'related_chunk_ids': [],
-        'token_count': len(parent_text.split()),
-    }
-    return parent, children
+def chunk(pdf_path: str, full_md: str) -> list[ChunkSpec]:
+    page_breaks = _extract_page_breaks(full_md)
+
+    # Extract document title (first H1)
+    title_match = re.search(r'^#\s+(.+)$', full_md, re.MULTILINE)
+    doc_title = title_match.group(1).strip() if title_match else "Reading"
+
+    heading_re = re.compile(r'^(#{1,6}\s+.+)$', re.MULTILINE)
+    sections = heading_re.split(full_md)
+
+    chunks = []
+    idx = 0
+
+    pairs = []
+    if sections[0].strip():
+        pairs.append(("", sections[0]))
+    for i in range(1, len(sections), 2):
+        heading = sections[i]
+        content = sections[i + 1] if i + 1 < len(sections) else ""
+        pairs.append((heading, content))
+
+    for heading, content in pairs:
+        raw_text = (heading + "\n" + content).strip()
+        if not raw_text:
+            continue
+
+        # Prefix with document title and section heading
+        heading_clean = re.sub(r'^#+\s*', '', heading).strip()
+        if heading_clean:
+            text = f"{doc_title} — {heading_clean}\n\n{content.strip()}"
+        else:
+            text = raw_text
+
+        page = _find_page(raw_text, full_md, page_breaks)
+        chunks.append(ChunkSpec(
+            text=text,
+            visual_page=page,
+            chunk_index=idx,
+            modal_meta={
+                "reading_title": doc_title,
+                "section_heading": heading_clean,
+            },
+        ))
+        idx += 1
+
+    return chunks

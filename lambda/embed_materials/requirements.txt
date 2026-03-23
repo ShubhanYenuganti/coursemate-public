@@ -1,10 +1,7 @@
-requests>=2.32.0
-pymupdf==1.24.0
-python-docx==1.1.2
-openpyxl==3.1.5
-Pillow==10.4.0
-pytesseract==0.3.13
-lxml==5.2.2
-nltk==3.8.1
+voyageai>=0.3.0
+pymupdf>=1.24.0
+pymupdf4llm>=0.0.17
+asyncpg>=0.29.0
+Pillow>=10.0.0
 psycopg[binary]==3.3.3
 boto3>=1.35.0

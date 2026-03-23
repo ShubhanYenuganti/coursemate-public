@@ -30,6 +30,11 @@ except ImportError:
     from rag import retrieve_chunks
     from llm import synthesize
 
+try:
+    from services.query.persistence import persist_message
+except ImportError:
+    persist_message = None
+
 
 # ------------------------------------------------------------------ helpers --
 
@@ -319,9 +324,14 @@ class handler(BaseHTTPRequestHandler):
                 INSERT INTO chats (course_id, user_id, title)
                 VALUES (%s, %s, %s)
                 RETURNING id, course_id, user_id, title, visibility, message_count,
-                          last_message_at, created_at, updated_at, is_archived
+                          last_message_at, created_at, updated_at, is_archived, session_uuid
             """, (course_id, user['id'], title))
             chat = cursor.fetchone()
+            # Create matching chat_sessions entry
+            cursor.execute(
+                "INSERT INTO chat_sessions (id) VALUES (%s) ON CONFLICT DO NOTHING",
+                (chat['session_uuid'],)
+            )
             cursor.close()
 
         send_json(self, 201, {"chat": chat})
@@ -506,6 +516,17 @@ class handler(BaseHTTPRequestHandler):
             ))
             assistant_message = cursor.fetchone()
             cursor.close()
+
+            # Persist messages to chat_sessions/messages for grounding (best-effort)
+            if persist_message and chat.get('session_uuid'):
+                try:
+                    session_id = str(chat['session_uuid'])
+                    persist_message(conn, session_id, 'user', content,
+                                    grounding_refs=[str(r) for r in retrieved_ids])
+                    persist_message(conn, session_id, 'assistant', assistant_content,
+                                    grounding_refs=[str(r) for r in retrieved_ids])
+                except Exception:
+                    pass  # grounding persistence is non-critical
 
         send_json(self, 201, {
             "user_message": user_message,

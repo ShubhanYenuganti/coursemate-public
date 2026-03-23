@@ -1,64 +1,57 @@
 """
-Jina v4 multimodal embedder for the embed_materials Lambda.
-Uses task='retrieval.passage' for document-side embedding.
-For visual source types (slide, quiz, exam), renders PDF pages as JPEG and sends images.
-For text types, sends chunk_text directly.
+Voyage AI async embedder for the embed_materials Lambda.
+
+Provides two embedding functions:
+- embed_visual: voyage-multimodal-3.5 for image/page embeddings
+- embed_text:   voyage-3.5 for text embeddings
 """
-import os
 import base64
-import requests
-import fitz  # PyMuPDF — already in requirements
+import os
+import voyageai
 
-_JINA_URL = "https://api.jina.ai/v1/embeddings"
-_DIMS = 1024
-_VISUAL_TYPES = {'slide', 'quiz', 'exam'}
+_vo = None
 
 
-def _render_page_jpeg(pdf_bytes: bytes, page_number: int) -> str:
-    """Render one PDF page (1-indexed) to base64 JPEG."""
-    doc = fitz.open(stream=pdf_bytes, filetype='pdf')
-    page = doc[page_number - 1]
-    pix = page.get_pixmap(dpi=150)
-    img_bytes = pix.tobytes('jpeg')
-    doc.close()
-    return base64.b64encode(img_bytes).decode()
+def _get_client() -> voyageai.AsyncClient:
+    global _vo
+    if _vo is None:
+        _vo = voyageai.AsyncClient(api_key=os.environ['VOYAGE_API_KEY'])
+    return _vo
 
 
-def _jina_request(inputs: list) -> list:
-    resp = requests.post(
-        _JINA_URL,
-        headers={'Authorization': f"Bearer {os.environ['JINA_API_KEY']}",
-                 'Content-Type': 'application/json'},
-        json={'model': 'jina-embeddings-v4', 'task': 'retrieval.passage',
-              'dimensions': _DIMS, 'input': inputs},
-        timeout=120,
+async def embed_visual(png_bytes: bytes) -> list[float]:
+    """Embed a page image using voyage-multimodal-3.5."""
+    b64 = base64.standard_b64encode(png_bytes).decode()
+    vo = _get_client()
+    result = await vo.multimodal_embed(
+        inputs=[[{"type": "image_base64", "image_base64": f"data:image/png;base64,{b64}"}]],
+        model="voyage-multimodal-3.5",
+        input_type="document",
     )
-    resp.raise_for_status()
-    return [d['embedding'] for d in resp.json()['data']]
+    return result.embeddings[0]
 
 
-def embed_chunks(chunks: list, source_type: str, pdf_bytes: bytes = None,
-                 batch_size: int = 32) -> list:
-    """
-    Embed chunks via Jina v4.
-    - For visual source types with pdf_bytes: render page_numbers[0] as JPEG.
-    - Otherwise: send chunk_text as text.
-    Returns chunks with 'embedding' key added in-place.
-    """
-    use_visual = source_type in _VISUAL_TYPES and pdf_bytes is not None
+async def embed_text(text: str) -> list[float] | None:
+    """Embed text using voyage-3.5. Returns None for empty text."""
+    if not text or not text.strip():
+        return None
+    vo = _get_client()
+    result = await vo.embed(
+        texts=[text],
+        model="voyage-3.5",
+        input_type="document",
+    )
+    return result.embeddings[0]
 
-    for i in range(0, len(chunks), batch_size):
-        batch = chunks[i:i + batch_size]
-        inputs = []
-        for c in batch:
-            if use_visual and c.get('page_numbers'):
-                b64 = _render_page_jpeg(pdf_bytes, c['page_numbers'][0])
-                inputs.append({'type': 'image_url',
-                                'image_url': {'url': f"data:image/jpeg;base64,{b64}"}})
-            else:
-                inputs.append({'text': c['chunk_text']})
-        embeddings = _jina_request(inputs)
-        for chunk, vec in zip(batch, embeddings):
-            chunk['embedding'] = vec
 
-    return chunks
+async def embed_visual_text(text: str) -> list[float] | None:
+    """Embed text using voyage-multimodal-3.5 (for parent visual embedding)."""
+    if not text or not text.strip():
+        return None
+    vo = _get_client()
+    result = await vo.multimodal_embed(
+        inputs=[[{"type": "text", "text": text[:2000]}]],
+        model="voyage-multimodal-3.5",
+        input_type="document",
+    )
+    return result.embeddings[0]

@@ -16,6 +16,7 @@ try:
     from .models import User, Material
     from .courses import Course
     from .db import get_db
+    from .document_types import VALID_DOC_TYPES, DEFAULT_DOC_TYPE
     from .s3_utils import (
         validate_file_type, get_file_extension,
         generate_upload_presigned_url, generate_download_presigned_url,
@@ -26,6 +27,7 @@ except ImportError:
     from models import User, Material
     from courses import Course
     from db import get_db
+    from document_types import VALID_DOC_TYPES, DEFAULT_DOC_TYPE
     from s3_utils import (
         validate_file_type, get_file_extension,
         generate_upload_presigned_url, generate_download_presigned_url,
@@ -161,8 +163,6 @@ class handler(BaseHTTPRequestHandler):
         filename = sanitize_string(data.get('filename', ''), max_length=255)
         file_type = sanitize_string(data.get('file_type', ''), max_length=100)
         visibility = data.get('visibility', 'private')
-        doc_type = data.get('doc_type')
-        week = data.get('week')
 
         if not course_id or not filename or not file_type:
             send_json(self, 400, {"error": "course_id, filename, and file_type are required"})
@@ -198,8 +198,6 @@ class handler(BaseHTTPRequestHandler):
             "upload_url": presigned['url'],
             "fields": presigned['fields'],
             "s3_key": s3_key,
-            "doc_type": doc_type,
-            "week": week,
         })
 
     def _confirm_upload(self, google_id, data):
@@ -208,9 +206,6 @@ class handler(BaseHTTPRequestHandler):
         filename = sanitize_string(data.get('filename', ''), max_length=255)
         file_type = sanitize_string(data.get('file_type', ''), max_length=100)
         visibility = data.get('visibility', 'private')
-        doc_type = data.get('doc_type')
-        week_raw = data.get('week')
-        week = int(week_raw) if week_raw is not None else None
 
         if not s3_key or not course_id or not filename or not file_type:
             send_json(self, 400, {"error": "s3_key, course_id, filename, and file_type are required"})
@@ -241,6 +236,10 @@ class handler(BaseHTTPRequestHandler):
         region = os.environ.get('AWS_REGION')
         file_url = f"https://{bucket}.s3.{region}.amazonaws.com/{s3_key}"
 
+        doc_type = data.get('source_type', DEFAULT_DOC_TYPE)
+        if doc_type not in VALID_DOC_TYPES:
+            doc_type = DEFAULT_DOC_TYPE
+
         material = Material.create(
             course_id=course_id,
             name=filename,
@@ -249,20 +248,9 @@ class handler(BaseHTTPRequestHandler):
             file_type=file_type,
             visibility=visibility,
             source_type='upload',
+            doc_type=doc_type,
         )
         Course.add_material(course_id, material['id'])
-
-        # Set doc_type and week on the material record
-        if doc_type:
-            with get_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE materials SET doc_type = %s, week = %s WHERE id = %s",
-                    (doc_type, week, material['id'])
-                )
-                cursor.close()
-            material['doc_type'] = doc_type
-            material['week'] = week
 
         # Create a pending embed job — Lambda will pick this up asynchronously
         with get_db() as conn:
