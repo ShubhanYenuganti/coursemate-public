@@ -871,7 +871,7 @@ class handler(BaseHTTPRequestHandler):
             cursor.execute(
                 """
                 SELECT id, chat_id, course_id, user_id, role, content, message_index,
-                       ai_provider, ai_model, context_material_ids
+                       ai_provider, ai_model, context_material_ids, parent_message_id
                 FROM chat_messages
                 WHERE id = %s AND is_deleted = FALSE
                 """,
@@ -893,18 +893,33 @@ class handler(BaseHTTPRequestHandler):
                 cursor.close()
                 return
 
-            cursor.execute(
-                """
-                SELECT id, chat_id, role, content, message_index, reply_history,
-                       context_material_ids
-                FROM chat_messages
-                WHERE chat_id = %s
-                  AND message_index = %s
-                  AND role = 'user'
-                  AND is_deleted = FALSE
-                """,
-                (msg['chat_id'], msg['message_index'] - 1)
-            )
+            # Use parent_message_id when available; fall back to nearest preceding user message.
+            # (message_index - 1 is wrong when edits have created non-consecutive indices.)
+            if msg.get('parent_message_id'):
+                cursor.execute(
+                    """
+                    SELECT id, chat_id, role, content, message_index, reply_history,
+                           context_material_ids
+                    FROM chat_messages
+                    WHERE id = %s AND role = 'user' AND is_deleted = FALSE
+                    """,
+                    (msg['parent_message_id'],)
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, chat_id, role, content, message_index, reply_history,
+                           context_material_ids
+                    FROM chat_messages
+                    WHERE chat_id = %s
+                      AND message_index < %s
+                      AND role = 'user'
+                      AND is_deleted = FALSE
+                    ORDER BY message_index DESC
+                    LIMIT 1
+                    """,
+                    (msg['chat_id'], msg['message_index'])
+                )
             user_msg = cursor.fetchone()
             if not user_msg:
                 send_json(self, 400, {"error": "No preceding user message found"})

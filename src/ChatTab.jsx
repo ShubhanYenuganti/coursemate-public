@@ -1151,7 +1151,10 @@ export default function ChatTab({ course, userData, sessionToken }) {
     if (sending) return;
     const assistantMsg = messages.find((m) => m.id === assistantMsgId);
     if (!assistantMsg) return;
-    const userMsg = messages.find((m) => m.message_index === assistantMsg.message_index - 1);
+    // Find the nearest user message before this assistant — don't assume contiguous indices
+    const userMsg = messages
+      .filter((m) => m.role === 'user' && m.message_index < assistantMsg.message_index)
+      .sort((a, b) => b.message_index - a.message_index)[0];
     if (!userMsg) return;
 
     const prevMessages = messages;
