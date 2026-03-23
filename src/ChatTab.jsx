@@ -83,6 +83,16 @@ function RevertIcon() {
   );
 }
 
+function RestoreIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 7v6h-6" />
+      <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13" />
+    </svg>
+  );
+}
+
 function MoreIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
@@ -440,6 +450,7 @@ function MessageBubble({
   canEdit,
   replyHistory,
   onRevert,
+  onRestore,
 }) {
   const isUser = msg.role === 'user';
   const [copied, setCopied] = useState(false);
@@ -617,15 +628,29 @@ function MessageBubble({
             Regenerate
           </button>
         </div>
-        {Array.isArray(replyHistory) && replyHistory.length > 0 && onRevert && (
-          <button
-            type="button"
-            onClick={() => onRevert(msg.id)}
-            className="mt-2 flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-gray-500 hover:text-amber-600 hover:bg-amber-50 transition-colors border border-gray-200 hover:border-amber-200"
-          >
-            <RevertIcon />
-            Revert to previous response
-          </button>
+        {(replyHistory?.back?.length > 0 || replyHistory?.forward?.length > 0) && (
+          <div className="flex items-center gap-2 mt-2">
+            {replyHistory.back?.length > 0 && onRevert && (
+              <button
+                type="button"
+                onClick={() => onRevert(msg.id)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-gray-500 hover:text-amber-600 hover:bg-amber-50 transition-colors border border-gray-200 hover:border-amber-200"
+              >
+                <RevertIcon />
+                Revert response
+              </button>
+            )}
+            {replyHistory.forward?.length > 0 && onRestore && (
+              <button
+                type="button"
+                onClick={() => onRestore(msg.id)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-gray-500 hover:text-emerald-600 hover:bg-emerald-50 transition-colors border border-gray-200 hover:border-emerald-200"
+              >
+                <RestoreIcon />
+                Restore response
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -1189,6 +1214,47 @@ export default function ChatTab({ course, userData, sessionToken }) {
     }
   }
 
+  async function handleRestoreMessage(assistantMsgId) {
+    if (sending) return;
+    const assistantMsg = messages.find((m) => m.id === assistantMsgId);
+    if (!assistantMsg) return;
+    const userMsg = messages
+      .filter((m) => m.role === 'user' && m.message_index < assistantMsg.message_index)
+      .sort((a, b) => b.message_index - a.message_index)[0];
+    if (!userMsg) return;
+
+    const prevMessages = messages;
+    const prevMsgChunks = msgChunks;
+    const keptPrefix = prevMessages.filter((m) => (m.message_index ?? Number.POSITIVE_INFINITY) < userMsg.message_index);
+
+    setSending(true);
+    sendingRef.current = true;
+    setSourcesPanel({ open: false, messageId: null, focusIndex: null });
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resource: 'message', action: 'restore', message_id: assistantMsgId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to restore');
+
+      const nextMessages = [...keptPrefix, data.user_message, data.assistant_message];
+      setMessages(nextMessages);
+      setMsgChunks((prev) => {
+        const keptIds = new Set(nextMessages.map((m) => m.id));
+        return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
+      });
+    } catch {
+      setMessages(prevMessages);
+      setMsgChunks(prevMsgChunks);
+    } finally {
+      setSending(false);
+      sendingRef.current = false;
+    }
+  }
+
   const { today, lastWeek, older } = groupChatsByDate(chats);
 
   return (
@@ -1449,9 +1515,13 @@ export default function ChatTab({ course, userData, sessionToken }) {
           ) : (
             messages.map((msg, i) => {
               const prevMsg = messages[i - 1];
-              const replyHistory = msg.role === 'assistant' && Array.isArray(prevMsg?.reply_history) && prevMsg.reply_history.length
-                ? prevMsg.reply_history
-                : null;
+              const rawHistory = msg.role === 'assistant' ? prevMsg?.reply_history : null;
+              const replyHistory = (() => {
+                if (!rawHistory) return null;
+                if (Array.isArray(rawHistory)) return rawHistory.length ? { back: rawHistory, forward: [] } : null;
+                const b = rawHistory.back || [], f = rawHistory.forward || [];
+                return b.length || f.length ? { back: b, forward: f } : null;
+              })();
               return (
               <MessageBubble
                 key={msg.id}
@@ -1473,7 +1543,8 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 }}
                 canEdit={msg.role === 'user' && typeof msg.message_index === 'number' && !sending}
                 replyHistory={replyHistory}
-                onRevert={replyHistory ? handleRevertMessage : null}
+                onRevert={replyHistory?.back?.length ? handleRevertMessage : null}
+                onRestore={replyHistory?.forward?.length ? handleRestoreMessage : null}
               />
               );
             })

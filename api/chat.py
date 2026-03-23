@@ -14,6 +14,7 @@
 
 import json
 import logging
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -61,6 +62,25 @@ def _next_message_index(conn, chat_id):
     row = cursor.fetchone()
     cursor.close()
     return row['next_idx']
+
+
+def _parse_reply_history(raw):
+    """Return (back_list, forward_list) from a reply_history value.
+
+    Supports v1 (plain array) and v2 ({back, forward}) formats.
+    v1 entries lack 'user_query'; reverting them won't change the user message content.
+    """
+    if raw is None:
+        return [], []
+    if isinstance(raw, list):   # v1 compat
+        return raw, []
+    if isinstance(raw, dict):
+        return raw.get('back', []), raw.get('forward', [])
+    return [], []
+
+
+def _build_reply_history(back, forward):
+    return json.dumps({'back': back, 'forward': forward})
 
 
 def _parse_body(handler):
@@ -147,6 +167,8 @@ class handler(BaseHTTPRequestHandler):
                 self._edit_message(user, data)
             elif action == 'revert':
                 self._revert_message(user, data)
+            elif action == 'restore':
+                self._restore_message(user, data)
             elif action == 'delete':
                 self._delete_message(user, data)
             else:
@@ -670,7 +692,7 @@ class handler(BaseHTTPRequestHandler):
             cursor.execute(
                 """
                 SELECT id, chat_id, course_id, user_id, role, content, context_material_ids,
-                       message_index, ai_provider, ai_model
+                       message_index, ai_provider, ai_model, reply_history
                 FROM chat_messages
                 WHERE id = %s AND is_deleted = FALSE
                 """,
@@ -755,16 +777,19 @@ class handler(BaseHTTPRequestHandler):
                 cursor.close()
                 raise
 
+            # Build v2 reply_history: push displaced assistant + old user query to back, clear forward.
+            back, _ = _parse_reply_history(msg.get('reply_history'))
+            back = back + [{
+                'content': displaced_reply,
+                'user_query': msg['content'],  # user query before this edit
+                'ts': datetime.now(timezone.utc).isoformat(),
+            }]
+            new_reply_history = _build_reply_history(back, [])
+
             cursor.execute(
                 """
                 UPDATE chat_messages
-                SET reply_history = COALESCE(reply_history, '[]'::jsonb) ||
-                        CASE
-                            WHEN %s::text IS NULL THEN '[]'::jsonb
-                            ELSE jsonb_build_array(
-                                jsonb_build_object('content', %s::text, 'edited_at', NOW()::text)
-                            )
-                        END,
+                SET reply_history = %s::jsonb,
                     content = %s,
                     context_material_ids = %s,
                     ai_provider = %s,
@@ -776,8 +801,7 @@ class handler(BaseHTTPRequestHandler):
                           is_edited, reply_history, edited_at, message_index, created_at
                 """,
                 (
-                    displaced_reply,
-                    displaced_reply,
+                    new_reply_history,
                     content,
                     json.dumps(context_material_ids),
                     ai_provider,
@@ -926,25 +950,36 @@ class handler(BaseHTTPRequestHandler):
                 cursor.close()
                 return
 
-            reply_history = user_msg.get('reply_history') or []
-            if not reply_history:
+            back, forward = _parse_reply_history(user_msg.get('reply_history'))
+            if not back:
                 send_json(self, 400, {"error": "No reply history to revert to"})
                 cursor.close()
                 return
 
-            reverted_entry = reply_history[-1]
-            new_history = reply_history[:-1]
+            reverted_entry = back[-1]
+            new_back = back[:-1]
             reverted_content = reverted_entry.get('content', '')
+            reverted_user_query = reverted_entry.get('user_query')
 
+            # Push current state onto forward so it can be restored later.
+            forward = forward + [{
+                'content': msg['content'],
+                'user_query': user_msg['content'],
+                'ts': datetime.now(timezone.utc).isoformat(),
+            }]
+            new_reply_history = _build_reply_history(new_back, forward)
+
+            new_user_content = reverted_user_query if reverted_user_query is not None else user_msg['content']
             cursor.execute(
                 """
                 UPDATE chat_messages
-                SET reply_history = %s::jsonb
+                SET reply_history = %s::jsonb,
+                    content = %s
                 WHERE id = %s
                 RETURNING id, chat_id, role, content, context_material_ids, ai_provider, ai_model,
                           is_edited, reply_history, edited_at, message_index, created_at
                 """,
-                (json.dumps(new_history), user_msg['id'])
+                (new_reply_history, new_user_content, user_msg['id'])
             )
             updated_user_msg = cursor.fetchone()
 
@@ -976,6 +1011,146 @@ class handler(BaseHTTPRequestHandler):
                     user['id'],
                     user_msg['id'],
                     reverted_content,
+                    msg.get('ai_provider'),
+                    msg.get('ai_model'),
+                    json.dumps(user_msg.get('context_material_ids') or []),
+                    next_idx,
+                )
+            )
+            new_assistant = cursor.fetchone()
+            cursor.close()
+
+        send_json(self, 200, {
+            "user_message": updated_user_msg,
+            "assistant_message": new_assistant,
+        })
+
+    def _restore_message(self, user, data):
+        """Restore the most recently reverted assistant response (redo)."""
+        message_id = data.get('message_id')
+        if not isinstance(message_id, int):
+            send_json(self, 400, {"error": "message_id is required"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, chat_id, course_id, user_id, role, content, message_index,
+                       ai_provider, ai_model, context_material_ids, parent_message_id
+                FROM chat_messages
+                WHERE id = %s AND is_deleted = FALSE
+                """,
+                (message_id,)
+            )
+            msg = cursor.fetchone()
+            if not msg:
+                send_json(self, 404, {"error": "Message not found"})
+                cursor.close()
+                return
+            if msg['role'] != 'assistant':
+                send_json(self, 400, {"error": "Can only restore assistant messages"})
+                cursor.close()
+                return
+
+            chat = _get_chat(conn, msg['chat_id'])
+            if not chat or chat['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Access denied"})
+                cursor.close()
+                return
+
+            if msg.get('parent_message_id'):
+                cursor.execute(
+                    """
+                    SELECT id, chat_id, role, content, message_index, reply_history,
+                           context_material_ids
+                    FROM chat_messages
+                    WHERE id = %s AND role = 'user' AND is_deleted = FALSE
+                    """,
+                    (msg['parent_message_id'],)
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, chat_id, role, content, message_index, reply_history,
+                           context_material_ids
+                    FROM chat_messages
+                    WHERE chat_id = %s
+                      AND message_index < %s
+                      AND role = 'user'
+                      AND is_deleted = FALSE
+                    ORDER BY message_index DESC
+                    LIMIT 1
+                    """,
+                    (msg['chat_id'], msg['message_index'])
+                )
+            user_msg = cursor.fetchone()
+            if not user_msg:
+                send_json(self, 400, {"error": "No preceding user message found"})
+                cursor.close()
+                return
+
+            back, forward = _parse_reply_history(user_msg.get('reply_history'))
+            if not forward:
+                send_json(self, 400, {"error": "No forward history to restore"})
+                cursor.close()
+                return
+
+            restored_entry = forward[-1]
+            new_forward = forward[:-1]
+            restored_content = restored_entry.get('content', '')
+            restored_user_query = restored_entry.get('user_query')
+
+            # Push current state back onto back stack.
+            back = back + [{
+                'content': msg['content'],
+                'user_query': user_msg['content'],
+                'ts': datetime.now(timezone.utc).isoformat(),
+            }]
+            new_reply_history = _build_reply_history(back, new_forward)
+
+            new_user_content = restored_user_query if restored_user_query is not None else user_msg['content']
+            cursor.execute(
+                """
+                UPDATE chat_messages
+                SET reply_history = %s::jsonb,
+                    content = %s
+                WHERE id = %s
+                RETURNING id, chat_id, role, content, context_material_ids, ai_provider, ai_model,
+                          is_edited, reply_history, edited_at, message_index, created_at
+                """,
+                (new_reply_history, new_user_content, user_msg['id'])
+            )
+            updated_user_msg = cursor.fetchone()
+
+            cursor.execute(
+                """
+                UPDATE chat_messages
+                SET is_deleted = TRUE
+                WHERE chat_id = %s
+                  AND message_index >= %s
+                  AND is_deleted = FALSE
+                """,
+                (msg['chat_id'], msg['message_index'])
+            )
+
+            next_idx = _next_message_index(conn, msg['chat_id'])
+
+            cursor.execute(
+                """
+                INSERT INTO chat_messages
+                    (chat_id, course_id, user_id, parent_message_id, role, content,
+                     ai_provider, ai_model, context_material_ids, message_index)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s)
+                RETURNING id, chat_id, role, content, retrieved_chunk_ids,
+                          message_index, created_at
+                """,
+                (
+                    msg['chat_id'],
+                    chat['course_id'],
+                    user['id'],
+                    user_msg['id'],
+                    restored_content,
                     msg.get('ai_provider'),
                     msg.get('ai_model'),
                     json.dumps(user_msg.get('context_material_ids') or []),
