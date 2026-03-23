@@ -13,9 +13,10 @@ def _vec_str(emb: list) -> str:
 def _search_chunks(conn, emb: list, retrieval_type: str, limit: int, material_ids=None) -> list:
     vec = _vec_str(emb)
     mat_filter = "AND d.material_id = ANY(%s::int[])" if material_ids else ""
-    params = [vec, vec, retrieval_type]
+    params = [vec, retrieval_type]
     if material_ids:
         params.append(material_ids)
+    params.append(vec)
     params.append(limit)
 
     cursor = conn.cursor()
@@ -39,9 +40,10 @@ def _search_chunks(conn, emb: list, retrieval_type: str, limit: int, material_id
 def _search_parent_chunks(conn, emb: list, limit: int, material_ids=None) -> list:
     vec = _vec_str(emb)
     mat_filter = "AND d.material_id = ANY(%s::int[])" if material_ids else ""
-    params = [vec, vec]
+    params = [vec]
     if material_ids:
         params.append(material_ids)
+    params.append(vec)
     params.append(limit)
 
     cursor = conn.cursor()
