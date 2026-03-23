@@ -622,8 +622,8 @@ class handler(BaseHTTPRequestHandler):
                      ai_provider, ai_model, context_material_ids,
                      retrieved_chunk_ids, message_index)
                 VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
-                RETURNING id, chat_id, role, content, retrieved_chunk_ids,
-                          context_token_count, response_token_count,
+                RETURNING id, chat_id, role, content, ai_provider, ai_model,
+                          retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at
             """, (
                 chat_id, chat['course_id'], user['id'], user_message['id'], assistant_content,
@@ -739,18 +739,19 @@ class handler(BaseHTTPRequestHandler):
                     cursor.close()
                     return
 
+            # Use parent_message_id to find the current live assistant response.
+            # message_index + 1 is unreliable after reverts/regenerates leave gaps.
             cursor.execute(
                 """
-                SELECT content, retrieved_chunk_ids
+                SELECT id, content, retrieved_chunk_ids
                 FROM chat_messages
-                WHERE chat_id = %s
-                  AND message_index = %s
+                WHERE parent_message_id = %s
                   AND role = 'assistant'
                   AND is_deleted = FALSE
-                ORDER BY id ASC
+                ORDER BY message_index DESC
                 LIMIT 1
                 """,
-                (msg['chat_id'], msg['message_index'] + 1)
+                (message_id,)
             )
             old_assistant = cursor.fetchone()
             displaced_reply = old_assistant['content'] if old_assistant else None
@@ -783,12 +784,13 @@ class handler(BaseHTTPRequestHandler):
                 raise
 
             # Build v2 reply_history: push displaced assistant + old user query to back, clear forward.
+            # Store original_msg_id so revert can look up retrieved_chunk_ids directly from the DB row.
             back, _ = _parse_reply_history(msg.get('reply_history'))
             back = back + [{
                 'content': displaced_reply,
                 'user_query': msg['content'],  # user query before this edit
                 'ts': datetime.now(timezone.utc).isoformat(),
-                'retrieved_chunk_ids': old_assistant.get('retrieved_chunk_ids') or [],
+                'original_msg_id': old_assistant['id'],
             }]
             new_reply_history = _build_reply_history(back, [])
 
@@ -843,8 +845,8 @@ class handler(BaseHTTPRequestHandler):
                      ai_provider, ai_model, context_material_ids,
                      retrieved_chunk_ids, message_index)
                 VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
-                RETURNING id, chat_id, role, content, retrieved_chunk_ids,
-                          context_token_count, response_token_count,
+                RETURNING id, chat_id, role, content, ai_provider, ai_model,
+                          retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at
             """, (
                 msg['chat_id'],
@@ -969,11 +971,12 @@ class handler(BaseHTTPRequestHandler):
             reverted_user_query = reverted_entry.get('user_query')
 
             # Push current state onto forward so it can be restored later.
+            # Store original_msg_id so restore can look up retrieved_chunk_ids directly from the DB.
             forward = forward + [{
                 'content': msg['content'],
                 'user_query': user_msg['content'],
                 'ts': datetime.now(timezone.utc).isoformat(),
-                'retrieved_chunk_ids': msg.get('retrieved_chunk_ids') or [],
+                'original_msg_id': msg['id'],
             }]
             new_reply_history = _build_reply_history(new_back, forward)
 
@@ -1003,7 +1006,18 @@ class handler(BaseHTTPRequestHandler):
             )
 
             next_idx = _next_message_index(conn, msg['chat_id'])
-            reverted_chunk_ids = reverted_entry.get('retrieved_chunk_ids') or []
+
+            # Look up the original chunk IDs from the DB row (works even for soft-deleted rows).
+            original_msg_id = reverted_entry.get('original_msg_id')
+            if original_msg_id:
+                cursor.execute(
+                    "SELECT retrieved_chunk_ids FROM chat_messages WHERE id = %s",
+                    (original_msg_id,)
+                )
+                orig_row = cursor.fetchone()
+                reverted_chunk_ids = (orig_row['retrieved_chunk_ids'] if orig_row else None) or []
+            else:
+                reverted_chunk_ids = reverted_entry.get('retrieved_chunk_ids') or []
 
             cursor.execute(
                 """
@@ -1117,7 +1131,7 @@ class handler(BaseHTTPRequestHandler):
                 'content': msg['content'],
                 'user_query': user_msg['content'],
                 'ts': datetime.now(timezone.utc).isoformat(),
-                'retrieved_chunk_ids': msg.get('retrieved_chunk_ids') or [],
+                'original_msg_id': msg['id'],
             }]
             new_reply_history = _build_reply_history(back, new_forward)
 
@@ -1147,7 +1161,18 @@ class handler(BaseHTTPRequestHandler):
             )
 
             next_idx = _next_message_index(conn, msg['chat_id'])
-            restored_chunk_ids = restored_entry.get('retrieved_chunk_ids') or []
+
+            # Look up the original chunk IDs from the DB row (works even for soft-deleted rows).
+            original_msg_id = restored_entry.get('original_msg_id')
+            if original_msg_id:
+                cursor.execute(
+                    "SELECT retrieved_chunk_ids FROM chat_messages WHERE id = %s",
+                    (original_msg_id,)
+                )
+                orig_row = cursor.fetchone()
+                restored_chunk_ids = (orig_row['retrieved_chunk_ids'] if orig_row else None) or []
+            else:
+                restored_chunk_ids = restored_entry.get('retrieved_chunk_ids') or []
 
             cursor.execute(
                 """
@@ -1291,6 +1316,7 @@ class handler(BaseHTTPRequestHandler):
                 'content': msg['content'],
                 'user_query': user_msg['content'],
                 'ts': datetime.now(timezone.utc).isoformat(),
+                'original_msg_id': msg['id'],
             }]
             new_reply_history = _build_reply_history(back, [])
 
