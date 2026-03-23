@@ -760,7 +760,7 @@ class handler(BaseHTTPRequestHandler):
                         CASE
                             WHEN %s::text IS NULL THEN '[]'::jsonb
                             ELSE jsonb_build_array(
-                                jsonb_build_object('content', %s, 'edited_at', NOW()::text)
+                                jsonb_build_object('content', %s::text, 'edited_at', NOW()::text)
                             )
                         END,
                     content = %s,

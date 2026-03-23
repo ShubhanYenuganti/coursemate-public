@@ -730,8 +730,13 @@ export default function ChatTab({ course, userData, sessionToken }) {
           .map(([provider]) => provider);
         setAvailableModels(available);
         if (available.length > 0) {
-          setSelectedModel(available[0]);
-          setSelectedModelId(PROVIDER_MODELS[available[0]]?.[0]?.id ?? null);
+          const savedProvider = localStorage.getItem('chat_selected_provider');
+          const savedModelId = localStorage.getItem('chat_selected_model_id');
+          const provider = available.includes(savedProvider) ? savedProvider : available[0];
+          const modelList = PROVIDER_MODELS[provider] ?? [];
+          const modelId = modelList.find((m) => m.id === savedModelId)?.id ?? modelList[0]?.id ?? null;
+          setSelectedModel(provider);
+          setSelectedModelId(modelId);
         }
       })
       .catch(() => {});
@@ -762,7 +767,10 @@ export default function ChatTab({ course, userData, sessionToken }) {
   function handleModelSelect(provider) {
     setSelectedModel(provider);
     setModelDropdownOpen(false);
-    setSelectedModelId(PROVIDER_MODELS[provider]?.[0]?.id ?? null);
+    const modelId = PROVIDER_MODELS[provider]?.[0]?.id ?? null;
+    setSelectedModelId(modelId);
+    localStorage.setItem('chat_selected_provider', provider);
+    if (modelId) localStorage.setItem('chat_selected_model_id', modelId);
     if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
     setSwitchBanner(MODEL_LABELS[provider] || provider);
     bannerTimerRef.current = setTimeout(() => setSwitchBanner(''), 2500);
@@ -771,6 +779,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
   function handleModelIdSelect(modelId) {
     setSelectedModelId(modelId);
     setModelListDropdownOpen(false);
+    localStorage.setItem('chat_selected_model_id', modelId);
   }
 
   function handleSelectAllMaterials() {
