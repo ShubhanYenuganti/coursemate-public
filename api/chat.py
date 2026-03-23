@@ -758,7 +758,7 @@ class handler(BaseHTTPRequestHandler):
                 UPDATE chat_messages
                 SET reply_history = COALESCE(reply_history, '[]'::jsonb) ||
                         CASE
-                            WHEN %s IS NULL THEN '[]'::jsonb
+                            WHEN %s::text IS NULL THEN '[]'::jsonb
                             ELSE jsonb_build_array(
                                 jsonb_build_object('content', %s, 'edited_at', NOW()::text)
                             )
