@@ -741,7 +741,7 @@ class handler(BaseHTTPRequestHandler):
 
             cursor.execute(
                 """
-                SELECT content
+                SELECT content, retrieved_chunk_ids
                 FROM chat_messages
                 WHERE chat_id = %s
                   AND message_index = %s
@@ -788,6 +788,7 @@ class handler(BaseHTTPRequestHandler):
                 'content': displaced_reply,
                 'user_query': msg['content'],  # user query before this edit
                 'ts': datetime.now(timezone.utc).isoformat(),
+                'retrieved_chunk_ids': old_assistant.get('retrieved_chunk_ids') or [],
             }]
             new_reply_history = _build_reply_history(back, [])
 
@@ -900,7 +901,8 @@ class handler(BaseHTTPRequestHandler):
             cursor.execute(
                 """
                 SELECT id, chat_id, course_id, user_id, role, content, message_index,
-                       ai_provider, ai_model, context_material_ids, parent_message_id
+                       ai_provider, ai_model, context_material_ids, parent_message_id,
+                       retrieved_chunk_ids
                 FROM chat_messages
                 WHERE id = %s AND is_deleted = FALSE
                 """,
@@ -971,6 +973,7 @@ class handler(BaseHTTPRequestHandler):
                 'content': msg['content'],
                 'user_query': user_msg['content'],
                 'ts': datetime.now(timezone.utc).isoformat(),
+                'retrieved_chunk_ids': msg.get('retrieved_chunk_ids') or [],
             }]
             new_reply_history = _build_reply_history(new_back, forward)
 
@@ -1000,15 +1003,16 @@ class handler(BaseHTTPRequestHandler):
             )
 
             next_idx = _next_message_index(conn, msg['chat_id'])
+            reverted_chunk_ids = reverted_entry.get('retrieved_chunk_ids') or []
 
             cursor.execute(
                 """
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content,
-                     ai_provider, ai_model, context_material_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s)
-                RETURNING id, chat_id, role, content, retrieved_chunk_ids,
-                          message_index, created_at
+                     ai_provider, ai_model, context_material_ids, retrieved_chunk_ids, message_index)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
+                RETURNING id, chat_id, role, content, ai_provider, ai_model,
+                          retrieved_chunk_ids, message_index, created_at
                 """,
                 (
                     msg['chat_id'],
@@ -1019,6 +1023,7 @@ class handler(BaseHTTPRequestHandler):
                     msg.get('ai_provider'),
                     msg.get('ai_model'),
                     json.dumps(user_msg.get('context_material_ids') or []),
+                    json.dumps(reverted_chunk_ids),
                     next_idx,
                 )
             )
@@ -1042,7 +1047,8 @@ class handler(BaseHTTPRequestHandler):
             cursor.execute(
                 """
                 SELECT id, chat_id, course_id, user_id, role, content, message_index,
-                       ai_provider, ai_model, context_material_ids, parent_message_id
+                       ai_provider, ai_model, context_material_ids, parent_message_id,
+                       retrieved_chunk_ids
                 FROM chat_messages
                 WHERE id = %s AND is_deleted = FALSE
                 """,
@@ -1111,6 +1117,7 @@ class handler(BaseHTTPRequestHandler):
                 'content': msg['content'],
                 'user_query': user_msg['content'],
                 'ts': datetime.now(timezone.utc).isoformat(),
+                'retrieved_chunk_ids': msg.get('retrieved_chunk_ids') or [],
             }]
             new_reply_history = _build_reply_history(back, new_forward)
 
@@ -1140,15 +1147,16 @@ class handler(BaseHTTPRequestHandler):
             )
 
             next_idx = _next_message_index(conn, msg['chat_id'])
+            restored_chunk_ids = restored_entry.get('retrieved_chunk_ids') or []
 
             cursor.execute(
                 """
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content,
-                     ai_provider, ai_model, context_material_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s)
-                RETURNING id, chat_id, role, content, retrieved_chunk_ids,
-                          message_index, created_at
+                     ai_provider, ai_model, context_material_ids, retrieved_chunk_ids, message_index)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
+                RETURNING id, chat_id, role, content, ai_provider, ai_model,
+                          retrieved_chunk_ids, message_index, created_at
                 """,
                 (
                     msg['chat_id'],
@@ -1159,6 +1167,7 @@ class handler(BaseHTTPRequestHandler):
                     msg.get('ai_provider'),
                     msg.get('ai_model'),
                     json.dumps(user_msg.get('context_material_ids') or []),
+                    json.dumps(restored_chunk_ids),
                     next_idx,
                 )
             )

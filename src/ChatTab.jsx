@@ -613,11 +613,15 @@ function MessageBubble({
           <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wide">
             {courseName || 'CourseMate AI'}
           </span>
-          <span className="w-1 h-1 rounded-full bg-indigo-300" />
-          {msg.ai_provider && (
-            <span className="text-xs text-gray-400">
-              {PROVIDER_MODELS[msg.ai_provider]?.find((m) => m.id === msg.ai_model)?.label || msg.ai_model || MODEL_LABELS[msg.ai_provider] || msg.ai_provider}
-            </span>
+          {msg.ai_provider ? (
+            <>
+              <span className="w-1 h-1 rounded-full bg-indigo-300" />
+              <span className="text-xs text-gray-400">
+                {PROVIDER_MODELS[msg.ai_provider]?.find((m) => m.id === msg.ai_model)?.label || msg.ai_model || MODEL_LABELS[msg.ai_provider] || msg.ai_provider}
+              </span>
+            </>
+          ) : (
+            <span className="w-1 h-1 rounded-full bg-indigo-300" />
           )}
         </div>
         <div className="text-sm text-gray-700 leading-relaxed space-y-0.5">
