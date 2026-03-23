@@ -345,6 +345,7 @@ class handler(BaseHTTPRequestHandler):
                 "page_number": c.get("page_number"),
                 "similarity":  None,
                 "source_type": c.get("source_type", ""),
+                "material_id": c.get("material_id"),
             }
             for c in ordered
         ]
@@ -594,6 +595,7 @@ class handler(BaseHTTPRequestHandler):
                 "page_number": c.get("page_number"),
                 "similarity":  round(float(c.get("similarity", 0) or 0), 3),
                 "source_type": c.get("source_type", ""),
+                "material_id": c.get("material_id"),
             }
             for c in chunks
         ]

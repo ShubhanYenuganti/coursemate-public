@@ -136,6 +136,16 @@ function UnarchiveIcon() {
   );
 }
 
+function ExternalLinkIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+  );
+}
+
 function XIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
@@ -328,8 +338,10 @@ function ArchivedConvItem({ conv, onDelete, onUnarchive }) {
   );
 }
 
-function SourcesPanel({ open, chunks, focusIndex, onClose }) {
+function SourcesPanel({ open, chunks, focusIndex, onClose, materials }) {
   const focusRef = useRef(null);
+  const materialMap = {};
+  (materials || []).forEach((m) => { materialMap[m.id] = m; });
 
   useEffect(() => {
     if (open && focusRef.current) {
@@ -345,21 +357,23 @@ function SourcesPanel({ open, chunks, focusIndex, onClose }) {
           <XIcon />
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {(chunks || []).map((chunk, idx) => {
           const n = idx + 1;
           const isFocused = n === focusIndex;
+          const material = chunk.material_id != null ? materialMap[chunk.material_id] : null;
+          const downloadUrl = material?.download_url || null;
           return (
             <div
               key={idx}
               ref={isFocused ? focusRef : null}
-              className={`rounded-lg p-3 border text-xs transition-colors ${
+              className={`rounded-lg px-3 py-2.5 border text-xs transition-colors ${
                 isFocused
-                  ? 'border-indigo-300 bg-indigo-50 border-l-4'
+                  ? 'border-l-4 border-indigo-400 bg-indigo-50'
                   : 'border-gray-100 bg-gray-50'
               }`}
             >
-              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+              <div className="flex items-center gap-2">
                 <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-indigo-100 text-indigo-600 font-semibold text-[10px] flex-shrink-0">
                   {n}
                 </span>
@@ -369,17 +383,28 @@ function SourcesPanel({ open, chunks, focusIndex, onClose }) {
                   {chunk.chunk_type === 'visual' ? 'Slide' : 'Text'}
                 </span>
                 {chunk.page_number != null && (
-                  <span className="text-gray-400">Page {chunk.page_number}</span>
+                  <span className="text-gray-400">p.{chunk.page_number}</span>
                 )}
                 {chunk.similarity != null && (
-                  <span className="ml-auto text-gray-400 tabular-nums">{chunk.similarity}</span>
+                  <span className="text-gray-400 tabular-nums">{chunk.similarity}</span>
+                )}
+                <div className="flex-1" />
+                {downloadUrl ? (
+                  <a
+                    href={downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={material?.name || 'Open source'}
+                    className="p-1 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors flex-shrink-0"
+                  >
+                    <ExternalLinkIcon />
+                  </a>
+                ) : (
+                  <span className="p-1 text-gray-200 flex-shrink-0">
+                    <ExternalLinkIcon />
+                  </span>
                 )}
               </div>
-              <p className="text-gray-600 leading-relaxed">
-                {(chunk.chunk_text || '').length > 180
-                  ? (chunk.chunk_text || '').slice(0, 180) + '…'
-                  : (chunk.chunk_text || '')}
-              </p>
             </div>
           );
         })}
@@ -853,6 +878,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
         .catch(() => {});
     }
     setSourcesPanel({ open: true, messageId, focusIndex });
+    setSidebarWidth(0);
   }
 
   async function handleSend() {
@@ -1184,7 +1210,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
         })()}
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-6 pt-5 pb-20 space-y-6">
+        <div className={`flex-1 overflow-y-auto overflow-x-auto px-6 pt-5 pb-20 space-y-6 transition-all duration-200 ${sourcesPanel.open ? 'mr-80' : ''}`}>
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center gap-2 text-center">
               <p className="text-base font-semibold text-gray-800">Ask me anything about {course?.title || 'this course'}</p>
@@ -1306,6 +1332,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
           chunks={sourcesPanel.messageId ? msgChunks[sourcesPanel.messageId] : null}
           focusIndex={sourcesPanel.focusIndex}
           onClose={() => setSourcesPanel((p) => ({ ...p, open: false }))}
+          materials={materials}
         />
       </div>
     </div>

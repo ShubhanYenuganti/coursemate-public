@@ -84,9 +84,11 @@ def _fetch_chunk_context(conn, chunk_ids: list) -> list:
     cursor.execute("""
         SELECT c.id, c.content AS chunk_text, c.retrieval_type AS chunk_type,
                c.chunk_index AS page_number, c.modal_meta, c.source_type,
-               p.content AS parent_text
+               p.content AS parent_text,
+               d.material_id
         FROM   chunks c
         LEFT JOIN chunks p ON p.id = c.parent_id
+        LEFT JOIN documents d ON d.id = c.document_id
         WHERE  c.id = ANY(%s::uuid[])
     """, (chunk_ids,))
     rows = cursor.fetchall()
