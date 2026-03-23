@@ -1,40 +1,13 @@
 """
-Hybrid vector search using Voyage AI dual embeddings (visual + text).
+Hybrid vector search using pre-computed dual embeddings (visual + text).
 
-Uses sync voyageai.Client to match Vercel's sync runtime.
+Embeddings are computed externally (embed_query Lambda) and passed in.
 Implements RRF merge + parent-filter re-ranking.
 """
-import os
-import voyageai
-
-_vo = None
-
-
-def _get_client():
-    global _vo
-    if _vo is None:
-        _vo = voyageai.Client(api_key=os.environ['VOYAGE_API_KEY'])
-    return _vo
 
 
 def _vec_str(emb: list) -> str:
     return '[' + ','.join(str(x) for x in emb) + ']'
-
-
-def embed_query_visual(query: str) -> list:
-    vo = _get_client()
-    result = vo.multimodal_embed(
-        inputs=[[query]],
-        model="voyage-multimodal-3.5",
-        input_type="query",
-    )
-    return result.embeddings[0]
-
-
-def embed_query_text(query: str) -> list:
-    vo = _get_client()
-    result = vo.embed(texts=[query], model="voyage-3.5", input_type="query")
-    return result.embeddings[0]
 
 
 def _search_chunks(conn, emb: list, retrieval_type: str, limit: int, material_ids=None) -> list:
@@ -119,20 +92,16 @@ def _fetch_chunk_context(conn, chunk_ids: list) -> list:
     return [dict(r) for r in rows]
 
 
-def hybrid_vector_search(conn, query: str, top_k: int = 8,
-                         modality_hint: str = "balanced",
+def hybrid_vector_search(conn, vis_emb: list, txt_emb: list, top_k: int = 8,
                          material_ids=None):
     """
     Dual-embedding hybrid search with parent-filter re-ranking.
 
+    Accepts pre-computed embeddings (from embed_query Lambda).
     Returns (context_rows, chunk_ids) where context_rows is a list of dicts
     compatible with api/llm.py _format_context().
     """
-    # 1. Embed query for both modalities
-    vis_emb = embed_query_visual(query)
-    txt_emb = embed_query_text(query)
-
-    # 2. Search child chunks for both retrieval types
+    # 1. Search child chunks for both retrieval types
     vis_hits = _search_chunks(conn, vis_emb, "visual", top_k * 2, material_ids)
     txt_hits = _search_chunks(conn, txt_emb, "text",   top_k * 2, material_ids)
 

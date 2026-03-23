@@ -1,11 +1,15 @@
 """
-AWS Lambda handler — embed_query (legacy)
+AWS Lambda handler — embed_query
 
-Embeds a query string using Voyage AI voyage-3.5.
-Still called by api/rag.py as a fallback for old material_chunks data.
+Embeds a query string using both Voyage AI modalities in a single invocation.
 
 Input:  {"query": "text to embed"}
-Output: {"embedding": [0.12, ...], "dim": 1024}
+Output: {
+    "text_embedding": [...],      # voyage-3.5 text embedding
+    "visual_embedding": [...],    # voyage-multimodal-3.5 embedding
+    "embedding": [...],           # alias for text_embedding (backward compat)
+    "dim": 1024
+}
 """
 import json
 import os
@@ -35,17 +39,31 @@ def lambda_handler(event, context):
     if not query or not isinstance(query, str):
         return _error(400, "'query' (non-empty string) is required")
 
-    result = _get_client().embed(
+    vo = _get_client()
+
+    text_result = vo.embed(
         texts=[query],
         model='voyage-3.5',
         input_type='query',
     )
-    embedding = result.embeddings[0]
+    text_embedding = text_result.embeddings[0]
+
+    visual_result = vo.multimodal_embed(
+        inputs=[[query]],
+        model='voyage-multimodal-3.5',
+        input_type='query',
+    )
+    visual_embedding = visual_result.embeddings[0]
 
     return {
         'statusCode': 200,
         'headers': {'Content-Type': 'application/json'},
-        'body': json.dumps({'embedding': embedding, 'dim': len(embedding)}),
+        'body': json.dumps({
+            'text_embedding': text_embedding,
+            'visual_embedding': visual_embedding,
+            'embedding': text_embedding,
+            'dim': len(text_embedding),
+        }),
     }
 
 

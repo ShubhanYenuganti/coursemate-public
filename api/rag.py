@@ -1,17 +1,49 @@
 """
-RAG retrieval — hybrid Voyage AI dual-embedding search with parent-filter re-ranking.
+RAG retrieval — hybrid dual-embedding search with parent-filter re-ranking.
 
-Replaces the previous embed_query Lambda invocation. Calls Voyage AI directly
-via the sync voyageai.Client (compatible with Vercel's sync runtime).
-
-Required environment variable:
-    VOYAGE_API_KEY  — Voyage AI API key
+Embeddings are computed by invoking the embed_query Lambda (no voyageai in Vercel).
+Required environment variables:
+    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
 """
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 TOP_K = 8
+
+
+def _invoke_embed_query(query: str):
+    """Invoke the embed_query Lambda and return (vis_emb, txt_emb)."""
+    import json
+    import boto3
+
+    region = os.environ.get('AWS_REGION', 'us-east-1')
+    client = boto3.client(
+        'lambda',
+        region_name=region,
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+    )
+
+    payload = json.dumps({'query': query})
+    response = client.invoke(
+        FunctionName='embed_query',
+        InvocationType='RequestResponse',
+        Payload=payload,
+    )
+
+    raw = response['Payload'].read()
+    result = json.loads(raw)
+
+    if response.get('FunctionError'):
+        raise RuntimeError(f"Lambda function error: {result}")
+
+    if 'body' in result:
+        body = json.loads(result['body']) if isinstance(result['body'], str) else result['body']
+    else:
+        body = result
+
+    return body['visual_embedding'], body['text_embedding']
 
 
 def retrieve_chunks(conn, query: str, material_ids: list, top_k: int = TOP_K) -> list:
@@ -38,8 +70,9 @@ def retrieve_chunks(conn, query: str, material_ids: list, top_k: int = TOP_K) ->
 
     if has_new_chunks:
         from services.query.retrieval import hybrid_vector_search
+        vis_emb, txt_emb = _invoke_embed_query(query)
         context, _chunk_ids = hybrid_vector_search(
-            conn, query, top_k=top_k, material_ids=material_ids
+            conn, vis_emb, txt_emb, top_k=top_k, material_ids=material_ids
         )
         return context
     else:
