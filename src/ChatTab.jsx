@@ -302,6 +302,26 @@ function groupChatsByDate(chats) {
   return { today, lastWeek, older };
 }
 
+function inferProviderFromModelId(modelId) {
+  if (!modelId) return null;
+  for (const [provider, models] of Object.entries(PROVIDER_MODELS)) {
+    if ((models || []).some((m) => m.id === modelId)) return provider;
+  }
+  return null;
+}
+
+function getMessageModelLabel(msg) {
+  const modelId = msg?.ai_model || null;
+  const provider = msg?.ai_provider || inferProviderFromModelId(modelId);
+  if (provider && modelId) {
+    const modelLabel = (PROVIDER_MODELS[provider] || []).find((m) => m.id === modelId)?.label;
+    if (modelLabel) return modelLabel;
+  }
+  if (modelId) return modelId;
+  if (provider) return MODEL_LABELS[provider] || provider;
+  return null;
+}
+
 // ─── sub-components ───────────────────────────────────────────────────────────
 
 function ConvItem({ conv, active, onClick, onDoubleClick, onArchive }) {
@@ -455,6 +475,7 @@ function MessageBubble({
   availableModels,
 }) {
   const isUser = msg.role === 'user';
+  const modelLabel = getMessageModelLabel(msg);
   const [copied, setCopied] = useState(false);
   const [regenOpen, setRegenOpen] = useState(false);
   const [regenProvider, setRegenProvider] = useState(null);
@@ -613,11 +634,11 @@ function MessageBubble({
           <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wide">
             {courseName || 'CourseMate AI'}
           </span>
-          {msg.ai_provider ? (
+          {modelLabel ? (
             <>
               <span className="w-1 h-1 rounded-full bg-indigo-300" />
               <span className="text-xs text-gray-400">
-                {PROVIDER_MODELS[msg.ai_provider]?.find((m) => m.id === msg.ai_model)?.label || msg.ai_model || MODEL_LABELS[msg.ai_provider] || msg.ai_provider}
+                {modelLabel}
               </span>
             </>
           ) : (

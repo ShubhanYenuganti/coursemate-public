@@ -743,7 +743,7 @@ class handler(BaseHTTPRequestHandler):
             # message_index + 1 is unreliable after reverts/regenerates leave gaps.
             cursor.execute(
                 """
-                SELECT id, content, retrieved_chunk_ids
+                SELECT id, content, retrieved_chunk_ids, ai_provider, ai_model
                 FROM chat_messages
                 WHERE parent_message_id = %s
                   AND role = 'assistant'
@@ -791,6 +791,8 @@ class handler(BaseHTTPRequestHandler):
                 'user_query': msg['content'],  # user query before this edit
                 'ts': datetime.now(timezone.utc).isoformat(),
                 'original_msg_id': old_assistant['id'],
+                'ai_provider': old_assistant.get('ai_provider'),
+                'ai_model': old_assistant.get('ai_model'),
             }]
             new_reply_history = _build_reply_history(back, [])
 
@@ -977,6 +979,8 @@ class handler(BaseHTTPRequestHandler):
                 'user_query': user_msg['content'],
                 'ts': datetime.now(timezone.utc).isoformat(),
                 'original_msg_id': msg['id'],
+                'ai_provider': msg.get('ai_provider'),
+                'ai_model': msg.get('ai_model'),
             }]
             new_reply_history = _build_reply_history(new_back, forward)
 
@@ -1009,15 +1013,22 @@ class handler(BaseHTTPRequestHandler):
 
             # Look up the original chunk IDs from the DB row (works even for soft-deleted rows).
             original_msg_id = reverted_entry.get('original_msg_id')
+            reverted_provider = reverted_entry.get('ai_provider')
+            reverted_model = reverted_entry.get('ai_model')
             if original_msg_id:
                 cursor.execute(
-                    "SELECT retrieved_chunk_ids FROM chat_messages WHERE id = %s",
+                    "SELECT retrieved_chunk_ids, ai_provider, ai_model FROM chat_messages WHERE id = %s",
                     (original_msg_id,)
                 )
                 orig_row = cursor.fetchone()
                 reverted_chunk_ids = (orig_row['retrieved_chunk_ids'] if orig_row else None) or []
+                if orig_row:
+                    reverted_provider = reverted_provider or orig_row.get('ai_provider')
+                    reverted_model = reverted_model or orig_row.get('ai_model')
             else:
                 reverted_chunk_ids = reverted_entry.get('retrieved_chunk_ids') or []
+            reverted_provider = reverted_provider or msg.get('ai_provider')
+            reverted_model = reverted_model or msg.get('ai_model')
 
             cursor.execute(
                 """
@@ -1034,8 +1045,8 @@ class handler(BaseHTTPRequestHandler):
                     user['id'],
                     user_msg['id'],
                     reverted_content,
-                    msg.get('ai_provider'),
-                    msg.get('ai_model'),
+                    reverted_provider,
+                    reverted_model,
                     json.dumps(user_msg.get('context_material_ids') or []),
                     json.dumps(reverted_chunk_ids),
                     next_idx,
@@ -1132,6 +1143,8 @@ class handler(BaseHTTPRequestHandler):
                 'user_query': user_msg['content'],
                 'ts': datetime.now(timezone.utc).isoformat(),
                 'original_msg_id': msg['id'],
+                'ai_provider': msg.get('ai_provider'),
+                'ai_model': msg.get('ai_model'),
             }]
             new_reply_history = _build_reply_history(back, new_forward)
 
@@ -1164,15 +1177,22 @@ class handler(BaseHTTPRequestHandler):
 
             # Look up the original chunk IDs from the DB row (works even for soft-deleted rows).
             original_msg_id = restored_entry.get('original_msg_id')
+            restored_provider = restored_entry.get('ai_provider')
+            restored_model = restored_entry.get('ai_model')
             if original_msg_id:
                 cursor.execute(
-                    "SELECT retrieved_chunk_ids FROM chat_messages WHERE id = %s",
+                    "SELECT retrieved_chunk_ids, ai_provider, ai_model FROM chat_messages WHERE id = %s",
                     (original_msg_id,)
                 )
                 orig_row = cursor.fetchone()
                 restored_chunk_ids = (orig_row['retrieved_chunk_ids'] if orig_row else None) or []
+                if orig_row:
+                    restored_provider = restored_provider or orig_row.get('ai_provider')
+                    restored_model = restored_model or orig_row.get('ai_model')
             else:
                 restored_chunk_ids = restored_entry.get('retrieved_chunk_ids') or []
+            restored_provider = restored_provider or msg.get('ai_provider')
+            restored_model = restored_model or msg.get('ai_model')
 
             cursor.execute(
                 """
@@ -1189,8 +1209,8 @@ class handler(BaseHTTPRequestHandler):
                     user['id'],
                     user_msg['id'],
                     restored_content,
-                    msg.get('ai_provider'),
-                    msg.get('ai_model'),
+                    restored_provider,
+                    restored_model,
                     json.dumps(user_msg.get('context_material_ids') or []),
                     json.dumps(restored_chunk_ids),
                     next_idx,
@@ -1317,6 +1337,8 @@ class handler(BaseHTTPRequestHandler):
                 'user_query': user_msg['content'],
                 'ts': datetime.now(timezone.utc).isoformat(),
                 'original_msg_id': msg['id'],
+                'ai_provider': msg.get('ai_provider'),
+                'ai_model': msg.get('ai_model'),
             }]
             new_reply_history = _build_reply_history(back, [])
 
@@ -1351,7 +1373,7 @@ class handler(BaseHTTPRequestHandler):
                     (chat_id, course_id, user_id, parent_message_id, role, content,
                      ai_provider, ai_model, context_material_ids, retrieved_chunk_ids, message_index)
                 VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
-                RETURNING id, chat_id, role, content, retrieved_chunk_ids,
+                RETURNING id, chat_id, role, content, ai_provider, ai_model, retrieved_chunk_ids,
                           message_index, created_at
                 """,
                 (
