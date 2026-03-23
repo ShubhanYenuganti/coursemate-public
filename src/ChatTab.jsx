@@ -73,6 +73,16 @@ function RefreshIcon() {
   );
 }
 
+function RevertIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7v6h6" />
+      <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
+    </svg>
+  );
+}
+
 function MoreIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
@@ -429,6 +439,7 @@ function MessageBubble({
   onEditCancel,
   canEdit,
   replyHistory,
+  onRevert,
 }) {
   const isUser = msg.role === 'user';
   const [copied, setCopied] = useState(false);
@@ -437,7 +448,8 @@ function MessageBubble({
     const nodes = Array.isArray(children) ? children : [children];
     return nodes.flatMap((child, ci) => {
       if (typeof child !== 'string') return [child];
-      const parts = child.split(/(\[\d+\])/);
+      // Only match [N] not immediately adjacent to another bracket group
+      const parts = child.split(/(?<!\])(\[\d+\])(?!\[)/);
       return parts.map((part, i) => {
         const m = part.match(/^\[(\d+)\]$/);
         if (!m) return part;
@@ -469,7 +481,7 @@ function MessageBubble({
           strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
           ol: ({ children }) => <ol className="list-decimal list-outside ml-5 mt-1 space-y-0.5">{children}</ol>,
           ul: ({ children }) => <ul className="list-disc list-outside ml-5 mt-1 space-y-0.5">{children}</ul>,
-          li: ({ children }) => <li className="mt-0.5">{children}</li>,
+          li: ({ children }) => <li className="mt-0.5">{onCiteClick ? processCitations(children) : children}</li>,
           code: ({ inline, children }) => inline
             ? <code className="bg-gray-100 text-indigo-700 rounded px-1 py-0.5 text-xs font-mono">{children}</code>
             : <pre className="bg-gray-100 rounded-lg p-3 mt-2 overflow-x-auto text-xs font-mono">{children}</pre>,
@@ -605,20 +617,15 @@ function MessageBubble({
             Regenerate
           </button>
         </div>
-        {Array.isArray(replyHistory) && replyHistory.length > 0 && (
-          <details className="mt-2 text-xs text-gray-500">
-            <summary className="cursor-pointer hover:text-gray-700 select-none">View reply history</summary>
-            <div className="mt-2 space-y-2">
-              {[...replyHistory].reverse().map((entry, idx) => (
-                <div key={`${entry?.edited_at || 'history'}-${idx}`} className="rounded-md bg-gray-50 border border-gray-100 p-2">
-                  {formatEditTime(entry?.edited_at) && (
-                    <p className="text-[10px] text-gray-400 mb-1">{formatEditTime(entry?.edited_at)}</p>
-                  )}
-                  <p className="whitespace-pre-wrap text-gray-600">{entry?.content || ''}</p>
-                </div>
-              ))}
-            </div>
-          </details>
+        {Array.isArray(replyHistory) && replyHistory.length > 0 && onRevert && (
+          <button
+            type="button"
+            onClick={() => onRevert(msg.id)}
+            className="mt-2 flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-gray-500 hover:text-amber-600 hover:bg-amber-50 transition-colors border border-gray-200 hover:border-amber-200"
+          >
+            <RevertIcon />
+            Revert to previous response
+          </button>
         )}
       </div>
     </div>
@@ -1140,6 +1147,45 @@ export default function ChatTab({ course, userData, sessionToken }) {
     }
   }
 
+  async function handleRevertMessage(assistantMsgId) {
+    if (sending) return;
+    const assistantMsg = messages.find((m) => m.id === assistantMsgId);
+    if (!assistantMsg) return;
+    const userMsg = messages.find((m) => m.message_index === assistantMsg.message_index - 1);
+    if (!userMsg) return;
+
+    const prevMessages = messages;
+    const prevMsgChunks = msgChunks;
+    const keptPrefix = prevMessages.filter((m) => (m.message_index ?? Number.POSITIVE_INFINITY) < userMsg.message_index);
+
+    setSending(true);
+    sendingRef.current = true;
+    setSourcesPanel({ open: false, messageId: null, focusIndex: null });
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resource: 'message', action: 'revert', message_id: assistantMsgId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to revert');
+
+      const nextMessages = [...keptPrefix, data.user_message, data.assistant_message];
+      setMessages(nextMessages);
+      setMsgChunks((prev) => {
+        const keptIds = new Set(nextMessages.map((m) => m.id));
+        return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
+      });
+    } catch {
+      setMessages(prevMessages);
+      setMsgChunks(prevMsgChunks);
+    } finally {
+      setSending(false);
+      sendingRef.current = false;
+    }
+  }
+
   const { today, lastWeek, older } = groupChatsByDate(chats);
 
   return (
@@ -1424,6 +1470,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 }}
                 canEdit={msg.role === 'user' && typeof msg.message_index === 'number' && !sending}
                 replyHistory={replyHistory}
+                onRevert={replyHistory ? handleRevertMessage : null}
               />
               );
             })

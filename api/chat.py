@@ -145,6 +145,8 @@ class handler(BaseHTTPRequestHandler):
                     send_json(self, 429, {"error": "Rate limit exceeded"})
                     return
                 self._edit_message(user, data)
+            elif action == 'revert':
+                self._revert_message(user, data)
             elif action == 'delete':
                 self._delete_message(user, data)
             else:
@@ -856,6 +858,121 @@ class handler(BaseHTTPRequestHandler):
             "user_message": edited_user_message,
             "assistant_message": assistant_message,
             "chunks": serialized_chunks,
+        })
+
+    def _revert_message(self, user, data):
+        message_id = data.get('message_id')
+        if not isinstance(message_id, int):
+            send_json(self, 400, {"error": "message_id is required"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, chat_id, course_id, user_id, role, content, message_index,
+                       ai_provider, ai_model, context_material_ids
+                FROM chat_messages
+                WHERE id = %s AND is_deleted = FALSE
+                """,
+                (message_id,)
+            )
+            msg = cursor.fetchone()
+            if not msg:
+                send_json(self, 404, {"error": "Message not found"})
+                cursor.close()
+                return
+            if msg['role'] != 'assistant':
+                send_json(self, 400, {"error": "Can only revert assistant messages"})
+                cursor.close()
+                return
+
+            chat = _get_chat(conn, msg['chat_id'])
+            if not chat or chat['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Access denied"})
+                cursor.close()
+                return
+
+            cursor.execute(
+                """
+                SELECT id, chat_id, role, content, message_index, reply_history,
+                       context_material_ids
+                FROM chat_messages
+                WHERE chat_id = %s
+                  AND message_index = %s
+                  AND role = 'user'
+                  AND is_deleted = FALSE
+                """,
+                (msg['chat_id'], msg['message_index'] - 1)
+            )
+            user_msg = cursor.fetchone()
+            if not user_msg:
+                send_json(self, 400, {"error": "No preceding user message found"})
+                cursor.close()
+                return
+
+            reply_history = user_msg.get('reply_history') or []
+            if not reply_history:
+                send_json(self, 400, {"error": "No reply history to revert to"})
+                cursor.close()
+                return
+
+            reverted_entry = reply_history[-1]
+            new_history = reply_history[:-1]
+            reverted_content = reverted_entry.get('content', '')
+
+            cursor.execute(
+                """
+                UPDATE chat_messages
+                SET reply_history = %s::jsonb
+                WHERE id = %s
+                RETURNING id, chat_id, role, content, context_material_ids, ai_provider, ai_model,
+                          is_edited, reply_history, edited_at, message_index, created_at
+                """,
+                (json.dumps(new_history), user_msg['id'])
+            )
+            updated_user_msg = cursor.fetchone()
+
+            cursor.execute(
+                """
+                UPDATE chat_messages
+                SET is_deleted = TRUE
+                WHERE chat_id = %s
+                  AND message_index >= %s
+                  AND is_deleted = FALSE
+                """,
+                (msg['chat_id'], msg['message_index'])
+            )
+
+            next_idx = _next_message_index(conn, msg['chat_id'])
+
+            cursor.execute(
+                """
+                INSERT INTO chat_messages
+                    (chat_id, course_id, user_id, parent_message_id, role, content,
+                     ai_provider, ai_model, context_material_ids, message_index)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s)
+                RETURNING id, chat_id, role, content, retrieved_chunk_ids,
+                          message_index, created_at
+                """,
+                (
+                    msg['chat_id'],
+                    chat['course_id'],
+                    user['id'],
+                    user_msg['id'],
+                    reverted_content,
+                    msg.get('ai_provider'),
+                    msg.get('ai_model'),
+                    json.dumps(user_msg.get('context_material_ids') or []),
+                    next_idx,
+                )
+            )
+            new_assistant = cursor.fetchone()
+            cursor.close()
+
+        send_json(self, 200, {
+            "user_message": updated_user_msg,
+            "assistant_message": new_assistant,
         })
 
     def _delete_message(self, user, data):

@@ -21,9 +21,24 @@ except ImportError:
 
 SYSTEM_PROMPT = (
     "You are a helpful course assistant. Answer the user's question using the "
-    "provided course material excerpts. Cite excerpt numbers (e.g. [1]) when "
-    "referencing specific content. If the materials don't contain enough "
-    "information to answer fully, say so clearly."
+    "provided course material excerpts.\n\n"
+    "**Citations**: Cite sources using isolated bracket notation — [1] for one "
+    "source, [1], [2] for two, [1], [2], [3] for three, and so on. Always place "
+    "a comma and space between multiple citations. Only use numbers that correspond "
+    "to the excerpts provided. Never write adjacent brackets without separation "
+    "(e.g. never write [1][2]).\n\n"
+    "**Formatting**: Use rich Markdown to make your response clear and readable:\n"
+    "- **Bold** or *italic* for key terms and emphasis.\n"
+    "- Fenced code blocks (```language\\n...\\n```) for code, pseudocode, and "
+    "command-line examples — specify the language (python, js, bash, etc.) where applicable.\n"
+    "- `inline code` for function names, variable names, file paths, and short "
+    "code references inline in prose.\n"
+    "- Block quotes (> ...) for verbatim quotations from readings or source material.\n"
+    "- Numbered or bulleted lists for steps, enumerations, and comparisons.\n"
+    "- Headers (## or ###) to organise longer multi-section responses.\n\n"
+    "**Math**: Wrap all mathematical expressions in LaTeX delimiters: "
+    "$...$ for inline math and $$...$$ for display/block equations.\n\n"
+    "If the materials don't contain enough information to answer fully, say so clearly."
 )
 
 _TIMEOUT = 60  # seconds
