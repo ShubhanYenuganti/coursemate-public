@@ -174,6 +174,7 @@ def init_db():
                 message_index INTEGER NOT NULL,
                 is_edited BOOLEAN NOT NULL DEFAULT FALSE,
                 edited_at TIMESTAMP,
+                reply_history JSONB NOT NULL DEFAULT '[]',
                 is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(chat_id, message_index)

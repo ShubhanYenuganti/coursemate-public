@@ -416,8 +416,22 @@ function SourcesPanel({ open, chunks, focusIndex, onClose, materials }) {
   );
 }
 
-function MessageBubble({ msg, courseName, userPicture, onCiteClick }) {
+function MessageBubble({
+  msg,
+  courseName,
+  userPicture,
+  onCiteClick,
+  isEditing,
+  editingContent,
+  onEditStart,
+  onEditChange,
+  onEditSave,
+  onEditCancel,
+  canEdit,
+  replyHistory,
+}) {
   const isUser = msg.role === 'user';
+  const [copied, setCopied] = useState(false);
 
   function processCitations(children) {
     const nodes = Array.isArray(children) ? children : [children];
@@ -466,6 +480,24 @@ function MessageBubble({ msg, courseName, userPicture, onCiteClick }) {
     );
   }
 
+  async function handleCopy() {
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(msg.content || '');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Ignore clipboard failures; keep UI responsive.
+    }
+  }
+
+  function formatEditTime(raw) {
+    if (!raw) return '';
+    const dt = new Date(raw);
+    if (Number.isNaN(dt.getTime())) return '';
+    return dt.toLocaleString();
+  }
+
   if (isUser) {
     return (
       <div className="group flex items-start gap-3">
@@ -477,10 +509,56 @@ function MessageBubble({ msg, courseName, userPicture, onCiteClick }) {
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-gray-800 leading-relaxed">{msg.content}</p>
+          {isEditing ? (
+            <div className="space-y-2">
+              <textarea
+                autoFocus
+                value={editingContent}
+                onChange={(e) => onEditChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    onEditSave();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    onEditCancel();
+                  }
+                }}
+                rows={3}
+                className="w-full rounded-lg border border-indigo-200 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 text-sm text-gray-800 leading-relaxed px-3 py-2 resize-y"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onEditSave}
+                  className="px-2.5 py-1 text-xs rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={onEditCancel}
+                  className="px-2.5 py-1 text-xs rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-gray-800 leading-relaxed">{msg.content}</p>
+              {msg.is_edited && (
+                <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">
+                  Edited
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <button
           type="button"
+          onClick={() => onEditStart(msg.id, msg.content)}
+          disabled={!canEdit || isEditing}
           className="flex-shrink-0 mt-0.5 p-1.5 rounded-lg text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 opacity-0 group-hover:opacity-100 transition-all"
           title="Edit message"
         >
@@ -510,8 +588,13 @@ function MessageBubble({ msg, courseName, userPicture, onCiteClick }) {
           <button type="button" className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="Not helpful">
             <ThumbsDownIcon />
           </button>
-          <button type="button" className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
-            <CopyIcon />
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            title={copied ? 'Copied' : 'Copy'}
+          >
+            {copied ? <CheckIcon /> : <CopyIcon />}
           </button>
           <button type="button" className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="More">
             <MoreIcon />
@@ -522,6 +605,21 @@ function MessageBubble({ msg, courseName, userPicture, onCiteClick }) {
             Regenerate
           </button>
         </div>
+        {Array.isArray(replyHistory) && replyHistory.length > 0 && (
+          <details className="mt-2 text-xs text-gray-500">
+            <summary className="cursor-pointer hover:text-gray-700 select-none">View reply history</summary>
+            <div className="mt-2 space-y-2">
+              {[...replyHistory].reverse().map((entry, idx) => (
+                <div key={`${entry?.edited_at || 'history'}-${idx}`} className="rounded-md bg-gray-50 border border-gray-100 p-2">
+                  {formatEditTime(entry?.edited_at) && (
+                    <p className="text-[10px] text-gray-400 mb-1">{formatEditTime(entry?.edited_at)}</p>
+                  )}
+                  <p className="whitespace-pre-wrap text-gray-600">{entry?.content || ''}</p>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
       </div>
     </div>
   );
@@ -552,6 +650,8 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState('');
   const [titleSaving, setTitleSaving] = useState(false);
+  const [editingMsgId, setEditingMsgId] = useState(null);
+  const [editingContent, setEditingContent] = useState('');
   const [msgChunks, setMsgChunks] = useState({});
   const [sourcesPanel, setSourcesPanel] = useState({ open: false, messageId: null, focusIndex: null });
   const messagesEndRef = useRef(null);
@@ -962,6 +1062,75 @@ export default function ChatTab({ course, userData, sessionToken }) {
     }
   }
 
+  async function handleEditMessage(messageId, newContent) {
+    const trimmed = (newContent || '').trim();
+    if (!trimmed || sending || !sessionToken || !selectedModel) return;
+    const target = messages.find((m) => m.id === messageId);
+    if (!target || target.role !== 'user' || typeof target.message_index !== 'number') return;
+
+    const contextIds = selectAllMaterials
+      ? materials.map((m) => m.id)
+      : Array.from(selectedMaterials);
+
+    const prevMessages = messages;
+    const prevMsgChunks = msgChunks;
+    const cutoffIndex = target.message_index;
+    const keptPrefix = prevMessages.filter((m) => (m.message_index ?? Number.POSITIVE_INFINITY) < cutoffIndex);
+    const optimisticEdited = { ...target, content: trimmed, is_edited: true };
+
+    setEditingMsgId(null);
+    setEditingContent('');
+    setSending(true);
+    sendingRef.current = true;
+    setSourcesPanel({ open: false, messageId: null, focusIndex: null });
+    setMessages([...keptPrefix, optimisticEdited]);
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          resource: 'message',
+          action: 'edit',
+          message_id: messageId,
+          content: trimmed,
+          context_material_ids: contextIds,
+          ai_provider: selectedModel,
+          ai_model: selectedModelId || selectedModel,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to edit message');
+
+      const nextMessages = [...keptPrefix, data.user_message, data.assistant_message];
+      setMessages(nextMessages);
+      setMsgChunks((prev) => {
+        const keptIds = new Set(nextMessages.map((m) => m.id));
+        const cleaned = Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
+        if (data.chunks?.length) cleaned[data.assistant_message.id] = data.chunks;
+        return cleaned;
+      });
+      setChats((prev) => prev.map((c) =>
+        c.id === target.chat_id
+          ? {
+              ...c,
+              last_message_at: data.assistant_message.created_at,
+              message_count: nextMessages.length,
+            }
+          : c
+      ));
+    } catch {
+      setMessages(prevMessages);
+      setMsgChunks(prevMsgChunks);
+    } finally {
+      setSending(false);
+      sendingRef.current = false;
+    }
+  }
+
   const { today, lastWeek, older } = groupChatsByDate(chats);
 
   return (
@@ -1220,15 +1389,35 @@ export default function ChatTab({ course, userData, sessionToken }) {
               <p className="text-sm text-gray-400 max-w-xs">I can explain concepts, quiz you on the material, summarize lectures, and more.</p>
             </div>
           ) : (
-            messages.map((msg) => (
+            messages.map((msg, i) => {
+              const prevMsg = messages[i - 1];
+              const replyHistory = msg.role === 'assistant' && Array.isArray(prevMsg?.reply_history) && prevMsg.reply_history.length
+                ? prevMsg.reply_history
+                : null;
+              return (
               <MessageBubble
                 key={msg.id}
                 msg={msg}
                 courseName={course?.title}
                 userPicture={userData?.picture}
                 onCiteClick={msg.role === 'assistant' ? (n) => openSources(msg.id, n) : null}
+                isEditing={editingMsgId === msg.id}
+                editingContent={editingContent}
+                onEditStart={(id, content) => {
+                  setEditingMsgId(id);
+                  setEditingContent(content || '');
+                }}
+                onEditChange={setEditingContent}
+                onEditSave={() => handleEditMessage(msg.id, editingContent)}
+                onEditCancel={() => {
+                  setEditingMsgId(null);
+                  setEditingContent('');
+                }}
+                canEdit={msg.role === 'user' && typeof msg.message_index === 'number' && !sending}
+                replyHistory={replyHistory}
               />
-            ))
+              );
+            })
           )}
           {sending && (
             <div className="flex items-start">

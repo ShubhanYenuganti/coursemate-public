@@ -8,6 +8,7 @@
 # POST   /api/chat  resource="chat"    action="update"       → rename chat
 # POST   /api/chat  resource="chat"    action="archive"      → archive/unarchive chat
 # POST   /api/chat  resource="message" action="send"         → send message + AI reply
+# POST   /api/chat  resource="message" action="edit"         → edit message + regenerate reply
 # POST   /api/chat  resource="message" action="delete"       → soft-delete message
 # DELETE /api/chat  resource="chat"                          → hard-delete chat
 
@@ -139,6 +140,11 @@ class handler(BaseHTTPRequestHandler):
                     send_json(self, 429, {"error": "Rate limit exceeded"})
                     return
                 self._send_message(user, data)
+            elif action == 'edit':
+                if not check_rate_limit(self, max_rpm=10):
+                    send_json(self, 429, {"error": "Rate limit exceeded"})
+                    return
+                self._edit_message(user, data)
             elif action == 'delete':
                 self._delete_message(user, data)
             else:
@@ -263,7 +269,7 @@ class handler(BaseHTTPRequestHandler):
             cursor = conn.cursor()
             if q:
                 cursor.execute("""
-                    SELECT id, role, content, message_index, created_at,
+                    SELECT id, role, content, is_edited, reply_history, message_index, created_at,
                            ts_rank(to_tsvector('english', content), plainto_tsquery('english', %s)) AS rank
                     FROM chat_messages
                     WHERE chat_id = %s
@@ -284,7 +290,7 @@ class handler(BaseHTTPRequestHandler):
                         SELECT id, chat_id, role, content, ai_provider, ai_model,
                                context_material_ids, retrieved_chunk_ids, context_token_count,
                                response_token_count, response_time_ms, finish_reason,
-                               message_index, created_at
+                               is_edited, reply_history, edited_at, message_index, created_at
                         FROM chat_messages
                         WHERE chat_id = %s
                           AND is_deleted = FALSE
@@ -297,7 +303,7 @@ class handler(BaseHTTPRequestHandler):
                         SELECT id, chat_id, role, content, ai_provider, ai_model,
                                context_material_ids, retrieved_chunk_ids, context_token_count,
                                response_token_count, response_time_ms, finish_reason,
-                               message_index, created_at
+                               is_edited, reply_history, edited_at, message_index, created_at
                         FROM chat_messages
                         WHERE chat_id = %s
                           AND is_deleted = FALSE
@@ -630,6 +636,224 @@ class handler(BaseHTTPRequestHandler):
         ]
         send_json(self, 201, {
             "user_message": user_message,
+            "assistant_message": assistant_message,
+            "chunks": serialized_chunks,
+        })
+
+    def _edit_message(self, user, data):
+        message_id = data.get('message_id')
+        content = sanitize_string(data.get('content', '') or '', max_length=10000)
+        context_material_ids = data.get('context_material_ids')
+        ai_provider = data.get('ai_provider')
+        ai_model = data.get('ai_model')
+
+        if not isinstance(message_id, int):
+            send_json(self, 400, {"error": "message_id is required"})
+            return
+        if not content:
+            send_json(self, 400, {"error": "content is required"})
+            return
+        if ai_provider not in ('gemini', 'openai', 'claude'):
+            send_json(self, 400, {"error": "ai_provider must be one of: gemini, openai, claude"})
+            return
+        if not ai_model:
+            send_json(self, 400, {"error": "ai_model is required"})
+            return
+        if context_material_ids is not None and not isinstance(context_material_ids, list):
+            send_json(self, 400, {"error": "context_material_ids must be a list"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, chat_id, course_id, user_id, role, content, context_material_ids,
+                       message_index, ai_provider, ai_model
+                FROM chat_messages
+                WHERE id = %s AND is_deleted = FALSE
+                """,
+                (message_id,)
+            )
+            msg = cursor.fetchone()
+            if not msg:
+                send_json(self, 404, {"error": "Message not found"})
+                cursor.close()
+                return
+            if msg['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Only the message author can edit it"})
+                cursor.close()
+                return
+            if msg['role'] != 'user':
+                send_json(self, 400, {"error": "Only user messages can be edited"})
+                cursor.close()
+                return
+
+            chat = _get_chat(conn, msg['chat_id'])
+            if not chat or chat['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Access denied to this chat"})
+                cursor.close()
+                return
+
+            if context_material_ids is None:
+                context_material_ids = msg.get('context_material_ids') or []
+
+            if context_material_ids:
+                cursor.execute("""
+                    SELECT id FROM materials
+                    WHERE id = ANY(%s::int[])
+                      AND course_id = %s
+                """, (context_material_ids, chat['course_id']))
+                valid_ids = {row['id'] for row in cursor.fetchall()}
+                invalid = [mid for mid in context_material_ids if mid not in valid_ids]
+                if invalid:
+                    send_json(self, 400, {"error": f"Invalid material IDs for this course: {invalid}"})
+                    cursor.close()
+                    return
+
+            cursor.execute(
+                """
+                SELECT content
+                FROM chat_messages
+                WHERE chat_id = %s
+                  AND message_index = %s
+                  AND role = 'assistant'
+                  AND is_deleted = FALSE
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (msg['chat_id'], msg['message_index'] + 1)
+            )
+            old_assistant = cursor.fetchone()
+            displaced_reply = old_assistant['content'] if old_assistant else None
+            if not displaced_reply:
+                send_json(self, 400, {"error": "Cannot edit a message without an assistant reply"})
+                cursor.close()
+                return
+
+            chunks = retrieve_chunks(conn, content, context_material_ids)
+
+            try:
+                assistant_content, retrieved_ids = synthesize(
+                    conn, user['id'], ai_provider, ai_model, content, chunks
+                )
+            except ValueError as e:
+                send_json(self, 400, {"error": str(e)})
+                cursor.close()
+                return
+            except Exception as e:
+                import requests as _requests
+                if isinstance(e, _requests.HTTPError) and e.response is not None and e.response.status_code == 429:
+                    send_json(self, 429, {"error": (
+                        f"Rate limit exceeded for {ai_provider}. "
+                        "You have sent too many requests — please wait a moment and try again, "
+                        "or check your API usage and quota in your provider's dashboard."
+                    )})
+                    cursor.close()
+                    return
+                cursor.close()
+                raise
+
+            cursor.execute(
+                """
+                UPDATE chat_messages
+                SET reply_history = COALESCE(reply_history, '[]'::jsonb) ||
+                        CASE
+                            WHEN %s IS NULL THEN '[]'::jsonb
+                            ELSE jsonb_build_array(
+                                jsonb_build_object('content', %s, 'edited_at', NOW()::text)
+                            )
+                        END,
+                    content = %s,
+                    context_material_ids = %s,
+                    ai_provider = %s,
+                    ai_model = %s,
+                    is_edited = TRUE,
+                    edited_at = NOW()
+                WHERE id = %s
+                RETURNING id, chat_id, role, content, context_material_ids, ai_provider, ai_model,
+                          is_edited, reply_history, edited_at, message_index, created_at
+                """,
+                (
+                    displaced_reply,
+                    displaced_reply,
+                    content,
+                    json.dumps(context_material_ids),
+                    ai_provider,
+                    ai_model,
+                    message_id,
+                )
+            )
+            edited_user_message = cursor.fetchone()
+
+            cursor.execute("""
+                UPDATE chat_messages
+                SET is_deleted = TRUE
+                WHERE chat_id = %s
+                  AND message_index >= %s
+                  AND is_deleted = FALSE
+            """, (msg['chat_id'], msg['message_index'] + 1))
+
+            next_idx = _next_message_index(conn, msg['chat_id'])
+
+            if embed_text_via_lambda and write_chat_message_embedding:
+                try:
+                    edited_user_embedding = embed_text_via_lambda(content)
+                    if edited_user_embedding:
+                        write_chat_message_embedding(conn, edited_user_message['id'], edited_user_embedding)
+                except Exception:
+                    logger.exception("Failed to persist edited user message embedding", extra={
+                        "chat_id": msg['chat_id'],
+                        "message_id": edited_user_message.get('id'),
+                    })
+            cursor.execute("""
+                INSERT INTO chat_messages
+                    (chat_id, course_id, user_id, parent_message_id, role, content,
+                     ai_provider, ai_model, context_material_ids,
+                     retrieved_chunk_ids, message_index)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
+                RETURNING id, chat_id, role, content, retrieved_chunk_ids,
+                          context_token_count, response_token_count,
+                          response_time_ms, finish_reason, message_index, created_at
+            """, (
+                msg['chat_id'],
+                chat['course_id'],
+                user['id'],
+                edited_user_message['id'],
+                assistant_content,
+                ai_provider,
+                ai_model,
+                json.dumps(context_material_ids),
+                json.dumps(retrieved_ids),
+                next_idx,
+            ))
+            assistant_message = cursor.fetchone()
+
+            if embed_text_via_lambda and write_chat_message_embedding:
+                try:
+                    assistant_embedding = embed_text_via_lambda(assistant_content)
+                    if assistant_embedding:
+                        write_chat_message_embedding(conn, assistant_message['id'], assistant_embedding)
+                except Exception:
+                    logger.exception("Failed to persist edited assistant message embedding", extra={
+                        "chat_id": msg['chat_id'],
+                        "message_id": assistant_message.get('id'),
+                    })
+
+            cursor.close()
+
+        serialized_chunks = [
+            {
+                "chunk_text": c.get("chunk_text", ""),
+                "chunk_type": c.get("chunk_type", ""),
+                "page_number": c.get("page_number"),
+                "similarity": round(float(c.get("similarity", 0) or 0), 3),
+                "source_type": c.get("source_type", ""),
+                "material_id": c.get("material_id"),
+            }
+            for c in chunks
+        ]
+        send_json(self, 200, {
+            "user_message": edited_user_message,
             "assistant_message": assistant_message,
             "chunks": serialized_chunks,
         })
