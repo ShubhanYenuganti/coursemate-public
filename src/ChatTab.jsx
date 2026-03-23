@@ -382,6 +382,9 @@ function SourcesPanel({ open, chunks, focusIndex, onClose, materials }) {
                 }`}>
                   {chunk.chunk_type === 'visual' ? 'Slide' : 'Text'}
                 </span>
+                {material?.name && (
+                  <span className="text-gray-500 truncate text-[9px]" title={material.name}>{material.name}</span>
+                )}
                 {chunk.page_number != null && (
                   <span className="text-gray-400">p.{chunk.page_number}</span>
                 )}
@@ -972,7 +975,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
       )}
 
       {/* ── Sidebar ── */}
-      <div className="flex-shrink-0 bg-gray-50/80 flex flex-col" style={{ width: sidebarWidth }}>
+      <div className="flex-shrink-0 bg-gray-50/80 flex flex-col overflow-hidden" style={{ width: sidebarWidth }}>
         {/* Logo / title */}
         <div className="px-4 pt-5 pb-3">
           <div className="flex items-center gap-2 mb-4">
