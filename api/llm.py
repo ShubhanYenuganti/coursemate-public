@@ -12,6 +12,7 @@ Phase 2 (agentic loop): Each provider's tool-calling format will extend this mod
   - Gemini:  tools with function_declarations + FunctionCall/FunctionResponse
 """
 import requests
+from uuid import UUID
 
 try:
     from .crypto_utils import decrypt_api_key
@@ -26,6 +27,12 @@ SYSTEM_PROMPT = (
 )
 
 _TIMEOUT = 60  # seconds
+
+
+def _json_safe_chunk_id(value):
+    if isinstance(value, UUID):
+        return str(value)
+    return value
 
 
 def _get_api_key(conn, user_id: int, provider: str) -> str:
@@ -150,5 +157,9 @@ def synthesize(
     context = _format_context(chunks)
     fn = _PROVIDERS[ai_provider]
     text = fn(context, user_message, ai_model, api_key)
-    chunk_ids = [c["id"] for c in chunks]
+    chunk_ids = [
+        _json_safe_chunk_id(c.get("id"))
+        for c in chunks
+        if c.get("id") is not None
+    ]
     return text, chunk_ids

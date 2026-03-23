@@ -497,6 +497,16 @@ class handler(BaseHTTPRequestHandler):
             except ValueError as e:
                 send_json(self, 400, {"error": str(e)})
                 return
+            except Exception as e:
+                import requests as _requests
+                if isinstance(e, _requests.HTTPError) and e.response is not None and e.response.status_code == 429:
+                    send_json(self, 429, {"error": (
+                        f"Rate limit exceeded for {ai_provider}. "
+                        "You have sent too many requests — please wait a moment and try again, "
+                        "or check your API usage and quota in your provider's dashboard."
+                    )})
+                    return
+                raise
 
             cursor.execute("""
                 INSERT INTO chat_messages
