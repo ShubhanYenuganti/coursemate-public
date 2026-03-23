@@ -1,12 +1,18 @@
 """
-Message persistence for conversation grounding.
-Stores messages with text embeddings from the embed_query Lambda.
+Embedding helpers for chat message persistence.
+
+This module centralizes embed_query Lambda invocation and updating
+`chat_messages.message_embedding` on existing rows.
 """
 import json
 import os
+import logging
 
 
-def _embed_via_lambda(text: str) -> list | None:
+logger = logging.getLogger(__name__)
+
+
+def embed_text_via_lambda(text: str) -> list | None:
     """Invoke embed_query Lambda and return the text embedding."""
     import boto3
 
@@ -26,6 +32,7 @@ def _embed_via_lambda(text: str) -> list | None:
     )
 
     if response.get('FunctionError'):
+        logger.warning("embed_query function error for message embedding")
         return None
 
     raw = response['Payload'].read()
@@ -38,30 +45,15 @@ def _vec_str(emb: list) -> str:
     return '[' + ','.join(str(x) for x in emb) + ']'
 
 
-def persist_message(conn, session_id: str, role: str, content: str,
-                    tool_calls: list = None, grounding_refs: list = None) -> None:
-    """
-    Insert a message into the `messages` table with a text embedding.
-    Non-critical — callers should catch exceptions.
-    """
-    tool_calls = tool_calls or []
-    grounding_refs = grounding_refs or []
-
-    try:
-        emb = _embed_via_lambda(content) if content else None
-    except Exception:
-        emb = None
-
+def write_chat_message_embedding(conn, message_id: int, emb: list) -> None:
+    """Write vector embedding onto an existing chat_messages row."""
+    if not emb:
+        return
+    vec = _vec_str(emb)
     cursor = conn.cursor()
-    if emb:
-        vec = _vec_str(emb)
-        cursor.execute("""
-            INSERT INTO messages (session_id, role, content, embedding, tool_calls, grounding_refs)
-            VALUES (%s, %s, %s, %s::vector, %s, %s)
-        """, (session_id, role, content, vec, json.dumps(tool_calls), json.dumps(grounding_refs)))
-    else:
-        cursor.execute("""
-            INSERT INTO messages (session_id, role, content, tool_calls, grounding_refs)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (session_id, role, content, json.dumps(tool_calls), json.dumps(grounding_refs)))
+    cursor.execute("""
+        UPDATE chat_messages
+        SET message_embedding = %s::vector
+        WHERE id = %s
+    """, (vec, message_id))
     cursor.close()

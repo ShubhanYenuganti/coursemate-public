@@ -293,27 +293,6 @@ def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON user_api_keys(user_id);
 
-            CREATE TABLE IF NOT EXISTS material_chunks (
-                id              SERIAL PRIMARY KEY,
-                material_id     INTEGER      NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
-                course_id       INTEGER      NOT NULL REFERENCES courses(id)   ON DELETE CASCADE,
-                chunk_index     INTEGER      NOT NULL,
-                chunk_text      TEXT         NOT NULL,
-                chunk_type      VARCHAR(20)  NOT NULL DEFAULT 'paragraph',
-                page_number     INTEGER,
-                token_count     INTEGER      NOT NULL,
-                embedding       vector(1024) NOT NULL,
-                model_name      VARCHAR(100) NOT NULL DEFAULT 'cohere-embed-english-v3.0',
-                created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(material_id, chunk_index)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_chunks_material_id ON material_chunks(material_id);
-            CREATE INDEX IF NOT EXISTS idx_chunks_course_id   ON material_chunks(course_id);
-            CREATE INDEX IF NOT EXISTS idx_chunks_embedding
-                ON material_chunks USING ivfflat (embedding vector_cosine_ops)
-                WITH (lists = 100);
-
             CREATE TABLE IF NOT EXISTS material_embed_jobs (
                 id              SERIAL PRIMARY KEY,
                 material_id     INTEGER      NOT NULL REFERENCES materials(id) ON DELETE CASCADE UNIQUE,
@@ -330,7 +309,7 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_embed_jobs_material_id ON material_embed_jobs(material_id);
         """)
 
-        # RAG schema: documents, chunks, chat_sessions, messages
+        # RAG schema: documents, chunks
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS documents (
                 id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -359,32 +338,12 @@ def init_db():
                 problem_id        TEXT,
                 related_chunk_ids UUID[] NOT NULL DEFAULT '{}'
             );
-
-            CREATE TABLE IF NOT EXISTS chat_sessions (
-                id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                user_id      UUID,
-                created_at   TIMESTAMPTZ DEFAULT now(),
-                session_meta JSONB DEFAULT '{}'
-            );
-
-            CREATE TABLE IF NOT EXISTS messages (
-                id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                session_id     UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
-                role           TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
-                content        TEXT NOT NULL,
-                embedding      VECTOR(1024),
-                tool_calls     JSONB DEFAULT '[]',
-                grounding_refs JSONB DEFAULT '[]',
-                created_at     TIMESTAMPTZ DEFAULT now()
-            );
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS chunks_embedding_idx ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);")
         cursor.execute("CREATE INDEX IF NOT EXISTS chunks_doc_page_type_idx ON chunks (document_id, chunk_index, retrieval_type);")
         cursor.execute("CREATE INDEX IF NOT EXISTS chunks_parent_idx ON chunks (parent_id);")
         cursor.execute("CREATE INDEX IF NOT EXISTS chunks_source_type_idx ON chunks (source_type);")
         cursor.execute("CREATE INDEX IF NOT EXISTS chunks_problem_id_idx ON chunks (problem_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session_id, created_at DESC);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS messages_embedding_idx ON messages USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);")
 
         # Add new columns to existing tables (idempotent)
         cursor.execute("ALTER TABLE materials ADD COLUMN IF NOT EXISTS doc_type TEXT NOT NULL DEFAULT 'general';")
@@ -413,6 +372,10 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_web_cache_hash ON web_cache(query_hash);
         """)
+
+        # Legacy table retirement after consolidation cutover.
+        cursor.execute("DROP TABLE IF EXISTS messages;")
+        cursor.execute("DROP TABLE IF EXISTS material_chunks;")
 
         cursor.close()
         print("Database initialized successfully")

@@ -12,6 +12,7 @@
 # DELETE /api/chat  resource="chat"                          → hard-delete chat
 
 import json
+import logging
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -31,9 +32,13 @@ except ImportError:
     from llm import synthesize
 
 try:
-    from services.query.persistence import persist_message
+    from services.query.persistence import embed_text_via_lambda, write_chat_message_embedding
 except ImportError:
-    persist_message = None
+    embed_text_via_lambda = None
+    write_chat_message_embedding = None
+
+
+logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------ helpers --
@@ -377,11 +382,6 @@ class handler(BaseHTTPRequestHandler):
                           last_message_at, created_at, updated_at, is_archived, session_uuid
             """, (course_id, user['id'], title))
             chat = cursor.fetchone()
-            # Create matching chat_sessions entry
-            cursor.execute(
-                "INSERT INTO chat_sessions (id) VALUES (%s) ON CONFLICT DO NOTHING",
-                (chat['session_uuid'],)
-            )
             cursor.close()
 
         send_json(self, 201, {"chat": chat})
@@ -495,6 +495,13 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 400, {"error": "context_material_ids must be a list"})
             return
 
+        metrics = {
+            "chat_send": 1,
+            "embedding_success": 0,
+            "embedding_null": 0,
+            "embedding_errors": 0,
+        }
+
         with get_db() as conn:
             chat = _get_chat(conn, chat_id)
             if not chat:
@@ -536,6 +543,22 @@ class handler(BaseHTTPRequestHandler):
                 json.dumps(context_material_ids), next_idx,
             ))
             user_message = cursor.fetchone()
+            if embed_text_via_lambda and write_chat_message_embedding:
+                try:
+                    user_embedding = embed_text_via_lambda(content)
+                    if user_embedding:
+                        write_chat_message_embedding(conn, user_message['id'], user_embedding)
+                        metrics["embedding_success"] += 1
+                    else:
+                        metrics["embedding_null"] += 1
+                except Exception:
+                    metrics["embedding_errors"] += 1
+                    logger.exception("Failed to persist user message embedding", extra={
+                        "chat_id": chat_id,
+                        "message_id": user_message.get('id'),
+                    })
+            else:
+                metrics["embedding_null"] += 1
 
             # RAG retrieval + LLM synthesis
             chunks = retrieve_chunks(conn, content, context_material_ids)
@@ -560,33 +583,39 @@ class handler(BaseHTTPRequestHandler):
 
             cursor.execute("""
                 INSERT INTO chat_messages
-                    (chat_id, course_id, user_id, role, content,
+                    (chat_id, course_id, user_id, parent_message_id, role, content,
                      ai_provider, ai_model, context_material_ids,
                      retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, retrieved_chunk_ids,
                           context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at
             """, (
-                chat_id, chat['course_id'], user['id'], assistant_content,
+                chat_id, chat['course_id'], user['id'], user_message['id'], assistant_content,
                 ai_provider, ai_model,
                 json.dumps(context_material_ids),
                 json.dumps(retrieved_ids),
                 next_idx + 1,
             ))
             assistant_message = cursor.fetchone()
-            cursor.close()
-
-            # Persist messages to chat_sessions/messages for grounding (best-effort)
-            if persist_message and chat.get('session_uuid'):
+            if embed_text_via_lambda and write_chat_message_embedding:
                 try:
-                    session_id = str(chat['session_uuid'])
-                    persist_message(conn, session_id, 'user', content,
-                                    grounding_refs=[str(r) for r in retrieved_ids])
-                    persist_message(conn, session_id, 'assistant', assistant_content,
-                                    grounding_refs=[str(r) for r in retrieved_ids])
+                    assistant_embedding = embed_text_via_lambda(assistant_content)
+                    if assistant_embedding:
+                        write_chat_message_embedding(conn, assistant_message['id'], assistant_embedding)
+                        metrics["embedding_success"] += 1
+                    else:
+                        metrics["embedding_null"] += 1
                 except Exception:
-                    pass  # grounding persistence is non-critical
+                    metrics["embedding_errors"] += 1
+                    logger.exception("Failed to persist assistant message embedding", extra={
+                        "chat_id": chat_id,
+                        "message_id": assistant_message.get('id'),
+                    })
+            else:
+                metrics["embedding_null"] += 1
+            cursor.close()
+            logger.info("chat_message_embedding_metrics", extra=metrics)
 
         serialized_chunks = [
             {

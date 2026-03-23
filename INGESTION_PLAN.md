@@ -1,6 +1,11 @@
 # Hybrid RAG — Claude Code Implementation Spec
 ## Voyage multimodal-3.5 + voyage-3.5 · Neon Postgres + pgvector · GPT-4o-mini agent
 
+> Status: Historical design reference.  
+> Current production direction has consolidated away `messages`/`chat_sessions` and uses
+> `chat_messages.message_embedding` for conversation embeddings, with retrieval on
+> `documents` + `chunks` only.
+
 ---
 
 ## Context

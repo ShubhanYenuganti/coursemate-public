@@ -60,6 +60,10 @@ No other changes to `api/db.py` or `lambda/embed_materials/db.py` — both alrea
 
 ## Schema Migration
 
+> Status: Historical migration notes for the pre-consolidation phase.  
+> Current consolidation drops legacy `messages` and `material_chunks` after cutover; use
+> `chat_messages.message_embedding` and `documents` + `chunks` as canonical runtime tables.
+
 ### Step 1: Create a Neon branch for safe migration
 
 ```bash

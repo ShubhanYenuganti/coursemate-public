@@ -1,4 +1,4 @@
--- Migration 001: Voyage AI RAG schema
+-- Migration 001: Voyage AI RAG schema (consolidated)
 -- Run once against Neon DB.
 -- Drops and recreates new RAG tables cleanly (no prior state assumed).
 -- Does NOT touch existing app tables except to add two new columns.
@@ -6,9 +6,9 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- Drop new RAG tables in dependency order (CASCADE handles indexes/constraints)
+-- Drop legacy + prior RAG tables in dependency order
 DROP TABLE IF EXISTS messages CASCADE;
-DROP TABLE IF EXISTS chat_sessions CASCADE;
+DROP TABLE IF EXISTS material_chunks CASCADE;
 DROP TABLE IF EXISTS chunks CASCADE;
 DROP TABLE IF EXISTS documents CASCADE;
 
@@ -42,29 +42,10 @@ CREATE TABLE chunks (
     related_chunk_ids UUID[] NOT NULL DEFAULT '{}'
 );
 
--- Chat sessions for conversation grounding
-CREATE TABLE chat_sessions (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id      UUID,
-    created_at   TIMESTAMPTZ DEFAULT now(),
-    session_meta JSONB DEFAULT '{}'
-);
-
--- Messages with embeddings
-CREATE TABLE messages (
-    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id     UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
-    role           TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
-    content        TEXT NOT NULL,
-    embedding      VECTOR(1024),
-    tool_calls     JSONB DEFAULT '[]',
-    grounding_refs JSONB DEFAULT '[]',
-    created_at     TIMESTAMPTZ DEFAULT now()
-);
-
 -- Add new columns to existing app tables (idempotent guards)
 ALTER TABLE materials ADD COLUMN IF NOT EXISTS doc_type TEXT NOT NULL DEFAULT 'general';
 ALTER TABLE chats     ADD COLUMN IF NOT EXISTS session_uuid UUID NOT NULL DEFAULT gen_random_uuid();
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS message_embedding vector(1024);
 
 -- Indexes
 CREATE INDEX chunks_embedding_idx     ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
@@ -72,5 +53,5 @@ CREATE INDEX chunks_doc_page_type_idx ON chunks (document_id, chunk_index, retri
 CREATE INDEX chunks_parent_idx        ON chunks (parent_id);
 CREATE INDEX chunks_source_type_idx   ON chunks (source_type);
 CREATE INDEX chunks_problem_id_idx    ON chunks (problem_id);
-CREATE INDEX messages_session_idx     ON messages (session_id, created_at DESC);
-CREATE INDEX messages_embedding_idx   ON messages USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
+CREATE INDEX IF NOT EXISTS idx_messages_embedding
+    ON chat_messages USING ivfflat (message_embedding vector_cosine_ops) WITH (lists = 50);
