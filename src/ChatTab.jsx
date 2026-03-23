@@ -1,4 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -128,6 +132,15 @@ function UnarchiveIcon() {
       <rect x="1" y="3" width="22" height="5" />
       <polyline points="10 15 12 12 14 15" />
       <line x1="12" y1="12" x2="12" y2="17" />
+    </svg>
+  );
+}
+
+function XIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
     </svg>
   );
 }
@@ -315,30 +328,114 @@ function ArchivedConvItem({ conv, onDelete, onUnarchive }) {
   );
 }
 
-function MessageBubble({ msg, courseName, userPicture }) {
+function SourcesPanel({ open, chunks, focusIndex, onClose }) {
+  const focusRef = useRef(null);
+
+  useEffect(() => {
+    if (open && focusRef.current) {
+      focusRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [open, focusIndex]);
+
+  return (
+    <div className={`absolute right-0 top-0 h-full w-80 bg-white border-l border-gray-200 flex flex-col shadow-xl z-20 transition-transform duration-200 ${open ? 'translate-x-0' : 'translate-x-full'}`}>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 flex-shrink-0">
+        <span className="text-sm font-semibold text-gray-800">Sources ({chunks?.length || 0})</span>
+        <button onClick={onClose} className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
+          <XIcon />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        {(chunks || []).map((chunk, idx) => {
+          const n = idx + 1;
+          const isFocused = n === focusIndex;
+          return (
+            <div
+              key={idx}
+              ref={isFocused ? focusRef : null}
+              className={`rounded-lg p-3 border text-xs transition-colors ${
+                isFocused
+                  ? 'border-indigo-300 bg-indigo-50 border-l-4'
+                  : 'border-gray-100 bg-gray-50'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-indigo-100 text-indigo-600 font-semibold text-[10px] flex-shrink-0">
+                  {n}
+                </span>
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium ${
+                  chunk.chunk_type === 'visual' ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-600'
+                }`}>
+                  {chunk.chunk_type === 'visual' ? 'Slide' : 'Text'}
+                </span>
+                {chunk.page_number != null && (
+                  <span className="text-gray-400">Page {chunk.page_number}</span>
+                )}
+                {chunk.similarity != null && (
+                  <span className="ml-auto text-gray-400 tabular-nums">{chunk.similarity}</span>
+                )}
+              </div>
+              <p className="text-gray-600 leading-relaxed">
+                {(chunk.chunk_text || '').length > 180
+                  ? (chunk.chunk_text || '').slice(0, 180) + '…'
+                  : (chunk.chunk_text || '')}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MessageBubble({ msg, courseName, userPicture, onCiteClick }) {
   const isUser = msg.role === 'user';
 
-  function renderContent(content) {
-    const lines = content.split('\n');
-    return lines.map((line, i) => {
-      if (line.startsWith('**') && line.endsWith('**')) {
-        return <p key={i} className="font-semibold text-gray-900 mt-3 first:mt-0">{line.slice(2, -2)}</p>;
-      }
-      const parts = line.split(/(\*\*[^*]+\*\*)/g);
-      if (parts.length > 1) {
+  function processCitations(children) {
+    const nodes = Array.isArray(children) ? children : [children];
+    return nodes.flatMap((child, ci) => {
+      if (typeof child !== 'string') return [child];
+      const parts = child.split(/(\[\d+\])/);
+      return parts.map((part, i) => {
+        const m = part.match(/^\[(\d+)\]$/);
+        if (!m) return part;
+        const n = Number(m[1]);
         return (
-          <p key={i} className={i > 0 ? 'mt-1' : ''}>
-            {parts.map((part, j) =>
-              part.startsWith('**') && part.endsWith('**')
-                ? <strong key={j}>{part.slice(2, -2)}</strong>
-                : part
-            )}
-          </p>
+          <button
+            key={`${ci}-${i}`}
+            onClick={() => onCiteClick && onCiteClick(n)}
+            className="inline-flex items-center justify-center w-4 h-4 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-600 hover:bg-indigo-200 cursor-pointer align-super mx-0.5"
+          >
+            {n}
+          </button>
         );
-      }
-      if (line === '') return <div key={i} className="h-1" />;
-      return <p key={i} className={i > 0 ? 'mt-1' : ''}>{line}</p>;
+      });
     });
+  }
+
+  function renderContent(content) {
+    return (
+      <ReactMarkdown
+        remarkPlugins={[remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={{
+          p: ({ children }) => (
+            <p className="mt-1 first:mt-0">
+              {onCiteClick ? processCitations(children) : children}
+            </p>
+          ),
+          strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
+          ol: ({ children }) => <ol className="list-decimal list-outside ml-5 mt-1 space-y-0.5">{children}</ol>,
+          ul: ({ children }) => <ul className="list-disc list-outside ml-5 mt-1 space-y-0.5">{children}</ul>,
+          li: ({ children }) => <li className="mt-0.5">{children}</li>,
+          code: ({ inline, children }) => inline
+            ? <code className="bg-gray-100 text-indigo-700 rounded px-1 py-0.5 text-xs font-mono">{children}</code>
+            : <pre className="bg-gray-100 rounded-lg p-3 mt-2 overflow-x-auto text-xs font-mono">{children}</pre>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    );
   }
 
   if (isUser) {
@@ -427,6 +524,8 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState('');
   const [titleSaving, setTitleSaving] = useState(false);
+  const [msgChunks, setMsgChunks] = useState({});
+  const [sourcesPanel, setSourcesPanel] = useState({ open: false, messageId: null, focusIndex: null });
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const dropdownRef = useRef(null);
@@ -744,6 +843,18 @@ export default function ChatTab({ course, userData, sessionToken }) {
     }
   }
 
+  function openSources(messageId, focusIndex) {
+    if (!msgChunks[messageId]) {
+      fetch(`/api/chat?resource=chunks&message_id=${messageId}`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      })
+        .then((r) => r.json())
+        .then((data) => setMsgChunks((prev) => ({ ...prev, [messageId]: data.chunks || [] })))
+        .catch(() => {});
+    }
+    setSourcesPanel({ open: true, messageId, focusIndex });
+  }
+
   async function handleSend() {
     const text = input.trim();
     if (!text || sending || !selectedModel) return;
@@ -806,6 +917,9 @@ export default function ChatTab({ course, userData, sessionToken }) {
         msgData.user_message,
         msgData.assistant_message,
       ]);
+      if (msgData.chunks?.length) {
+        setMsgChunks((prev) => ({ ...prev, [msgData.assistant_message.id]: msgData.chunks }));
+      }
       setChats((prev) => prev.map((c) =>
         c.id === chatId
           ? { ...c, last_message_at: msgData.assistant_message.created_at, message_count: (c.message_count || 0) + 2 }
@@ -1034,7 +1148,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
       />
 
       {/* ── Main chat ── */}
-      <div className="flex-1 flex flex-col min-w-0 relative">
+      <div className="flex-1 flex flex-col min-w-0 relative overflow-hidden">
 
         {/* Chat title header */}
         {activeConv && activeConv !== '__new__' && (() => {
@@ -1083,6 +1197,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 msg={msg}
                 courseName={course?.title}
                 userPicture={userData?.picture}
+                onCiteClick={msg.role === 'assistant' ? (n) => openSources(msg.id, n) : null}
               />
             ))
           )}
@@ -1185,6 +1300,13 @@ export default function ChatTab({ course, userData, sessionToken }) {
             AI responses are based on your uploaded course materials.
           </p>
         </div>
+
+        <SourcesPanel
+          open={sourcesPanel.open}
+          chunks={sourcesPanel.messageId ? msgChunks[sourcesPanel.messageId] : null}
+          focusIndex={sourcesPanel.focusIndex}
+          onClose={() => setSourcesPanel((p) => ({ ...p, open: false }))}
+        />
       </div>
     </div>
   );

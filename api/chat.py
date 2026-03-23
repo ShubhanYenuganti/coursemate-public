@@ -92,6 +92,8 @@ class handler(BaseHTTPRequestHandler):
             self._list_or_search_chats(user, params, q)
         elif resource == 'message':
             self._list_or_search_messages(user, params, q)
+        elif resource == 'chunks':
+            self._get_message_chunks(user, params)
         else:
             send_json(self, 400, {"error": f"Unknown resource '{resource}'"})
 
@@ -300,6 +302,53 @@ class handler(BaseHTTPRequestHandler):
                 messages = cursor.fetchall()
                 cursor.close()
                 send_json(self, 200, {"messages": messages})
+
+    def _get_message_chunks(self, user, params):
+        message_id_raw = params.get('message_id', [None])[0]
+        if not message_id_raw or not message_id_raw.isdigit():
+            send_json(self, 400, {"error": "message_id query parameter is required"})
+            return
+        message_id = int(message_id_raw)
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT cm.retrieved_chunk_ids, c.user_id
+                FROM chat_messages cm
+                JOIN chats c ON c.id = cm.chat_id
+                WHERE cm.id = %s AND cm.is_deleted = FALSE
+            """, (message_id,))
+            row = cursor.fetchone()
+            cursor.close()
+
+            if not row:
+                send_json(self, 404, {"error": "Message not found"})
+                return
+            if row['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Access denied"})
+                return
+
+            chunk_ids = row['retrieved_chunk_ids'] or []
+            if not chunk_ids:
+                send_json(self, 200, {"chunks": []})
+                return
+
+            from services.query.retrieval import _fetch_chunk_context
+            raw_chunks = _fetch_chunk_context(conn, chunk_ids)
+
+        chunk_map = {str(c['id']): c for c in raw_chunks}
+        ordered = [chunk_map[str(cid)] for cid in chunk_ids if str(cid) in chunk_map]
+        serialized = [
+            {
+                "chunk_text":  c.get("chunk_text", ""),
+                "chunk_type":  c.get("chunk_type", ""),
+                "page_number": c.get("page_number"),
+                "similarity":  None,
+                "source_type": c.get("source_type", ""),
+            }
+            for c in ordered
+        ]
+        send_json(self, 200, {"chunks": serialized})
 
     # ---------------------------------------------------------- POST helpers --
 
@@ -538,9 +587,20 @@ class handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass  # grounding persistence is non-critical
 
+        serialized_chunks = [
+            {
+                "chunk_text":  c.get("chunk_text", ""),
+                "chunk_type":  c.get("chunk_type", ""),
+                "page_number": c.get("page_number"),
+                "similarity":  round(float(c.get("similarity", 0) or 0), 3),
+                "source_type": c.get("source_type", ""),
+            }
+            for c in chunks
+        ]
         send_json(self, 201, {
             "user_message": user_message,
             "assistant_message": assistant_message,
+            "chunks": serialized_chunks,
         })
 
     def _delete_message(self, user, data):
