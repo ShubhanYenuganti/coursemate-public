@@ -161,6 +161,8 @@ class handler(BaseHTTPRequestHandler):
         filename = sanitize_string(data.get('filename', ''), max_length=255)
         file_type = sanitize_string(data.get('file_type', ''), max_length=100)
         visibility = data.get('visibility', 'private')
+        doc_type = data.get('doc_type')
+        week = data.get('week')
 
         if not course_id or not filename or not file_type:
             send_json(self, 400, {"error": "course_id, filename, and file_type are required"})
@@ -196,6 +198,8 @@ class handler(BaseHTTPRequestHandler):
             "upload_url": presigned['url'],
             "fields": presigned['fields'],
             "s3_key": s3_key,
+            "doc_type": doc_type,
+            "week": week,
         })
 
     def _confirm_upload(self, google_id, data):
@@ -204,6 +208,9 @@ class handler(BaseHTTPRequestHandler):
         filename = sanitize_string(data.get('filename', ''), max_length=255)
         file_type = sanitize_string(data.get('file_type', ''), max_length=100)
         visibility = data.get('visibility', 'private')
+        doc_type = data.get('doc_type')
+        week_raw = data.get('week')
+        week = int(week_raw) if week_raw is not None else None
 
         if not s3_key or not course_id or not filename or not file_type:
             send_json(self, 400, {"error": "s3_key, course_id, filename, and file_type are required"})
@@ -244,6 +251,18 @@ class handler(BaseHTTPRequestHandler):
             source_type='upload',
         )
         Course.add_material(course_id, material['id'])
+
+        # Set doc_type and week on the material record
+        if doc_type:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE materials SET doc_type = %s, week = %s WHERE id = %s",
+                    (doc_type, week, material['id'])
+                )
+                cursor.close()
+            material['doc_type'] = doc_type
+            material['week'] = week
 
         # Create a pending embed job — Lambda will pick this up asynchronously
         with get_db() as conn:

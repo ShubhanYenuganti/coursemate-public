@@ -4,18 +4,23 @@ AWS Lambda handler — embed_materials
 Triggered by S3 ObjectCreated events on prefix materials/.
 
 Pipeline:
-  1. Resolve the S3 key → material DB record
-  2. Dispatch to the format-specific Pass 1 extractor
-  3. Run passes 2–4 (size normalization, overlap stitching, summary chunk)
-  4. Generate sentence-transformer embeddings (all-MiniLM-L6-v2, dim=384)
-  5. Upsert chunks into material_chunks; update material_embed_jobs status
+  1. Resolve the S3 key → material DB record (with doc_type, week)
+  2. Download raw file bytes from S3
+  3. Dispatch to format-specific extractor for chunk_text
+  4. Type-specific chunking via chunkers.chunk_by_type() → (parent, children)
+  5. Embed parent first via Jina v4 (visual for slides/quiz/exam, text otherwise)
+  6. INSERT parent → get DB id
+  7. Set parent_id on all children
+  8. Embed children
+  9. INSERT all children
+  10. Update material_embed_jobs status
 """
 import boto3
 import os
 
-from db import get_db
+from db import get_db, insert_parent_chunk, insert_child_chunk
 from embedder import embed_chunks
-from chunker import process_chunks
+from chunkers import chunk_by_type
 
 from extractors.pdf   import extract_pdf
 from extractors.docx  import extract_docx
@@ -25,26 +30,25 @@ from extractors.svg   import extract_svg
 from extractors.xlsx  import extract_xlsx
 from extractors.csv_  import extract_csv
 
-# (extractor_fn, has_headings)
 EXTRACTOR_MAP = {
     'application/pdf':
-        (extract_pdf,   True),
+        extract_pdf,
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-        (extract_docx,  True),
+        extract_docx,
     'text/plain':
-        (extract_txt,   False),
+        extract_txt,
     'image/jpeg':
-        (extract_image, False),
+        extract_image,
     'image/png':
-        (extract_image, False),
+        extract_image,
     'image/gif':
-        (extract_image, False),
+        extract_image,
     'image/svg+xml':
-        (extract_svg,   False),
+        extract_svg,
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
-        (extract_xlsx,  False),
+        extract_xlsx,
     'text/csv':
-        (extract_csv,   False),
+        extract_csv,
 }
 
 s3 = boto3.client('s3')
@@ -95,25 +99,24 @@ def lambda_handler(event, context):
     # 1. Resolve material record from the S3 key embedded in file_url
     with get_db() as db:
         row = db.execute(
-            "SELECT id, course_id, file_type FROM materials WHERE file_url LIKE %s",
+            "SELECT id, course_id, file_type, doc_type, week FROM materials WHERE file_url LIKE %s",
             (f'%{s3_key}',)
         ).fetchone()
 
     if not row:
-        # confirm_upload hasn't run yet (race condition) — Lambda may safely skip.
-        # The embed job won't exist either, so there's nothing to mark.
         return
 
     material_id = row['id']
     course_id   = row['course_id']
     file_type   = row['file_type']
+    doc_type    = row['doc_type'] or 'default'
+    week        = row['week']
 
-    entry = EXTRACTOR_MAP.get(file_type)
-    if not entry:
+    extractor = EXTRACTOR_MAP.get(file_type)
+    if not extractor:
         mark_job(material_id, 'skipped', error=f'No extractor for file_type: {file_type!r}')
         return
 
-    extractor, has_headings = entry
     mark_job(material_id, 'processing')
 
     try:
@@ -128,31 +131,44 @@ def lambda_handler(event, context):
             mark_job(material_id, 'skipped', error='No extractable text found')
             return
 
-        # 4. Passes 2–4 — size normalization, overlap, summary
-        chunks = process_chunks(raw_chunks, has_headings=has_headings)
+        # 4. Type-specific chunking
+        material_meta = {
+            'id': material_id,
+            'course_id': course_id,
+            'doc_type': doc_type,
+            'week': week,
+        }
 
-        # 5. Generate embeddings (adds 'embedding' key to each dict)
-        chunks = embed_chunks(chunks)
+        # hw_solution needs DB conn for cross-referencing instruction chunks
+        if doc_type == 'hw_solution':
+            with get_db() as db:
+                parent, children = chunk_by_type(doc_type, raw_chunks, material_meta, conn=db)
+        else:
+            parent, children = chunk_by_type(doc_type, raw_chunks, material_meta)
 
-        # 6. Upsert all chunks and mark done in a single transaction
+        source_type = doc_type
+        # Only pass pdf_bytes for visual embedding (slides/quiz/exam from PDF)
+        pdf_bytes = file_bytes if file_type == 'application/pdf' else None
+
+        # 5. Embed parent first
+        [parent] = embed_chunks([parent], source_type=source_type, pdf_bytes=pdf_bytes)
+
+        # 6. INSERT parent → get DB id
         with get_db() as db:
-            for idx, chunk in enumerate(chunks):
-                embedding_str = '[' + ','.join(str(x) for x in chunk['embedding']) + ']'
-                db.execute("""
-                    INSERT INTO material_chunks
-                        (material_id, course_id, chunk_index, chunk_text, chunk_type,
-                         page_number, token_count, embedding, model_name)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::vector, %s)
-                    ON CONFLICT (material_id, chunk_index) DO UPDATE
-                        SET chunk_text  = EXCLUDED.chunk_text,
-                            embedding   = EXCLUDED.embedding,
-                            model_name  = EXCLUDED.model_name
-                """, (
-                    material_id, course_id, idx,
-                    chunk['text'], chunk['chunk_type'], chunk.get('page_number'),
-                    chunk['token_count'], embedding_str, 'all-MiniLM-L6-v2',
-                ))
-            mark_job(material_id, 'done', chunks_created=len(chunks), conn=db)
+            parent_db_id = insert_parent_chunk(db, material_id, course_id, 0, parent)
+
+        # 7. Set parent_id on all children
+        for child in children:
+            child['parent_id'] = parent_db_id
+
+        # 8. Embed children
+        children = embed_chunks(children, source_type=source_type, pdf_bytes=pdf_bytes)
+
+        # 9. INSERT all children + mark done in a single transaction
+        with get_db() as db:
+            for idx, child in enumerate(children):
+                insert_child_chunk(db, material_id, course_id, idx + 1, child, parent_db_id)
+            mark_job(material_id, 'done', chunks_created=len(children) + 1, conn=db)
 
     except Exception as exc:
         mark_job(material_id, 'failed', error=str(exc))

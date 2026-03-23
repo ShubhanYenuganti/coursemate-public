@@ -1,7 +1,7 @@
 """
 AWS Lambda handler — embed_query
 
-Accepts a query string and returns its Cohere embedding.
+Accepts a query string and returns its Jina v4 embedding.
 Called from api/rag.py on Vercel via boto3 direct invoke.
 
 Input (direct boto3 invoke):
@@ -13,50 +13,31 @@ Output:
 import json
 import os
 
-import cohere
+import requests
 
-_co = None
-
-
-def _get_client() -> cohere.Client:
-    global _co
-    if _co is None:
-        _co = cohere.Client(os.environ['COHERE_API_KEY'])
-    return _co
+_JINA_URL = "https://api.jina.ai/v1/embeddings"
+_DIMS = 1024
 
 
 def lambda_handler(event, context):
-    # Support both Function URL invocation (body is a JSON string) and
-    # direct boto3 invoke (event is already the parsed dict).
-    if 'body' in event:
-        try:
-            body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
-        except (json.JSONDecodeError, TypeError):
-            return _error(400, "Invalid JSON body")
-    else:
-        body = event
-
+    body = event if isinstance(event, dict) and 'query' in event \
+           else json.loads(event.get('body', '{}'))
     query = body.get('query', '')
-    if not query or not isinstance(query, str):
-        return _error(400, "'query' (non-empty string) is required")
+    if not query:
+        return {'statusCode': 400, 'body': json.dumps({'error': 'query required'})}
 
-    response = _get_client().embed(
-        texts=[query],
-        model='embed-english-v3.0',
-        input_type='search_query',
+    resp = requests.post(
+        _JINA_URL,
+        headers={'Authorization': f"Bearer {os.environ['JINA_API_KEY']}",
+                 'Content-Type': 'application/json'},
+        json={'model': 'jina-embeddings-v4', 'task': 'retrieval.query',
+              'dimensions': _DIMS, 'input': [{'text': query}]},
+        timeout=30,
     )
-    embedding = response.embeddings[0]
-
+    resp.raise_for_status()
+    embedding = resp.json()['data'][0]['embedding']
     return {
         'statusCode': 200,
         'headers': {'Content-Type': 'application/json'},
         'body': json.dumps({'embedding': embedding, 'dim': len(embedding)}),
-    }
-
-
-def _error(status, message):
-    return {
-        'statusCode': status,
-        'headers': {'Content-Type': 'application/json'},
-        'body': json.dumps({'error': message}),
     }

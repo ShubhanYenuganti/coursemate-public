@@ -102,6 +102,8 @@ def init_db():
                 file_url TEXT NOT NULL,
                 file_type VARCHAR(50),
                 source_type VARCHAR(20) NOT NULL DEFAULT 'upload',
+                doc_type VARCHAR(30),
+                week INTEGER,
                 uploaded_by INTEGER NOT NULL,
                 course_id INTEGER,
                 visibility VARCHAR(20) NOT NULL DEFAULT 'private' CHECK (visibility IN ('public','private')),
@@ -294,17 +296,25 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON user_api_keys(user_id);
 
             CREATE TABLE IF NOT EXISTS material_chunks (
-                id              SERIAL PRIMARY KEY,
-                material_id     INTEGER      NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
-                course_id       INTEGER      NOT NULL REFERENCES courses(id)   ON DELETE CASCADE,
-                chunk_index     INTEGER      NOT NULL,
-                chunk_text      TEXT         NOT NULL,
-                chunk_type      VARCHAR(20)  NOT NULL DEFAULT 'paragraph',
-                page_number     INTEGER,
-                token_count     INTEGER      NOT NULL,
-                embedding       vector(1024) NOT NULL,
-                model_name      VARCHAR(100) NOT NULL DEFAULT 'cohere-embed-english-v3.0',
-                created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                id                  SERIAL PRIMARY KEY,
+                material_id         INTEGER      NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+                course_id           INTEGER      NOT NULL REFERENCES courses(id)   ON DELETE CASCADE,
+                chunk_index         INTEGER      NOT NULL,
+                chunk_text          TEXT         NOT NULL,
+                chunk_type          VARCHAR(20)  NOT NULL DEFAULT 'paragraph',
+                page_number         INTEGER,
+                token_count         INTEGER      NOT NULL,
+                embedding           vector(1024) NOT NULL,
+                model_name          VARCHAR(100) NOT NULL DEFAULT 'jina-embeddings-v4',
+                parent_id           INTEGER      REFERENCES material_chunks(id) ON DELETE CASCADE,
+                is_parent           BOOLEAN      NOT NULL DEFAULT FALSE,
+                source_type         VARCHAR(30),
+                week                INTEGER,
+                section_title       TEXT,
+                position_in_doc     DECIMAL(5,4),
+                problem_id          TEXT,
+                related_chunk_ids   JSONB        NOT NULL DEFAULT '[]',
+                created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(material_id, chunk_index)
             );
 
@@ -313,6 +323,9 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_chunks_embedding
                 ON material_chunks USING ivfflat (embedding vector_cosine_ops)
                 WITH (lists = 100);
+            CREATE INDEX IF NOT EXISTS idx_chunks_parent_id ON material_chunks(parent_id) WHERE parent_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_chunks_is_parent ON material_chunks(is_parent, course_id);
+            CREATE INDEX IF NOT EXISTS idx_chunks_problem_id ON material_chunks(problem_id) WHERE problem_id IS NOT NULL;
 
             CREATE TABLE IF NOT EXISTS material_embed_jobs (
                 id              SERIAL PRIMARY KEY,

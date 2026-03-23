@@ -9,10 +9,13 @@ RUN apt-get update && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir awslambdaric -r requirements.txt
 
+ENV JINA_API_KEY=""
+
 # Copy application code
 WORKDIR /var/task
-COPY handler.py embedder.py chunker.py db.py ./
+COPY handler.py embedder.py db.py ./
 COPY extractors/ ./extractors/
+COPY chunkers/ ./chunkers/
 
 ENTRYPOINT ["python", "-m", "awslambdaric"]
 CMD ["handler.lambda_handler"]

@@ -4,6 +4,8 @@ FROM python:3.12-slim
 COPY requirements.txt .
 RUN pip install --no-cache-dir awslambdaric -r requirements.txt
 
+ENV JINA_API_KEY=""
+
 # Copy application code
 WORKDIR /var/task
 COPY handler.py .

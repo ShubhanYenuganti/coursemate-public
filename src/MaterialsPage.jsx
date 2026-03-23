@@ -2,6 +2,20 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
+const DOC_TYPES = [
+  { id: 'slide',          label: 'Slides' },
+  { id: 'lecture_note',   label: 'Lecture Notes' },
+  { id: 'reading',        label: 'Reading' },
+  { id: 'hw_instruction', label: 'HW Instructions' },
+  { id: 'hw_solution',    label: 'HW Solutions' },
+  { id: 'quiz',           label: 'Quiz / Exam' },
+  { id: 'coding_spec',    label: 'Project Spec' },
+  { id: 'code_file',      label: 'Code File' },
+  { id: 'default',        label: 'Other' },
+];
+
+const DOC_TYPE_LABELS = Object.fromEntries(DOC_TYPES.map(d => [d.id, d.label]));
+
 const ACCEPTED_TYPES = new Set([
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -175,14 +189,15 @@ function UploadZone({ onFiles, disabled }) {
 
 // ─── upload item row ──────────────────────────────────────────────────────────
 
-function UploadItemRow({ item, onVisibilityChange, onDismiss }) {
+function UploadItemRow({ item, onVisibilityChange, onDismiss, onTypeSelect }) {
+  const isPendingType = item.status === 'pending_type';
   const isLoading = item.status === 'uploading';
   const isDone    = item.status === 'done';
   const isError   = item.status === 'error';
 
   return (
     <div className={`rounded-lg border bg-white transition-all ${
-      isError ? 'border-red-200 bg-red-50/40' : 'border-gray-200'
+      isError ? 'border-red-200 bg-red-50/40' : isPendingType ? 'border-indigo-200 bg-indigo-50/30' : 'border-gray-200'
     }`}>
       {/* Main row */}
       <div className="flex items-center gap-3 px-3 py-2.5">
@@ -218,6 +233,25 @@ function UploadItemRow({ item, onVisibilityChange, onDismiss }) {
           </button>
         </div>
       </div>
+
+      {/* Doc type selection — shown when waiting for type */}
+      {isPendingType && (
+        <div className="px-3 pb-3">
+          <p className="text-xs text-indigo-600 font-medium mb-2">Select document type to start upload:</p>
+          <div className="flex flex-wrap gap-1.5">
+            {DOC_TYPES.map(dt => (
+              <button
+                key={dt.id}
+                type="button"
+                onClick={() => onTypeSelect(item.id, dt.id)}
+                className="px-2.5 py-1 rounded-full text-xs font-medium border border-indigo-200 text-indigo-700 bg-white hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-colors"
+              >
+                {dt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Loading progress banner — shown while uploading */}
       {isLoading && (
@@ -274,6 +308,8 @@ function MaterialCard({ material, onVisibilityChange, onDelete, isOwner }) {
           {material.name}
         </a>
         <p className="text-xs text-gray-400">
+          {material.doc_type && DOC_TYPE_LABELS[material.doc_type]
+            ? `${DOC_TYPE_LABELS[material.doc_type]} · ` : ''}
           {getMeta(material.file_type).label}
           {material.visibility === 'public' ? ' · Public' : ' · Private'}
         </p>
@@ -419,6 +455,7 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
           filename: item.file.name,
           file_type: item.file.type,
           visibility: 'private',
+          doc_type: item.docType || null,
         }),
       });
       if (!r1.ok) throw new Error('Failed to get upload URL');
@@ -442,33 +479,41 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
           filename: item.file.name,
           file_type: item.file.type,
           visibility: 'private',
+          doc_type: item.docType || null,
         }),
       });
       if (!r3.ok) throw new Error('Upload confirmation failed');
       const { material } = await r3.json();
 
       update({ status: 'done', materialId: material.id, isPublic: false, visibilityUpdating: false });
+      await fetchMaterials();
+      setUploadItems(prev => prev.filter(i => i.status !== 'done'));
     } catch (e) {
       update({ status: 'error', error: e.message });
     }
-  }, [courseId, sessionToken]);
+  }, [courseId, sessionToken, fetchMaterials]);
 
-  // ── queue files in batches of 3 ──────────────────────────────────────────
-  const handleFiles = useCallback(async (files) => {
+  // ── queue files — enter pending_type state, wait for doc type selection ──
+  const handleFiles = useCallback((files) => {
     const items = files.map(f => ({
-      id: uid(), file: f, status: 'queued',
-      materialId: null, isPublic: false,
+      id: uid(), file: f, status: 'pending_type',
+      docType: null, materialId: null, isPublic: false,
       visibilityUpdating: false, error: null,
     }));
     setUploadItems(prev => [...prev, ...items]);
+  }, []);
 
-    for (let i = 0; i < items.length; i += 3) {
-      await Promise.all(items.slice(i, i + 3).map(uploadOne));
-    }
-    await fetchMaterials();
-    // Files now appear in the grid — clear them from the upload list
-    setUploadItems(prev => prev.filter(i => i.status !== 'done'));
-  }, [uploadOne, fetchMaterials]);
+  // ── doc type selected — set type and start upload for that item ───────────
+  const handleTypeSelect = useCallback((id, docType) => {
+    setUploadItems(prev => prev.map(i => i.id === id ? { ...i, docType } : i));
+    setUploadItems(prev => {
+      const item = prev.find(i => i.id === id);
+      if (item) {
+        uploadOne({ ...item, docType });
+      }
+      return prev;
+    });
+  }, [uploadOne]);
 
   // ── visibility toggle for upload items ───────────────────────────────────
   const handleUploadItemVisibility = useCallback(async (id, isPublic) => {
@@ -536,6 +581,7 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
 
   const dismissItem = (id) => setUploadItems(prev => prev.filter(i => i.id !== id));
 
+  const pendingTypeItems = uploadItems.filter(i => i.status === 'pending_type');
   const activeUploads    = uploadItems.filter(i => i.status === 'uploading');
   const completedUploads = uploadItems.filter(i => i.status === 'done' || i.status === 'error');
 
@@ -555,6 +601,22 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
           disabled={false}
         />
 
+        {/* Pending type selection */}
+        {pendingTypeItems.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Select Type</p>
+            {pendingTypeItems.map(item => (
+              <UploadItemRow
+                key={item.id}
+                item={item}
+                onVisibilityChange={handleUploadItemVisibility}
+                onDismiss={dismissItem}
+                onTypeSelect={handleTypeSelect}
+              />
+            ))}
+          </div>
+        )}
+
         {/* Active upload queue */}
         {activeUploads.length > 0 && (
           <div className="space-y-2">
@@ -565,6 +627,7 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
                 item={item}
                 onVisibilityChange={handleUploadItemVisibility}
                 onDismiss={dismissItem}
+                onTypeSelect={handleTypeSelect}
               />
             ))}
           </div>
@@ -582,6 +645,7 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
                 item={item}
                 onVisibilityChange={handleUploadItemVisibility}
                 onDismiss={dismissItem}
+                onTypeSelect={handleTypeSelect}
               />
             ))}
           </div>

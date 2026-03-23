@@ -48,11 +48,18 @@ def _format_context(chunks: list) -> str:
         return "No relevant course material was found for this query."
     parts = []
     for i, c in enumerate(chunks, 1):
-        header = f"[{i}] (type={c['chunk_type']}"
+        header = f"[{i}] ({c.get('source_type', c['chunk_type'])}"
+        if c.get('section_title'):
+            header += f", section: {c['section_title']}"
         if c.get('page_number'):
             header += f", page {c['page_number']}"
+        if c.get('week'):
+            header += f", week {c['week']}"
         header += f", similarity={c['similarity']:.3f})"
-        parts.append(f"{header}\n{c['chunk_text']}")
+        body = c['chunk_text']
+        if c.get('linked_context'):
+            body += f"\n\n[Related context: {c['linked_context']['chunk_text']}]"
+        parts.append(f"{header}\n{body}")
     return "\n\n---\n\n".join(parts)
 
 
