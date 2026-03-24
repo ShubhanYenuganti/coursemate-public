@@ -49,11 +49,14 @@ SYSTEM_PROMPT = (
     "**Math**: Wrap all mathematical expressions in LaTeX delimiters: "
     "$...$ for inline math and $$...$$ for display/block equations.\n\n"
     "If the materials don't contain enough information to answer fully, say so clearly.\n\n"
-    "**Tool use**: Always call `search_materials` first. If the retrieved course material "
-    "provides a complete, sufficiently detailed answer, stop there. If the material is thin, "
-    "incomplete, or leaves important aspects unexplained, call `web_search` to fill the gaps. "
-    "Never use `web_search` as a replacement for `search_materials`; use it only to supplement "
-    "when the course material alone isn't enough. "
+    "**Tool use**: Always call `search_materials` first. After reviewing the results, ask: "
+    "can I give a complete, specific, and accurate answer from these materials alone? "
+    "If there is any doubt — the material is vague, missing key details, doesn't directly "
+    "address the question, or the question involves implementation specifics, external libraries, "
+    "or concepts not well-covered — call `web_search` immediately. Prefer calling `web_search` "
+    "over giving a partial or hedged answer. Never use `web_search` as a first resort before "
+    "`search_materials`, but default to calling it whenever the course material leaves anything "
+    "unexplained or underspecified. "
     "If `rerank_results` is available, call it after `search_materials` when the results seem "
     "noisy or loosely related to the query — pass the chunk_ids from the search result and the "
     "same query. Skip reranking when results are already clearly relevant."
@@ -539,7 +542,7 @@ def run_agent_openai(
                 "type": "function",
                 "function": {
                     "name": "web_search",
-                    "description": "Search the web for current or external information not found in course materials.",
+                    "description": "Search the web for information not fully covered by course materials. Use this whenever search_materials results are vague, incomplete, or don't directly answer the question — especially for implementation details, API usage, external libraries, or concepts that need more depth.",
                     "parameters": {
                         "type": "object",
                         "properties": {
