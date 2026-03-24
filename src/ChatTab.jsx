@@ -1369,7 +1369,12 @@ export default function ChatTab({ course, userData, sessionToken }) {
         });
         setChats((prev) => prev.map((c) =>
           c.id === chatId
-            ? { ...c, last_message_at: evt.assistant_message?.created_at, message_count: (c.message_count || 0) + 2 }
+            ? {
+                ...c,
+                last_message_at: evt.assistant_message?.created_at,
+                message_count: (c.message_count || 0) + 2,
+                ...(evt.suggested_title ? { title: evt.suggested_title } : {}),
+              }
             : c
         ));
         setSending(false);
@@ -1404,7 +1409,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
 
       // Create a chat thread if none exists or if this is the optimistic temp entry
       if (!chatId || chatId === '__new__') {
-        const title = text.slice(0, 80);
+        const title = 'New Chat';
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: {
@@ -1556,7 +1561,12 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 });
                 setChats((prev) => prev.map((c) =>
                   c.id === target.chat_id
-                    ? { ...c, last_message_at: evt.assistant_message?.created_at, message_count: nextMessages.length }
+                    ? {
+                        ...c,
+                        last_message_at: evt.assistant_message?.created_at,
+                        message_count: nextMessages.length,
+                        ...(evt.suggested_title ? { title: evt.suggested_title } : {}),
+                      }
                     : c
                 ));
                 setSending(false);
@@ -1739,6 +1749,13 @@ export default function ChatTab({ course, userData, sessionToken }) {
                   const keptIds = new Set(nextMessages.map((m) => m.id));
                   return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
                 });
+                if (evt.suggested_title) {
+                  setChats((prev) => prev.map((c) =>
+                    c.id === (userMsg.chat_id || assistantMsg.chat_id)
+                      ? { ...c, title: evt.suggested_title }
+                      : c
+                  ));
+                }
                 setSending(false);
                 sendingRef.current = false;
               } else if (evt.type === 'error') {

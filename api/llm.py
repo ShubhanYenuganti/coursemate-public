@@ -1088,6 +1088,88 @@ def run_agent_openai(
     return final_text, grounding_refs, tool_trace, metadata
 
 
+_TITLE_MODEL = "gpt-4o-mini"
+_TITLE_URL = "https://api.openai.com/v1/chat/completions"
+
+
+def suggest_chat_title(
+    conn,
+    user_id: int,
+    chat_id: int,
+    current_title: str,
+) -> str | None:
+    """
+    Ask GPT-4o-mini to suggest a refined title for the chat based on recent messages.
+    Returns a title string (max 80 chars) or None on any failure.
+    """
+    try:
+        api_key = _get_api_key(conn, user_id, "openai")
+    except Exception:
+        return None
+
+    if not api_key:
+        return None
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT role, content
+            FROM chat_messages
+            WHERE chat_id = %s
+              AND is_deleted = FALSE
+            ORDER BY message_index DESC
+            LIMIT 6
+            """,
+            (chat_id,),
+        )
+        rows = cursor.fetchall()
+        cursor.close()
+    except Exception:
+        return None
+
+    turns = [
+        {"role": row["role"], "content": (row["content"] or "")[:300]}
+        for row in reversed(rows)
+    ]
+
+    system_prompt = (
+        "You suggest short chat titles. Given the current title and recent conversation turns, "
+        "return a refined title that better reflects the conversation topic. "
+        "Rules: max 80 characters, no quotes, no markdown, minimal alteration from the current "
+        "title unless the topic has clearly shifted. Return strict JSON: {\"title\": \"...\"}."
+    )
+    payload = {
+        "current_title": current_title or "New Chat",
+        "turns": turns,
+    }
+
+    try:
+        resp = requests.post(
+            _TITLE_URL,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": _TITLE_MODEL,
+                "response_format": {"type": "json_object"},
+                "temperature": 0,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": json.dumps(payload)},
+                ],
+            },
+            timeout=8,
+        )
+        resp.raise_for_status()
+        parsed = json.loads(resp.json()["choices"][0]["message"]["content"])
+        title = str(parsed.get("title", "")).strip()
+        if title:
+            return title[:80]
+    except Exception:
+        pass
+
+    return None
+
+
 _PROVIDERS = {
     "claude": _synthesize_claude,
     "openai": _synthesize_openai,

@@ -70,6 +70,50 @@ def _next_message_index(conn, chat_id):
     return row['next_idx']
 
 
+def _should_suggest_title(user_msg_index: int) -> bool:
+    """Fire on exchange 1, then every 4th exchange: 1, 5, 9, 13, …"""
+    exchange = (user_msg_index // 2) + 1
+    return exchange == 1 or (exchange - 1) % 4 == 0
+
+
+def _maybe_suggest_title(conn, chat, user_id: int, user_msg_index: int):
+    """
+    If auto-titling is active and cadence fires, call GPT-4o-mini for a title suggestion,
+    persist it to the DB, and return the new title. Returns None otherwise.
+    """
+    if not chat.get("title_auto", True):
+        return None
+    if not _should_suggest_title(user_msg_index):
+        return None
+
+    try:
+        from .llm import suggest_chat_title
+    except ImportError:
+        from llm import suggest_chat_title
+
+    suggested = suggest_chat_title(
+        conn=conn,
+        user_id=user_id,
+        chat_id=chat["id"],
+        current_title=chat.get("title") or "New Chat",
+    )
+    if not suggested:
+        return None
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE chats SET title = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+            (suggested, chat["id"]),
+        )
+        cursor.close()
+    except Exception:
+        logger.exception("auto_title_update_failed", extra={"chat_id": chat["id"]})
+        return None
+
+    return suggested
+
+
 def _parse_reply_history(raw):
     """Return (back_list, forward_list) from a reply_history value.
 
@@ -475,9 +519,9 @@ class handler(BaseHTTPRequestHandler):
 
             cursor = conn.cursor()
             cursor.execute("""
-                UPDATE chats SET title = %s, updated_at = CURRENT_TIMESTAMP
+                UPDATE chats SET title = %s, title_auto = FALSE, updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
-                RETURNING id, course_id, user_id, title, visibility, message_count,
+                RETURNING id, course_id, user_id, title, title_auto, visibility, message_count,
                           last_message_at, created_at, updated_at, is_archived
             """, (title, chat_id))
             updated = cursor.fetchone()
@@ -727,6 +771,8 @@ class handler(BaseHTTPRequestHandler):
             cursor.close()
             logger.info("chat_message_embedding_metrics", extra=metrics)
 
+            suggested_title = _maybe_suggest_title(conn, chat, user['id'], next_idx)
+
         serialized_chunks = [
             {
                 "chunk_text":  c.get("chunk_text", ""),
@@ -742,6 +788,7 @@ class handler(BaseHTTPRequestHandler):
             "user_message": user_message,
             "assistant_message": assistant_message,
             "chunks": serialized_chunks,
+            "suggested_title": suggested_title,
         })
 
     def _stream_send_message(self, user, data):
@@ -889,10 +936,13 @@ class handler(BaseHTTPRequestHandler):
                     logger.exception("Failed to persist assistant message embedding (stream_send)")
             cursor.close()
 
+            suggested_title = _maybe_suggest_title(conn, chat, user['id'], next_idx)
+
             send_sse_event(self, {
                 "type": "done",
                 "user_message": dict(user_message),
                 "assistant_message": dict(assistant_message),
+                "suggested_title": suggested_title,
             })
 
     def _stream_edit_message(self, user, data):
@@ -1059,6 +1109,7 @@ class handler(BaseHTTPRequestHandler):
                     return
                 raise
 
+            suggested_title = None
             try:
                 # Build v2 reply_history: push displaced assistant + old user query to back, clear forward.
                 # Store original_msg_id so revert can look up retrieved_chunk_ids directly from the DB row.
@@ -1154,6 +1205,7 @@ class handler(BaseHTTPRequestHandler):
                             "chat_id": msg['chat_id'],
                             "message_id": assistant_message.get('id'),
                         })
+                suggested_title = _maybe_suggest_title(conn, chat, user['id'], msg['message_index'])
             except Exception as e:
                 if is_streaming:
                     send_sse_event(self, {"type": "error", "message": str(e)})
@@ -1178,12 +1230,14 @@ class handler(BaseHTTPRequestHandler):
                 "type": "done",
                 "user_message": dict(edited_user_message),
                 "assistant_message": dict(assistant_message),
+                "suggested_title": suggested_title,
             })
         else:
             send_json(self, 200, {
                 "user_message": edited_user_message,
                 "assistant_message": assistant_message,
                 "chunks": serialized_chunks,
+                "suggested_title": suggested_title,
             })
 
     def _revert_message(self, user, data):
@@ -1710,6 +1764,7 @@ class handler(BaseHTTPRequestHandler):
                     return
                 raise
 
+            suggested_title = None
             try:
                 # Displace current response to back, clear forward (new branch).
                 back, _ = _parse_reply_history(user_msg.get('reply_history'))
@@ -1774,6 +1829,7 @@ class handler(BaseHTTPRequestHandler):
                     )
                 )
                 new_assistant = cursor.fetchone()
+                suggested_title = _maybe_suggest_title(conn, chat, user['id'], user_msg['message_index'])
             except Exception as e:
                 if is_streaming:
                     send_sse_event(self, {"type": "error", "message": str(e)})
@@ -1787,11 +1843,13 @@ class handler(BaseHTTPRequestHandler):
                 "type": "done",
                 "user_message": dict(updated_user_msg),
                 "assistant_message": dict(new_assistant),
+                "suggested_title": suggested_title,
             })
         else:
             send_json(self, 200, {
                 "user_message": updated_user_msg,
                 "assistant_message": new_assistant,
+                "suggested_title": suggested_title,
             })
 
     def _delete_message(self, user, data):
