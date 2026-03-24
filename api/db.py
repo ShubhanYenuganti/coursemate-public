@@ -172,6 +172,7 @@ def init_db():
                 response_time_ms INTEGER,
                 finish_reason VARCHAR(50),
                 grounding_meta JSONB NOT NULL DEFAULT '{}',
+                tool_trace JSONB NOT NULL DEFAULT '[]',
                 message_index INTEGER NOT NULL,
                 is_edited BOOLEAN NOT NULL DEFAULT FALSE,
                 edited_at TIMESTAMP,
@@ -362,6 +363,11 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_messages_embedding
                 ON chat_messages USING ivfflat (message_embedding vector_cosine_ops)
                 WITH (lists = 50);
+        """)
+
+        # U6 migration: tool trace persistence
+        cursor.execute("""
+            ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS tool_trace JSONB NOT NULL DEFAULT '[]';
         """)
 
         # Phase 1 migration: web search cache (Phase 2)

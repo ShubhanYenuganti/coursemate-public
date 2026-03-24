@@ -757,6 +757,38 @@ function MessageBubble({
   );
 }
 
+// ─── streaming status bubble ──────────────────────────────────────────────────
+
+function StreamingStatusBubble({ status }) {
+  function getLabel() {
+    if (!status) return '';
+    switch (status.phase) {
+      case 'loop_start':
+        return `Refining... (${status.iteration}/${status.maxIteration} iterations)`;
+      case 'sources_found':
+        return status.detail ? `Gathering sources... (${status.detail})` : 'Gathering sources...';
+      case 'web_search_start':
+        return 'Reading from web to augment answer...';
+      case 'web_result':
+        return status.detail ? `Found: ${status.detail}` : 'Found web result';
+      case 'rerank':
+        return status.detail ? `Re-ranking results... (${status.detail})` : 'Re-ranking results...';
+      default:
+        return 'Searching course materials...';
+    }
+  }
+
+  return (
+    <div className="flex items-start">
+      <div className="w-10 flex-shrink-0" />
+      <div className="flex items-center gap-2 pt-1.5 px-3 py-2 rounded-xl bg-indigo-50 border border-indigo-100 max-w-sm">
+        <span className="flex-shrink-0 w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+        <span className="text-xs text-indigo-600 truncate">{getLabel()}</span>
+      </div>
+    </div>
+  );
+}
+
 // ─── main component ───────────────────────────────────────────────────────────
 
 export default function ChatTab({ course, userData, sessionToken }) {
@@ -769,6 +801,8 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  // null = idle; { phase, detail, iteration, maxIteration } = streaming in progress
+  const [streamingStatus, setStreamingStatus] = useState(null);
   const [selectedModel, setSelectedModel] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
@@ -1125,6 +1159,56 @@ export default function ChatTab({ course, userData, sessionToken }) {
     setSidebarWidth(0);
   }
 
+  function handleStreamEvent(evt, { tempId, chatId, setActiveConvFn }) {
+    switch (evt.type) {
+      case 'user_message':
+        setMessages((prev) => [...prev.filter((m) => m.id !== tempId), evt.message]);
+        break;
+      case 'loop_start':
+        setStreamingStatus({ phase: 'loop_start', detail: '', iteration: evt.iteration, maxIteration: evt.max });
+        break;
+      case 'sources_found': {
+        const top = (evt.chunks || [])[0];
+        setStreamingStatus({ phase: 'sources_found', detail: top ? `page ${top.page} — ${top.snippet}` : '', iteration: null, maxIteration: null });
+        break;
+      }
+      case 'web_search_start':
+        setStreamingStatus({ phase: 'web_search_start', detail: evt.query, iteration: null, maxIteration: null });
+        break;
+      case 'web_result': {
+        let host = evt.url;
+        try { host = new URL(evt.url).hostname; } catch {}
+        setStreamingStatus({ phase: 'web_result', detail: `${(evt.excerpt || '').slice(0, 120)}... from ${host}`, iteration: null, maxIteration: null });
+        break;
+      }
+      case 'rerank':
+        setStreamingStatus({ phase: 'rerank', detail: `${evt.input_count} → ${evt.output_count}`, iteration: null, maxIteration: null });
+        break;
+      case 'done':
+        setStreamingStatus(null);
+        setMessages((prev) => {
+          const withoutTemp = prev.filter((m) => m.id !== tempId && m.id !== evt.user_message?.id);
+          return [...withoutTemp, evt.user_message, evt.assistant_message];
+        });
+        setChats((prev) => prev.map((c) =>
+          c.id === chatId
+            ? { ...c, last_message_at: evt.assistant_message?.created_at, message_count: (c.message_count || 0) + 2 }
+            : c
+        ));
+        setSending(false);
+        sendingRef.current = false;
+        break;
+      case 'error':
+        setStreamingStatus(null);
+        setSending(false);
+        sendingRef.current = false;
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        break;
+      default:
+        break;
+    }
+  }
+
   async function handleSend() {
     const text = input.trim();
     if (!text || sending || !selectedModel) return;
@@ -1132,6 +1216,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setSending(true);
     sendingRef.current = true;
+    setStreamingStatus({ phase: 'init', detail: '', iteration: null, maxIteration: null });
 
     const tempId = Date.now();
     const tempUserMsg = { id: tempId, role: 'user', content: text };
@@ -1155,7 +1240,6 @@ export default function ChatTab({ course, userData, sessionToken }) {
         if (!res.ok) throw new Error(chatData.error || 'Failed to create chat');
         chatId = chatData.chat.id;
         setActiveConv(chatId);
-        // Replace the optimistic __new__ entry (or prepend if there wasn't one)
         setChats((prev) => [chatData.chat, ...prev.filter((c) => c.id !== '__new__')]);
       }
 
@@ -1163,7 +1247,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
         ? materials.map((m) => m.id)
         : Array.from(selectedMaterials);
 
-      const res = await fetch('/api/chat', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${sessionToken}`,
@@ -1171,7 +1255,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
         },
         body: JSON.stringify({
           resource: 'message',
-          action: 'send',
+          action: 'stream_send',
           chat_id: chatId,
           content: text,
           context_material_ids: contextIds,
@@ -1179,25 +1263,33 @@ export default function ChatTab({ course, userData, sessionToken }) {
           ai_model: selectedModelId || selectedModel,
         }),
       });
-      const msgData = await res.json();
-      if (!res.ok) throw new Error(msgData.error || 'Failed to send message');
 
-      setMessages((prev) => [
-        ...prev.filter((m) => m.id !== tempId),
-        msgData.user_message,
-        msgData.assistant_message,
-      ]);
-      if (msgData.chunks?.length) {
-        setMsgChunks((prev) => ({ ...prev, [msgData.assistant_message.id]: msgData.chunks }));
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to send message');
       }
-      setChats((prev) => prev.map((c) =>
-        c.id === chatId
-          ? { ...c, last_message_at: msgData.assistant_message.created_at, message_count: (c.message_count || 0) + 2 }
-          : c
-      ));
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
+        for (const part of parts) {
+          if (!part.startsWith('data: ')) continue;
+          try {
+            const evt = JSON.parse(part.slice(6));
+            handleStreamEvent(evt, { tempId, chatId });
+          } catch {}
+        }
+      }
     } catch {
+      setStreamingStatus(null);
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
-    } finally {
       setSending(false);
       sendingRef.current = false;
     }
@@ -1698,7 +1790,10 @@ export default function ChatTab({ course, userData, sessionToken }) {
               );
             })
           )}
-          {sending && (
+          {sending && streamingStatus && (
+            <StreamingStatusBubble status={streamingStatus} />
+          )}
+          {sending && !streamingStatus && (
             <div className="flex items-start">
               <div className="w-10 flex-shrink-0" />
               <div className="flex items-center gap-1 pt-2">

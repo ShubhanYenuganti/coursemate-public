@@ -21,14 +21,14 @@ from urllib.parse import urlparse, parse_qs
 from uuid import uuid4
 
 try:
-    from .middleware import send_json, handle_options, authenticate_request, sanitize_string, check_rate_limit
+    from .middleware import send_json, send_sse_headers, send_sse_event, handle_options, authenticate_request, sanitize_string, check_rate_limit
     from .models import User
     from .courses import Course
     from .db import get_db
     from .rag import retrieve_chunks
     from .llm import synthesize
 except ImportError:
-    from middleware import send_json, handle_options, authenticate_request, sanitize_string, check_rate_limit
+    from middleware import send_json, send_sse_headers, send_sse_event, handle_options, authenticate_request, sanitize_string, check_rate_limit
     from models import User
     from courses import Course
     from db import get_db
@@ -179,6 +179,11 @@ class handler(BaseHTTPRequestHandler):
                     send_json(self, 429, {"error": "Rate limit exceeded"})
                     return
                 self._send_message(user, data)
+            elif action == 'stream_send':
+                if not check_rate_limit(self, max_rpm=10):
+                    send_json(self, 429, {"error": "Rate limit exceeded"})
+                    return
+                self._stream_send_message(user, data)
             elif action == 'edit':
                 if not check_rate_limit(self, max_rpm=10):
                     send_json(self, 429, {"error": "Rate limit exceeded"})
@@ -635,7 +640,7 @@ class handler(BaseHTTPRequestHandler):
             )
 
             try:
-                assistant_content, retrieved_ids, grounding_meta = synthesize(
+                assistant_content, retrieved_ids, grounding_meta, tool_trace = synthesize(
                     conn,
                     user['id'],
                     ai_provider,
@@ -679,9 +684,9 @@ class handler(BaseHTTPRequestHandler):
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content,
                      ai_provider, ai_model, context_material_ids,
-                     grounding_meta,
+                     grounding_meta, tool_trace,
                      retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at
@@ -690,6 +695,7 @@ class handler(BaseHTTPRequestHandler):
                 ai_provider, ai_model,
                 json.dumps(context_material_ids),
                 json.dumps(grounding_meta or {}),
+                json.dumps(tool_trace or []),
                 json.dumps(retrieved_ids),
                 next_idx + 1,
             ))
@@ -729,6 +735,157 @@ class handler(BaseHTTPRequestHandler):
             "assistant_message": assistant_message,
             "chunks": serialized_chunks,
         })
+
+    def _stream_send_message(self, user, data):
+        chat_id = data.get('chat_id')
+        content = sanitize_string(data.get('content', '') or '', max_length=10000)
+        context_material_ids = data.get('context_material_ids') or []
+        ai_provider = data.get('ai_provider') or DEFAULT_AI_PROVIDER
+        ai_model = data.get('ai_model')
+        if ai_provider == "openai" and not ai_model:
+            ai_model = DEFAULT_AI_MODEL
+        temperature = data.get('temperature')
+        max_tokens = data.get('max_tokens')
+
+        if not isinstance(chat_id, int):
+            send_json(self, 400, {"error": "chat_id is required"})
+            return
+        if not content:
+            send_json(self, 400, {"error": "content is required"})
+            return
+        if ai_provider not in ('gemini', 'openai', 'claude'):
+            send_json(self, 400, {"error": "ai_provider must be one of: gemini, openai, claude"})
+            return
+        if not ai_model:
+            send_json(self, 400, {"error": "ai_model is required"})
+            return
+        if not isinstance(context_material_ids, list):
+            send_json(self, 400, {"error": "context_material_ids must be a list"})
+            return
+
+        with get_db() as conn:
+            chat = _get_chat(conn, chat_id)
+            if not chat:
+                send_json(self, 404, {"error": "Chat not found"})
+                return
+            if chat['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Access denied to this chat"})
+                return
+
+            if context_material_ids:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id FROM materials
+                    WHERE id = ANY(%s::int[])
+                      AND course_id = %s
+                """, (context_material_ids, chat['course_id']))
+                valid_ids = {row['id'] for row in cursor.fetchall()}
+                cursor.close()
+                invalid = [mid for mid in context_material_ids if mid not in valid_ids]
+                if invalid:
+                    send_json(self, 400, {"error": f"Invalid material IDs for this course: {invalid}"})
+                    return
+
+            next_idx = _next_message_index(conn, chat_id)
+
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO chat_messages
+                    (chat_id, course_id, user_id, role, content,
+                     ai_provider, ai_model, temperature, max_tokens,
+                     context_material_ids, message_index)
+                VALUES (%s, %s, %s, 'user', %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, chat_id, role, content, context_material_ids,
+                          ai_provider, ai_model, message_index, created_at
+            """, (
+                chat_id, chat['course_id'], user['id'], content,
+                ai_provider, ai_model, temperature, max_tokens,
+                json.dumps(context_material_ids), next_idx,
+            ))
+            user_message = cursor.fetchone()
+            if embed_text_via_lambda and write_chat_message_embedding:
+                try:
+                    user_embedding = embed_text_via_lambda(content)
+                    if user_embedding:
+                        write_chat_message_embedding(conn, user_message['id'], user_embedding)
+                except Exception:
+                    logger.exception("Failed to persist user message embedding (stream_send)")
+
+            # All validation passed — now commit to SSE headers
+            send_sse_headers(self)
+            send_sse_event(self, {"type": "user_message", "message": dict(user_message)})
+
+            chunks = retrieve_chunks(conn, content, context_material_ids)
+            request_id = f"stream-{uuid4().hex[:10]}"
+            logger.info(
+                "chat_synthesize_start",
+                extra={
+                    "request_id": request_id,
+                    "action": "stream_send",
+                    "chat_id": chat_id,
+                    "user_id": user["id"],
+                    "ai_provider": ai_provider,
+                    "ai_model": ai_model,
+                    "agentic_enabled": _is_agentic_request(ai_provider, ai_model),
+                    "retrieved_seed_chunks": len(chunks),
+                    "context_material_count": len(context_material_ids),
+                },
+            )
+
+            def on_event(evt):
+                send_sse_event(self, evt)
+
+            try:
+                assistant_content, retrieved_ids, grounding_meta, tool_trace = synthesize(
+                    conn,
+                    user['id'],
+                    ai_provider,
+                    ai_model,
+                    content,
+                    chunks,
+                    chat_id=chat_id,
+                    context_material_ids=context_material_ids,
+                    on_event=on_event,
+                )
+            except Exception as e:
+                send_sse_event(self, {"type": "error", "message": str(e)})
+                cursor.close()
+                return
+
+            cursor.execute("""
+                INSERT INTO chat_messages
+                    (chat_id, course_id, user_id, parent_message_id, role, content,
+                     ai_provider, ai_model, context_material_ids,
+                     grounding_meta, tool_trace,
+                     retrieved_chunk_ids, message_index)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, chat_id, role, content, ai_provider, ai_model,
+                          retrieved_chunk_ids, context_token_count, response_token_count,
+                          response_time_ms, finish_reason, message_index, created_at
+            """, (
+                chat_id, chat['course_id'], user['id'], user_message['id'], assistant_content,
+                ai_provider, ai_model,
+                json.dumps(context_material_ids),
+                json.dumps(grounding_meta or {}),
+                json.dumps(tool_trace or []),
+                json.dumps(retrieved_ids),
+                next_idx + 1,
+            ))
+            assistant_message = cursor.fetchone()
+            if embed_text_via_lambda and write_chat_message_embedding:
+                try:
+                    assistant_embedding = embed_text_via_lambda(assistant_content)
+                    if assistant_embedding:
+                        write_chat_message_embedding(conn, assistant_message['id'], assistant_embedding)
+                except Exception:
+                    logger.exception("Failed to persist assistant message embedding (stream_send)")
+            cursor.close()
+
+            send_sse_event(self, {
+                "type": "done",
+                "user_message": dict(user_message),
+                "assistant_message": dict(assistant_message),
+            })
 
     def _edit_message(self, user, data):
         message_id = data.get('message_id')
@@ -841,7 +998,7 @@ class handler(BaseHTTPRequestHandler):
             )
 
             try:
-                assistant_content, retrieved_ids, grounding_meta = synthesize(
+                assistant_content, retrieved_ids, grounding_meta, tool_trace = synthesize(
                     conn,
                     user['id'],
                     ai_provider,
@@ -946,9 +1103,9 @@ class handler(BaseHTTPRequestHandler):
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content,
                      ai_provider, ai_model, context_material_ids,
-                     grounding_meta,
+                     grounding_meta, tool_trace,
                      retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at
@@ -962,6 +1119,7 @@ class handler(BaseHTTPRequestHandler):
                 ai_model,
                 json.dumps(context_material_ids),
                 json.dumps(grounding_meta or {}),
+                json.dumps(tool_trace or []),
                 json.dumps(retrieved_ids),
                 next_idx,
             ))
@@ -1430,7 +1588,7 @@ class handler(BaseHTTPRequestHandler):
             )
 
             try:
-                assistant_content, retrieved_ids, grounding_meta = synthesize(
+                assistant_content, retrieved_ids, grounding_meta, tool_trace = synthesize(
                     conn,
                     user['id'],
                     ai_provider,
@@ -1514,9 +1672,9 @@ class handler(BaseHTTPRequestHandler):
                 """
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content,
-                     ai_provider, ai_model, context_material_ids, grounding_meta,
+                     ai_provider, ai_model, context_material_ids, grounding_meta, tool_trace,
                      retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, ai_provider, ai_model, retrieved_chunk_ids,
                           message_index, created_at
                 """,
@@ -1530,6 +1688,7 @@ class handler(BaseHTTPRequestHandler):
                     ai_model,
                     json.dumps(context_material_ids),
                     json.dumps(grounding_meta or {}),
+                    json.dumps(tool_trace or []),
                     json.dumps(retrieved_ids),
                     next_idx,
                 )

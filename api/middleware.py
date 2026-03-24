@@ -33,6 +33,24 @@ def send_json(handler, status_code, body):
     handler.wfile.write(payload)
 
 
+def send_sse_headers(handler):
+    """Send HTTP headers for a Server-Sent Events response."""
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/event-stream")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("X-Accel-Buffering", "no")
+    for key, value in get_cors_headers().items():
+        handler.send_header(key, value)
+    handler.end_headers()
+
+
+def send_sse_event(handler, data: dict):
+    """Write a single SSE data frame and flush."""
+    payload = "data: " + json.dumps(data, default=str) + "\n\n"
+    handler.wfile.write(payload.encode("utf-8"))
+    handler.wfile.flush()
+
+
 def handle_options(handler):
     """Handle CORS preflight requests."""
     handler.send_response(204)

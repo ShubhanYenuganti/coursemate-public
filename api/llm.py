@@ -25,9 +25,9 @@ try:
 except ImportError:
     from crypto_utils import decrypt_api_key
 try:
-    from .tools import execute_search_materials, pull_grounding_context, resolve_references_llm
+    from .tools import execute_rerank, execute_search_materials, execute_web_search, pull_grounding_context, resolve_references_llm
 except ImportError:
-    from tools import execute_search_materials, pull_grounding_context, resolve_references_llm
+    from tools import execute_rerank, execute_search_materials, execute_web_search, pull_grounding_context, resolve_references_llm
 
 SYSTEM_PROMPT = (
     "You are a helpful course assistant. Answer the user's question using the "
@@ -48,7 +48,15 @@ SYSTEM_PROMPT = (
     "- Headers (## or ###) to organise longer multi-section responses.\n\n"
     "**Math**: Wrap all mathematical expressions in LaTeX delimiters: "
     "$...$ for inline math and $$...$$ for display/block equations.\n\n"
-    "If the materials don't contain enough information to answer fully, say so clearly."
+    "If the materials don't contain enough information to answer fully, say so clearly.\n\n"
+    "**Tool use**: Always call `search_materials` first. If the retrieved course material "
+    "provides a complete, sufficiently detailed answer, stop there. If the material is thin, "
+    "incomplete, or leaves important aspects unexplained, call `web_search` to fill the gaps. "
+    "Never use `web_search` as a replacement for `search_materials`; use it only to supplement "
+    "when the course material alone isn't enough. "
+    "If `rerank_results` is available, call it after `search_materials` when the results seem "
+    "noisy or loosely related to the query — pass the chunk_ids from the search result and the "
+    "same query. Skip reranking when results are already clearly relevant."
 )
 
 _TIMEOUT = 60  # seconds
@@ -371,6 +379,22 @@ def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str
     return response.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 
+def _emit_web_results(on_event, text: str, max_results: int = 3):
+    """Parse web search result text and emit one web_result event per result (up to max_results)."""
+    blocks = re.split(r'\[W\d+\]', text)
+    emitted = 0
+    for block in blocks[1:]:  # skip header block
+        if emitted >= max_results:
+            break
+        url_match = re.search(r'url=(\S+)', block)
+        if not url_match:
+            continue
+        url = url_match.group(1)
+        content = block[url_match.end():].strip()[:200]
+        on_event({"type": "web_result", "url": url, "excerpt": content})
+        emitted += 1
+
+
 def run_agent_openai(
     conn,
     user_message: str,
@@ -379,6 +403,7 @@ def run_agent_openai(
     chunks: list,
     chat_id: int | None,
     context_material_ids: list,
+    on_event=None,
 ) -> tuple[str, list, list, dict]:
     debug = _is_enabled("AGENTIC_LOOP_DEBUG", default=False)
     resolver_enabled = _is_enabled("GROUNDING_RESOLVER_ENABLED", default=True)
@@ -508,6 +533,50 @@ def run_agent_openai(
             },
         }
     ]
+    if _is_enabled("AGENTIC_WEB_SEARCH_ENABLED"):
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "Search the web for current or external information not found in course materials.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                        },
+                        "required": ["query"],
+                    },
+                },
+            }
+        )
+    if _is_enabled("AGENTIC_RERANK_ENABLED"):
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "rerank_results",
+                    "description": (
+                        "Re-rank a set of retrieved chunk IDs by relevance to a query using a neural reranker. "
+                        "Call this after search_materials when the results feel noisy, loosely related, or the query "
+                        "is complex and multi-faceted. Pass the chunk_ids from the prior search call."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "chunk_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Chunk UUIDs to rerank, from a prior search_materials result.",
+                            },
+                            "top_n": {"type": "integer", "default": 5},
+                        },
+                        "required": ["query", "chunk_ids"],
+                    },
+                },
+            }
+        )
 
     max_iterations = _safe_int_env("AGENTIC_MAX_ITERATIONS", MAX_TOOL_ITERATIONS, 1, 8)
     tool_trace = []
@@ -515,6 +584,8 @@ def run_agent_openai(
 
     for iteration in range(1, max_iterations + 1):
         started = time.time()
+        if on_event:
+            on_event({"type": "loop_start", "iteration": iteration, "max": max_iterations})
         if debug:
             logger.info(
                 "agentic_loop_debug",
@@ -611,6 +682,24 @@ def run_agent_openai(
                     anchor_chunk_ids=grounding_refs,
                     resolved_entities=resolved_entities,
                 )
+                if on_event:
+                    found_count = len(result.get("chunk_ids", []))
+                    on_event({"type": "sources_found", "chunks": [], "result_count": found_count})
+            elif name == "web_search":
+                if on_event:
+                    on_event({"type": "web_search_start", "query": args.get("query", "")})
+                result = execute_web_search(conn, args.get("query", ""))
+                if on_event:
+                    _emit_web_results(on_event, result.get("text", ""))
+            elif name == "rerank_results":
+                result = execute_rerank(conn, args.get("query", ""), args.get("chunk_ids", []), args.get("top_n", 5))
+                if on_event:
+                    meta = result.get("meta", {})
+                    on_event({
+                        "type": "rerank",
+                        "input_count": meta.get("input_count", len(args.get("chunk_ids", []))),
+                        "output_count": meta.get("output_count", len(result.get("chunk_ids", []))),
+                    })
             else:
                 result = {
                     "text": f"Unsupported tool: {name}",
@@ -687,6 +776,9 @@ def run_agent_openai(
             )
             verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
 
+    if on_event:
+        on_event({"type": "text", "content": final_text})
+
     if debug:
         logger.info(
             "agentic_loop_debug",
@@ -734,6 +826,7 @@ def synthesize(
     chunks: list,
     chat_id: int | None = None,
     context_material_ids: list | None = None,
+    on_event=None,
 ) -> tuple:
     """
     Synthesize an LLM response using the user's chosen provider and model.
@@ -766,6 +859,7 @@ def synthesize(
             chunks=chunks,
             chat_id=chat_id,
             context_material_ids=material_scope,
+            on_event=on_event,
         )
         logger.info(
             "agentic_loop_trace",
@@ -781,7 +875,7 @@ def synthesize(
                 "repair_invoked": metadata.get("repair_invoked"),
             },
         )
-        return text, grounding_refs, metadata
+        return text, grounding_refs, metadata, tool_trace
 
     context = _format_context(chunks)
     fn = _PROVIDERS[ai_provider]
@@ -798,4 +892,4 @@ def synthesize(
         "repair_invoked": False,
         "carryover_ref_count": 0,
         "fresh_ref_count": len(chunk_ids),
-    }
+    }, []

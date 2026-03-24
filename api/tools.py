@@ -514,12 +514,17 @@ def execute_search_materials(
     }
 
 
-def execute_web_search(_conn, query: str, ttl_seconds: int = 3600) -> dict:
+_TAVILY_URL = "https://api.tavily.com/search"
+
+
+def execute_web_search(conn, query: str, ttl_seconds: int = 3600) -> dict:
     """
-    P0 stub for web search tool. Runtime integration is P1.
+    Web search tool with cache-first logic using web_cache table.
+    Falls back to Tavily API on cache miss.
     """
     enabled = os.environ.get("AGENTIC_WEB_SEARCH_ENABLED", "false").lower() == "true"
     query_hash = hashlib.sha256((query or "").encode("utf-8")).hexdigest()
+
     if not enabled:
         return {
             "text": "Web search is disabled in this environment.",
@@ -527,16 +532,110 @@ def execute_web_search(_conn, query: str, ttl_seconds: int = 3600) -> dict:
             "meta": {"tool": "web_search", "enabled": False, "query_hash": query_hash},
         }
 
+    api_key = os.environ.get("TAVILY_API_KEY", "")
+    if not api_key:
+        return {
+            "text": "Web search unavailable: TAVILY_API_KEY not configured.",
+            "chunk_ids": [],
+            "meta": {"tool": "web_search", "enabled": True, "error": "missing_api_key"},
+        }
+
+    # Cache lookup
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT snippet FROM web_cache
+                WHERE query_hash = %s
+                  AND fetched_at + (ttl_seconds * interval '1 second') > NOW()
+                LIMIT 1
+                """,
+                (query_hash,),
+            )
+            row = cur.fetchone()
+        if row:
+            return {
+                "text": row[0],
+                "chunk_ids": [],
+                "meta": {"tool": "web_search", "query": query, "cache_hit": True},
+            }
+    except Exception:
+        pass  # Cache read failure is non-fatal; proceed to live search
+
+    # Cache miss — call Tavily
+    started = time.time()
+    try:
+        resp = requests.post(
+            _TAVILY_URL,
+            json={
+                "api_key": api_key,
+                "query": query,
+                "search_depth": "basic",
+                "max_results": 5,
+                "include_answer": False,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        return {
+            "text": f"Web search failed: {exc}",
+            "chunk_ids": [],
+            "meta": {"tool": "web_search", "query": query, "error": str(exc)},
+        }
+
+    latency_ms = int((time.time() - started) * 1000)
+    results = data.get("results", [])
+
+    # Format results
+    lines = [f"Web search results for query: '{query}'"]
+    for i, r in enumerate(results, 1):
+        snippet = (r.get("content") or "")[:300]
+        lines.append(f"[W{i}] url={r.get('url', '')}\n{snippet}")
+    result_text = "\n\n".join(lines)
+
+    # Concatenate all snippets for storage (single row per query_hash)
+    stored_snippet = result_text
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO web_cache (query_hash, url, snippet, fetched_at, ttl_seconds)
+                VALUES (%s, %s, %s, NOW(), %s)
+                ON CONFLICT (query_hash) DO UPDATE
+                    SET snippet = EXCLUDED.snippet,
+                        fetched_at = EXCLUDED.fetched_at,
+                        ttl_seconds = EXCLUDED.ttl_seconds
+                """,
+                (query_hash, results[0].get("url", "") if results else "", stored_snippet, ttl_seconds),
+            )
+        conn.commit()
+    except Exception:
+        pass  # Cache write failure is non-fatal
+
     return {
-        "text": "Web search runtime path is not yet implemented.",
+        "text": result_text,
         "chunk_ids": [],
-        "meta": {"tool": "web_search", "enabled": True, "query_hash": query_hash, "ttl_seconds": ttl_seconds},
+        "meta": {
+            "tool": "web_search",
+            "query": query,
+            "result_count": len(results),
+            "latency_ms": latency_ms,
+            "cache_hit": False,
+        },
     }
 
 
-def execute_rerank(_conn, _query: str, chunk_ids: list, top_n: int = 5) -> dict:
+_VOYAGE_RERANK_URL = "https://api.voyageai.com/v1/rerank"
+
+
+def execute_rerank(conn, query: str, chunk_ids: list, top_n: int = 5) -> dict:
     """
-    P0 stub for rerank tool. Runtime integration is P1.
+    Rerank candidate chunks using Voyage rerank-2 model.
+    Accepts chunk UUIDs from a prior search_materials call, fetches their text,
+    calls Voyage rerank, and returns the top_n chunks in relevance order.
     """
     enabled = os.environ.get("AGENTIC_RERANK_ENABLED", "false").lower() == "true"
     if not enabled:
@@ -545,10 +644,100 @@ def execute_rerank(_conn, _query: str, chunk_ids: list, top_n: int = 5) -> dict:
             "chunk_ids": chunk_ids or [],
             "meta": {"tool": "rerank_results", "enabled": False},
         }
+
+    if not chunk_ids:
+        return {
+            "text": "No chunk IDs provided to rerank.",
+            "chunk_ids": [],
+            "meta": {"tool": "rerank_results", "error": "no_chunk_ids"},
+        }
+
+    api_key = os.environ.get("VOYAGE_API_KEY", "")
+    if not api_key:
+        return {
+            "text": "Rerank unavailable: VOYAGE_API_KEY not configured.",
+            "chunk_ids": chunk_ids,
+            "meta": {"tool": "rerank_results", "error": "missing_api_key"},
+        }
+
+    if not _fetch_chunk_context:
+        return {
+            "text": "Rerank unavailable: chunk context fetcher not loaded.",
+            "chunk_ids": chunk_ids,
+            "meta": {"tool": "rerank_results", "error": "missing_fetch_context"},
+        }
+
+    # Fetch chunk texts
+    try:
+        rows = _fetch_chunk_context(conn, list(chunk_ids))
+    except Exception as exc:
+        return {
+            "text": f"Rerank failed to fetch chunks: {exc}",
+            "chunk_ids": chunk_ids,
+            "meta": {"tool": "rerank_results", "error": "fetch_failed"},
+        }
+
+    if not rows:
+        return {
+            "text": "Rerank found no chunks for given IDs.",
+            "chunk_ids": [],
+            "meta": {"tool": "rerank_results", "error": "chunks_not_found"},
+        }
+
+    # Build ordered doc list aligned to rows
+    documents = [r.get("chunk_text") or r.get("content") or "" for r in rows]
+    safe_top_n = min(top_n, len(rows))
+
+    started = time.time()
+    try:
+        resp = requests.post(
+            _VOYAGE_RERANK_URL,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": "rerank-2",
+                "query": query,
+                "documents": documents,
+                "top_k": safe_top_n,
+                "return_documents": False,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        # Graceful fallback: return original order truncated to top_n
+        fallback_ids = _dedupe_preserve_order([_chunk_id(r.get("id")) for r in rows])[:safe_top_n]
+        return {
+            "text": f"Rerank API failed ({exc}); returning original order.",
+            "chunk_ids": fallback_ids,
+            "meta": {"tool": "rerank_results", "error": str(exc), "fallback": True},
+        }
+
+    latency_ms = int((time.time() - started) * 1000)
+
+    # Map Voyage result indices back to rows
+    reranked = sorted(data.get("data", []), key=lambda x: x.get("relevance_score", 0), reverse=True)
+    reranked_rows = []
+    for item in reranked:
+        idx = item.get("index")
+        if idx is not None and 0 <= idx < len(rows):
+            row = dict(rows[idx])
+            row["similarity"] = float(item.get("relevance_score", 0))
+            reranked_rows.append(row)
+
+    chunk_ids_out = _dedupe_preserve_order([_chunk_id(r.get("id")) for r in reranked_rows if r.get("id")])
+
     return {
-        "text": "Rerank runtime path is not yet implemented.",
-        "chunk_ids": chunk_ids or [],
-        "meta": {"tool": "rerank_results", "enabled": True, "top_n": top_n},
+        "text": _format_search_payload(query, reranked_rows),
+        "chunk_ids": chunk_ids_out,
+        "meta": {
+            "tool": "rerank_results",
+            "query": query,
+            "input_count": len(rows),
+            "result_count": len(reranked_rows),
+            "top_n": safe_top_n,
+            "latency_ms": latency_ms,
+        },
     }
 
 
