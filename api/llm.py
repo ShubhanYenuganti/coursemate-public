@@ -847,14 +847,13 @@ def synthesize(
     use_agentic = (
         _is_enabled("AGENTIC_LOOP_ENABLED", default=False)
         and ai_provider == "openai"
-        and ai_model == DEFAULT_AGENTIC_MODEL
     )
 
     if use_agentic:
         text, grounding_refs, tool_trace, metadata = run_agent_openai(
             conn=conn,
             user_message=user_message,
-            model=ai_model,
+            model=DEFAULT_AGENTIC_MODEL,
             api_key=api_key,
             chunks=chunks,
             chat_id=chat_id,
