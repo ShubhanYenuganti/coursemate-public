@@ -250,7 +250,7 @@ def run_agent_openai(
     chat_id: int | None,
     context_material_ids: list,
 ) -> tuple[str, list, list]:
-    debug = _is_enabled("AGENTIC_LOOP_DEBUG", default=False)
+    debug = _is_enabled("AGENTIC_LOOP_DEBUG", default=True)
     grounding_refs = _dedupe_preserve_order(
         [_json_safe_chunk_id(c.get("id")) for c in chunks if c.get("id") is not None]
     )
