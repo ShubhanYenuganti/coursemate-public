@@ -1305,16 +1305,18 @@ class handler(BaseHTTPRequestHandler):
             reverted_model = reverted_entry.get('ai_model')
             if original_msg_id:
                 cursor.execute(
-                    "SELECT retrieved_chunk_ids, ai_provider, ai_model FROM chat_messages WHERE id = %s",
+                    "SELECT retrieved_chunk_ids, ai_provider, ai_model, tool_trace FROM chat_messages WHERE id = %s",
                     (original_msg_id,)
                 )
                 orig_row = cursor.fetchone()
                 reverted_chunk_ids = (orig_row['retrieved_chunk_ids'] if orig_row else None) or []
+                reverted_tool_trace = (orig_row['tool_trace'] if orig_row else None)
                 if orig_row:
                     reverted_provider = reverted_provider or orig_row.get('ai_provider')
                     reverted_model = reverted_model or orig_row.get('ai_model')
             else:
                 reverted_chunk_ids = reverted_entry.get('retrieved_chunk_ids') or []
+                reverted_tool_trace = None
             reverted_provider = reverted_provider or msg.get('ai_provider')
             reverted_model = reverted_model or msg.get('ai_model')
 
@@ -1322,10 +1324,10 @@ class handler(BaseHTTPRequestHandler):
                 """
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content,
-                     ai_provider, ai_model, context_material_ids, retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
+                     ai_provider, ai_model, context_material_ids, retrieved_chunk_ids, tool_trace, message_index)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s::jsonb, %s)
                 RETURNING id, chat_id, role, content, ai_provider, ai_model,
-                          retrieved_chunk_ids, message_index, created_at
+                          retrieved_chunk_ids, tool_trace, message_index, created_at
                 """,
                 (
                     msg['chat_id'],
@@ -1337,6 +1339,7 @@ class handler(BaseHTTPRequestHandler):
                     reverted_model,
                     json.dumps(user_msg.get('context_material_ids') or []),
                     json.dumps(reverted_chunk_ids),
+                    json.dumps(reverted_tool_trace) if reverted_tool_trace is not None else None,
                     next_idx,
                 )
             )
@@ -1469,16 +1472,18 @@ class handler(BaseHTTPRequestHandler):
             restored_model = restored_entry.get('ai_model')
             if original_msg_id:
                 cursor.execute(
-                    "SELECT retrieved_chunk_ids, ai_provider, ai_model FROM chat_messages WHERE id = %s",
+                    "SELECT retrieved_chunk_ids, ai_provider, ai_model, tool_trace FROM chat_messages WHERE id = %s",
                     (original_msg_id,)
                 )
                 orig_row = cursor.fetchone()
                 restored_chunk_ids = (orig_row['retrieved_chunk_ids'] if orig_row else None) or []
+                restored_tool_trace = (orig_row['tool_trace'] if orig_row else None)
                 if orig_row:
                     restored_provider = restored_provider or orig_row.get('ai_provider')
                     restored_model = restored_model or orig_row.get('ai_model')
             else:
                 restored_chunk_ids = restored_entry.get('retrieved_chunk_ids') or []
+                restored_tool_trace = None
             restored_provider = restored_provider or msg.get('ai_provider')
             restored_model = restored_model or msg.get('ai_model')
 
@@ -1486,10 +1491,10 @@ class handler(BaseHTTPRequestHandler):
                 """
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content,
-                     ai_provider, ai_model, context_material_ids, retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
+                     ai_provider, ai_model, context_material_ids, retrieved_chunk_ids, tool_trace, message_index)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s::jsonb, %s)
                 RETURNING id, chat_id, role, content, ai_provider, ai_model,
-                          retrieved_chunk_ids, message_index, created_at
+                          retrieved_chunk_ids, tool_trace, message_index, created_at
                 """,
                 (
                     msg['chat_id'],
@@ -1501,6 +1506,7 @@ class handler(BaseHTTPRequestHandler):
                     restored_model,
                     json.dumps(user_msg.get('context_material_ids') or []),
                     json.dumps(restored_chunk_ids),
+                    json.dumps(restored_tool_trace) if restored_tool_trace is not None else None,
                     next_idx,
                 )
             )

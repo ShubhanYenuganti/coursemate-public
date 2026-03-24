@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
+import remarkGfm from 'remark-gfm';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 
@@ -517,7 +518,7 @@ function MessageBubble({
   function renderContent(content) {
     return (
       <ReactMarkdown
-        remarkPlugins={[remarkMath]}
+        remarkPlugins={[remarkMath, remarkGfm]}
         rehypePlugins={[rehypeKatex]}
         components={{
           p: ({ children }) => (
@@ -532,6 +533,16 @@ function MessageBubble({
           code: ({ inline, children }) => inline
             ? <code className="bg-gray-100 text-indigo-700 rounded px-1 py-0.5 text-xs font-mono">{children}</code>
             : <pre className="bg-gray-100 rounded-lg p-3 mt-2 overflow-x-auto text-xs font-mono">{children}</pre>,
+          table: ({ children }) => (
+            <div className="overflow-x-auto mt-2 mb-1">
+              <table className="w-full text-xs border-collapse">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-gray-100 text-gray-700">{children}</thead>,
+          tbody: ({ children }) => <tbody>{children}</tbody>,
+          tr: ({ children }) => <tr className="border-b border-gray-200">{children}</tr>,
+          th: ({ children }) => <th className="px-3 py-1.5 text-left font-semibold border border-gray-200">{children}</th>,
+          td: ({ children }) => <td className="px-3 py-1.5 border border-gray-200">{children}</td>,
         }}
       >
         {content}
