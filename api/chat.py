@@ -41,6 +41,8 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+DEFAULT_AI_PROVIDER = "openai"
+DEFAULT_AI_MODEL = "gpt-4o-mini"
 
 
 # ------------------------------------------------------------------ helpers --
@@ -88,7 +90,7 @@ def _parse_body(handler):
         content_length = int(handler.headers.get('Content-Length', 0))
         body = handler.rfile.read(content_length).decode('utf-8')
         return json.loads(body) if body else {}, None
-    except (ValueError, json.JSONDecodeError):
+    except ValueError:
         return None, "Invalid request body"
 
 
@@ -509,8 +511,10 @@ class handler(BaseHTTPRequestHandler):
         chat_id = data.get('chat_id')
         content = sanitize_string(data.get('content', '') or '', max_length=10000)
         context_material_ids = data.get('context_material_ids') or []
-        ai_provider = data.get('ai_provider')
+        ai_provider = data.get('ai_provider') or DEFAULT_AI_PROVIDER
         ai_model = data.get('ai_model')
+        if ai_provider == "openai" and not ai_model:
+            ai_model = DEFAULT_AI_MODEL
         temperature = data.get('temperature')
         max_tokens = data.get('max_tokens')
 
@@ -600,7 +604,14 @@ class handler(BaseHTTPRequestHandler):
 
             try:
                 assistant_content, retrieved_ids = synthesize(
-                    conn, user['id'], ai_provider, ai_model, content, chunks
+                    conn,
+                    user['id'],
+                    ai_provider,
+                    ai_model,
+                    content,
+                    chunks,
+                    chat_id=chat_id,
+                    context_material_ids=context_material_ids,
                 )
             except ValueError as e:
                 send_json(self, 400, {"error": str(e)})
@@ -673,8 +684,10 @@ class handler(BaseHTTPRequestHandler):
         message_id = data.get('message_id')
         content = sanitize_string(data.get('content', '') or '', max_length=10000)
         context_material_ids = data.get('context_material_ids')
-        ai_provider = data.get('ai_provider')
+        ai_provider = data.get('ai_provider') or DEFAULT_AI_PROVIDER
         ai_model = data.get('ai_model')
+        if ai_provider == "openai" and not ai_model:
+            ai_model = DEFAULT_AI_MODEL
 
         if not isinstance(message_id, int):
             send_json(self, 400, {"error": "message_id is required"})
@@ -764,7 +777,14 @@ class handler(BaseHTTPRequestHandler):
 
             try:
                 assistant_content, retrieved_ids = synthesize(
-                    conn, user['id'], ai_provider, ai_model, content, chunks
+                    conn,
+                    user['id'],
+                    ai_provider,
+                    ai_model,
+                    content,
+                    chunks,
+                    chat_id=msg['chat_id'],
+                    context_material_ids=context_material_ids,
                 )
             except ValueError as e:
                 send_json(self, 400, {"error": str(e)})
@@ -1231,8 +1251,10 @@ class handler(BaseHTTPRequestHandler):
         then synthesizes a fresh response without modifying the user message content.
         """
         message_id = data.get('message_id')
-        ai_provider = data.get('ai_provider')
+        ai_provider = data.get('ai_provider') or DEFAULT_AI_PROVIDER
         ai_model = data.get('ai_model')
+        if ai_provider == "openai" and not ai_model:
+            ai_model = DEFAULT_AI_MODEL
 
         if not isinstance(message_id, int):
             send_json(self, 400, {"error": "message_id is required"})
@@ -1311,7 +1333,14 @@ class handler(BaseHTTPRequestHandler):
 
             try:
                 assistant_content, retrieved_ids = synthesize(
-                    conn, user['id'], ai_provider, ai_model, user_msg['content'], chunks
+                    conn,
+                    user['id'],
+                    ai_provider,
+                    ai_model,
+                    user_msg['content'],
+                    chunks,
+                    chat_id=msg['chat_id'],
+                    context_material_ids=context_material_ids,
                 )
             except ValueError as e:
                 send_json(self, 400, {"error": str(e)})
