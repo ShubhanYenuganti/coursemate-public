@@ -199,6 +199,8 @@ def _default_resolver_output(current_query: str) -> dict:
         "intent_type": "fresh",
         "resolved_query": current_query,
         "resolved_entities": [],
+        "required_entities": [],
+        "required_entities_source_turn": None,
         "carryover_chunk_ids": [],
         "confidence": 0.0,
         "reasoning_brief": "fallback resolver output",
@@ -278,10 +280,26 @@ def resolve_references_llm(
     resolver_prompt = (
         "You are a reference resolver for follow-up questions in a chat RAG system.\n"
         "Resolve indirect references like 'those two algorithms' into explicit entities.\n"
-        "Return strict JSON with keys:\n"
-        "intent_type (followup|fresh|mixed), resolved_query (string),\n"
-        "resolved_entities (array of strings), carryover_chunk_ids (array of ids),\n"
-        "confidence (0..1 float), reasoning_brief (one sentence).\n"
+        "Return strict JSON with these keys:\n"
+        "  intent_type (followup|fresh|mixed),\n"
+        "  resolved_query (string),\n"
+        "  resolved_entities (array of strings),\n"
+        "  required_entities (array of strings — see below),\n"
+        "  required_entities_source_turn (integer or null — see below),\n"
+        "  carryover_chunk_ids (array of ids),\n"
+        "  confidence (0..1 float),\n"
+        "  reasoning_brief (one sentence).\n\n"
+        "required_entities: Populate this when the user is explicitly asking about items that were\n"
+        "enumerated in a prior assistant turn (e.g. 'these methods', 'those N algorithms',\n"
+        "'the ones you listed', 'amongst these'). Scan ALL messages in chat_slice_recent —\n"
+        "the referenced enumeration may not be in the immediately preceding turn; it could be\n"
+        "from several turns back. Identify which assistant turn contains the numbered/bulleted\n"
+        "list the user most plausibly means, then extract the exact item names from that list.\n"
+        "Max 12 items. Leave empty [] for fresh queries or when no prior turn contains a\n"
+        "relevant explicit enumeration.\n\n"
+        "required_entities_source_turn: The 0-based index into chat_slice_recent of the\n"
+        "assistant turn you extracted required_entities from. Set to null if required_entities\n"
+        "is empty.\n\n"
         "Only include carryover_chunk_ids that appear in provided hydrated_grounding_chunks.\n"
     )
     resolver_model = model or _RESOLVER_DEFAULT_MODEL
@@ -323,6 +341,18 @@ def resolve_references_llm(
     carryover = _dedupe_preserve_order([str(cid) for cid in carryover if str(cid) in hydrated_ids])[:20]
     carryover = _extract_known_chunk_ids(merged_messages, hydrated_ids) if not carryover else carryover
 
+    required = parsed.get("required_entities") or []
+    if not isinstance(required, list):
+        required = []
+    required = _dedupe_preserve_order([str(e).strip() for e in required if str(e).strip()])[:12]
+
+    required_source_turn = parsed.get("required_entities_source_turn")
+    if required_source_turn is not None:
+        try:
+            required_source_turn = int(required_source_turn)
+        except (TypeError, ValueError):
+            required_source_turn = None
+
     try:
         confidence = float(parsed.get("confidence", 0.0))
     except (TypeError, ValueError):
@@ -334,6 +364,8 @@ def resolve_references_llm(
         "intent_type": intent_type,
         "resolved_query": resolved_query,
         "resolved_entities": entities,
+        "required_entities": required,
+        "required_entities_source_turn": required_source_turn,
         "carryover_chunk_ids": carryover,
         "confidence": confidence,
         "reasoning_brief": reasoning_brief,

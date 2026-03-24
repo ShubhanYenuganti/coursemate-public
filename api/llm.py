@@ -169,11 +169,27 @@ def _build_layered_system_context(
     fresh_evidence_text: str,
     conflict_notes: str,
     user_turn: str,
+    required_entities: list | None = None,
 ) -> str:
     resolved_tokens = _safe_int_env("GROUNDING_CONTEXT_TOKENS_RESOLVED", 300, 100, 1200)
     carry_tokens = _safe_int_env("GROUNDING_CONTEXT_TOKENS_CARRYOVER", 2200, 500, 4000)
     fresh_tokens = _safe_int_env("GROUNDING_CONTEXT_TOKENS_FRESH", 2500, 500, 4000)
     conflict_tokens = _safe_int_env("GROUNDING_CONTEXT_TOKENS_CONFLICT", 300, 100, 1200)
+
+    required_coverage_section = ""
+    if required_entities:
+        items_str = "\n".join(f"- {e}" for e in required_entities)
+        required_coverage_section = (
+            "## RequiredCoverage\n"
+            "The user is asking about items they explicitly referenced from your prior response.\n"
+            "Your answer MUST address ALL of the following items. Do not omit any. "
+            "Do not introduce items not in this list:\n"
+            f"{items_str}\n"
+            "If your retrieved context does not contain information for a specific item, "
+            "state explicitly that no information was found for it rather than substituting "
+            "a different item.\n\n"
+        )
+
     return (
         f"{task_and_policy}\n\n"
         "## ResolvedFollowupContext\n"
@@ -184,6 +200,7 @@ def _build_layered_system_context(
         f"{_truncate_text(fresh_evidence_text, _char_cap_from_tokens(fresh_tokens))}\n\n"
         "## ConflictNotes\n"
         f"{_truncate_text(conflict_notes, _char_cap_from_tokens(conflict_tokens))}\n\n"
+        f"{required_coverage_section}"
         "## UserTurn\n"
         f"{_truncate_text(user_turn, 1200)}"
     )
@@ -193,7 +210,9 @@ def _verify_grounding(final_text: str, resolver_result: dict, grounding_refs: li
     text = (final_text or "").strip()
     intent = str((resolver_result or {}).get("intent_type", "fresh")).lower()
     entities = (resolver_result or {}).get("resolved_entities") or []
+    required_entities = (resolver_result or {}).get("required_entities") or []
     missing_entities = []
+    missing_required = []
     lowered = text.lower()
 
     if intent == "followup" and entities:
@@ -202,18 +221,26 @@ def _verify_grounding(final_text: str, resolver_result: dict, grounding_refs: li
             if token and token not in lowered:
                 missing_entities.append(entity)
 
+    if required_entities:
+        for entity in required_entities:
+            token = str(entity or "").strip().lower()
+            if token and token not in lowered:
+                missing_required.append(entity)
+
     citation_refs = re.findall(r"\[(\d+)\]", text)
     has_citation = len(citation_refs) > 0
     generic_markers = ("entire course", "overall course", "generally in this course")
     looks_generic = any(marker in lowered for marker in generic_markers)
     passed = (
         len(missing_entities) == 0
+        and len(missing_required) == 0
         and (has_citation or len(grounding_refs or []) == 0)
         and not looks_generic
     )
     return {
         "passed": bool(passed),
         "missing_entities": missing_entities,
+        "missing_required": missing_required,
         "has_citation": has_citation,
         "looks_generic": looks_generic,
     }
@@ -226,14 +253,28 @@ def _repair_response_openai(
     messages: list,
     verifier_result: dict,
     grounding_refs: list,
+    required_entities: list | None = None,
 ) -> str:
     missing_entities = verifier_result.get("missing_entities") or []
-    prompt = (
-        "Revise the assistant answer to be strictly grounded.\n"
-        f"Missing entities: {missing_entities}\n"
-        f"Grounding refs available: {grounding_refs[:20]}\n"
-        "Do not provide generic course-wide summaries."
-    )
+    missing_required = verifier_result.get("missing_required") or []
+
+    if missing_required:
+        all_required = required_entities or missing_required
+        prompt = (
+            "Your response did not address the following required items: "
+            f"{missing_required}.\n"
+            f"Revise your answer to include ALL of: {all_required}.\n"
+            "Do not introduce any additional items beyond this list.\n"
+            "If your retrieved context does not contain information for a specific item, "
+            "state explicitly that no information was found for it."
+        )
+    else:
+        prompt = (
+            "Revise the assistant answer to be strictly grounded.\n"
+            f"Missing entities: {missing_entities}\n"
+            f"Grounding refs available: {grounding_refs[:20]}\n"
+            "Do not provide generic course-wide summaries."
+        )
     repair_messages = list(messages) + [{"role": "user", "content": prompt}]
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
@@ -364,6 +405,7 @@ def run_agent_openai(
     mode = resolver_result.get("intent_type", "fresh")
     resolved_query = resolver_result.get("resolved_query") or user_message
     resolved_entities = resolver_result.get("resolved_entities") or []
+    required_entities = resolver_result.get("required_entities") or []
     resolver_confidence = float(resolver_result.get("confidence", 0.0) or 0.0)
 
     initial_search = execute_search_materials(
@@ -422,6 +464,7 @@ def run_agent_openai(
                 "resolver_intent_type": mode,
                 "resolver_confidence": resolver_confidence,
                 "resolver_entities": resolved_entities,
+                "required_entities": required_entities,
             },
         )
 
@@ -441,6 +484,7 @@ def run_agent_openai(
                 fresh_evidence_text=fresh_text,
                 conflict_notes=conflict_notes,
                 user_turn=user_message,
+                required_entities=required_entities,
             ),
         },
         {"role": "user", "content": resolved_query},
@@ -639,6 +683,7 @@ def run_agent_openai(
                 messages=messages,
                 verifier_result=verifier_result,
                 grounding_refs=grounding_refs,
+                required_entities=required_entities,
             )
             verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
 
@@ -662,7 +707,9 @@ def run_agent_openai(
         "intent_type": mode,
         "resolver_confidence": resolver_confidence,
         "resolver_entities": resolved_entities,
+        "required_entities": required_entities,
         "verifier_passed": verifier_result.get("passed", True),
+        "verifier_missing_required": verifier_result.get("missing_required") or [],
         "repair_invoked": repair_invoked,
         "carryover_ref_count": carryover_count,
         "fresh_ref_count": fresh_count,
