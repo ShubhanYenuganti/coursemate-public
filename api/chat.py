@@ -337,7 +337,7 @@ class handler(BaseHTTPRequestHandler):
                     cursor.execute("""
                         SELECT id, chat_id, role, content, ai_provider, ai_model,
                                context_material_ids, retrieved_chunk_ids, context_token_count,
-                               response_token_count, response_time_ms, finish_reason,
+                               response_token_count, response_time_ms, finish_reason, grounding_meta,
                                is_edited, reply_history, edited_at, message_index, created_at
                         FROM chat_messages
                         WHERE chat_id = %s
@@ -350,7 +350,7 @@ class handler(BaseHTTPRequestHandler):
                     cursor.execute("""
                         SELECT id, chat_id, role, content, ai_provider, ai_model,
                                context_material_ids, retrieved_chunk_ids, context_token_count,
-                               response_token_count, response_time_ms, finish_reason,
+                               response_token_count, response_time_ms, finish_reason, grounding_meta,
                                is_edited, reply_history, edited_at, message_index, created_at
                         FROM chat_messages
                         WHERE chat_id = %s
@@ -635,7 +635,7 @@ class handler(BaseHTTPRequestHandler):
             )
 
             try:
-                assistant_content, retrieved_ids = synthesize(
+                assistant_content, retrieved_ids, grounding_meta = synthesize(
                     conn,
                     user['id'],
                     ai_provider,
@@ -655,6 +655,10 @@ class handler(BaseHTTPRequestHandler):
                         "ai_model": ai_model,
                         "assistant_char_count": len(assistant_content or ""),
                         "grounding_ref_count": len(retrieved_ids or []),
+                        "intent_type": grounding_meta.get("intent_type"),
+                        "resolver_confidence": grounding_meta.get("resolver_confidence"),
+                        "verifier_passed": grounding_meta.get("verifier_passed"),
+                        "repair_invoked": grounding_meta.get("repair_invoked"),
                     },
                 )
             except ValueError as e:
@@ -675,8 +679,9 @@ class handler(BaseHTTPRequestHandler):
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content,
                      ai_provider, ai_model, context_material_ids,
+                     grounding_meta,
                      retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at
@@ -684,6 +689,7 @@ class handler(BaseHTTPRequestHandler):
                 chat_id, chat['course_id'], user['id'], user_message['id'], assistant_content,
                 ai_provider, ai_model,
                 json.dumps(context_material_ids),
+                json.dumps(grounding_meta or {}),
                 json.dumps(retrieved_ids),
                 next_idx + 1,
             ))
@@ -835,7 +841,7 @@ class handler(BaseHTTPRequestHandler):
             )
 
             try:
-                assistant_content, retrieved_ids = synthesize(
+                assistant_content, retrieved_ids, grounding_meta = synthesize(
                     conn,
                     user['id'],
                     ai_provider,
@@ -855,6 +861,10 @@ class handler(BaseHTTPRequestHandler):
                         "ai_model": ai_model,
                         "assistant_char_count": len(assistant_content or ""),
                         "grounding_ref_count": len(retrieved_ids or []),
+                        "intent_type": grounding_meta.get("intent_type"),
+                        "resolver_confidence": grounding_meta.get("resolver_confidence"),
+                        "verifier_passed": grounding_meta.get("verifier_passed"),
+                        "repair_invoked": grounding_meta.get("repair_invoked"),
                     },
                 )
             except ValueError as e:
@@ -936,8 +946,9 @@ class handler(BaseHTTPRequestHandler):
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content,
                      ai_provider, ai_model, context_material_ids,
+                     grounding_meta,
                      retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at
@@ -950,6 +961,7 @@ class handler(BaseHTTPRequestHandler):
                 ai_provider,
                 ai_model,
                 json.dumps(context_material_ids),
+                json.dumps(grounding_meta or {}),
                 json.dumps(retrieved_ids),
                 next_idx,
             ))
@@ -1418,7 +1430,7 @@ class handler(BaseHTTPRequestHandler):
             )
 
             try:
-                assistant_content, retrieved_ids = synthesize(
+                assistant_content, retrieved_ids, grounding_meta = synthesize(
                     conn,
                     user['id'],
                     ai_provider,
@@ -1438,6 +1450,10 @@ class handler(BaseHTTPRequestHandler):
                         "ai_model": ai_model,
                         "assistant_char_count": len(assistant_content or ""),
                         "grounding_ref_count": len(retrieved_ids or []),
+                        "intent_type": grounding_meta.get("intent_type"),
+                        "resolver_confidence": grounding_meta.get("resolver_confidence"),
+                        "verifier_passed": grounding_meta.get("verifier_passed"),
+                        "repair_invoked": grounding_meta.get("repair_invoked"),
                     },
                 )
             except ValueError as e:
@@ -1498,8 +1514,9 @@ class handler(BaseHTTPRequestHandler):
                 """
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content,
-                     ai_provider, ai_model, context_material_ids, retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s)
+                     ai_provider, ai_model, context_material_ids, grounding_meta,
+                     retrieved_chunk_ids, message_index)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, ai_provider, ai_model, retrieved_chunk_ids,
                           message_index, created_at
                 """,
@@ -1512,6 +1529,7 @@ class handler(BaseHTTPRequestHandler):
                     ai_provider,
                     ai_model,
                     json.dumps(context_material_ids),
+                    json.dumps(grounding_meta or {}),
                     json.dumps(retrieved_ids),
                     next_idx,
                 )

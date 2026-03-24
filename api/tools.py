@@ -3,8 +3,12 @@ Tool execution helpers for agentic chat loops.
 """
 import hashlib
 import json
+import logging
 import os
+import re
 import time
+
+import requests
 
 try:
     from .rag import retrieve_chunks
@@ -21,6 +25,11 @@ try:
 except ImportError:
     embed_text_via_lambda = None
 
+logger = logging.getLogger(__name__)
+_OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+_RESOLVER_DEFAULT_MODEL = "gpt-4o-mini"
+_RESOLVER_TIMEOUT = 8
+
 
 def _dedupe_preserve_order(values):
     seen = set()
@@ -36,6 +45,299 @@ def _dedupe_preserve_order(values):
 
 def _chunk_id(value):
     return str(value)
+
+
+def _is_enabled(env_name: str, default: bool = False) -> bool:
+    value = os.environ.get(env_name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _safe_int_env(env_name: str, default: int, low: int, high: int) -> int:
+    raw = os.environ.get(env_name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(low, min(high, value))
+
+
+def _safe_float_env(env_name: str, default: float) -> float:
+    raw = os.environ.get(env_name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _truncate_text(value: str, limit: int = 500) -> str:
+    if not value:
+        return ""
+    text = str(value).strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
+
+
+def _entity_match_score(text: str, entities: list[str]) -> float:
+    if not entities:
+        return 0.0
+    hay = (text or "").lower()
+    hits = 0
+    for entity in entities:
+        needle = str(entity or "").strip().lower()
+        if needle and needle in hay:
+            hits += 1
+    return hits / max(len(entities), 1)
+
+
+def _normalize_weight_map(weights: dict) -> dict:
+    total = sum(max(float(v), 0.0) for v in weights.values())
+    if total <= 0:
+        return dict.fromkeys(weights, 0.0)
+    return {k: max(float(v), 0.0) / total for k, v in weights.items()}
+
+
+def _weight_profile(mode: str) -> dict:
+    mode = (mode or "fresh").lower()
+    if mode == "followup":
+        return _normalize_weight_map(
+            {
+                "semantic": _safe_float_env("WEIGHT_FOLLOWUP_SEMANTIC", 0.15),
+                "anchor": _safe_float_env("WEIGHT_FOLLOWUP_ANCHOR", 0.65),
+                "entity": _safe_float_env("WEIGHT_FOLLOWUP_ENTITY", 0.20),
+                "recency": _safe_float_env("WEIGHT_FOLLOWUP_RECENCY", 0.05),
+            }
+        )
+    if mode == "mixed":
+        return _normalize_weight_map(
+            {
+                "semantic": _safe_float_env("WEIGHT_MIXED_SEMANTIC", 0.55),
+                "anchor": _safe_float_env("WEIGHT_MIXED_ANCHOR", 0.25),
+                "entity": _safe_float_env("WEIGHT_MIXED_ENTITY", 0.15),
+                "recency": _safe_float_env("WEIGHT_MIXED_RECENCY", 0.05),
+            }
+        )
+    return _normalize_weight_map(
+        {
+            "semantic": _safe_float_env("WEIGHT_FRESH_SEMANTIC", 0.75),
+            "anchor": _safe_float_env("WEIGHT_FRESH_ANCHOR", 0.10),
+            "entity": _safe_float_env("WEIGHT_FRESH_ENTITY", 0.10),
+            "recency": _safe_float_env("WEIGHT_FRESH_RECENCY", 0.05),
+        }
+    )
+
+
+def _fetch_recent_messages(conn, chat_id: int, limit: int = 15) -> list:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, role, content, retrieved_chunk_ids, message_index, created_at
+        FROM chat_messages
+        WHERE chat_id = %s
+          AND is_deleted = FALSE
+        ORDER BY message_index DESC
+        LIMIT %s
+        """,
+        (chat_id, max(1, min(int(limit or 15), 30))),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    return rows
+
+
+def _fetch_semantic_neighbors(conn, chat_id: int, query_text: str, limit: int = 8) -> list:
+    if not embed_text_via_lambda:
+        return []
+    embedding = embed_text_via_lambda(query_text)
+    if not embedding:
+        return []
+    vec = "[" + ",".join(str(x) for x in embedding) + "]"
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, role, content, retrieved_chunk_ids, message_index,
+               message_embedding <=> %s::vector AS dist
+        FROM chat_messages
+        WHERE chat_id = %s
+          AND is_deleted = FALSE
+          AND message_embedding IS NOT NULL
+        ORDER BY dist ASC
+        LIMIT %s
+        """,
+        (vec, chat_id, max(1, min(int(limit or 8), 20))),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    return rows
+
+
+def _extract_known_chunk_ids(messages: list, hydrated_chunk_ids: set[str]) -> list[str]:
+    collected = []
+    for message in messages:
+        refs = message.get("retrieved_chunk_ids") or []
+        if isinstance(refs, str):
+            try:
+                refs = json.loads(refs)
+            except json.JSONDecodeError:
+                refs = []
+        if isinstance(refs, list):
+            for cid in refs:
+                scid = str(cid)
+                if scid in hydrated_chunk_ids:
+                    collected.append(scid)
+    return _dedupe_preserve_order(collected)
+
+
+def _default_resolver_output(current_query: str) -> dict:
+    return {
+        "intent_type": "fresh",
+        "resolved_query": current_query,
+        "resolved_entities": [],
+        "carryover_chunk_ids": [],
+        "confidence": 0.0,
+        "reasoning_brief": "fallback resolver output",
+    }
+
+
+def resolve_references_llm(
+    conn,
+    chat_id: int | None,
+    current_query: str,
+    selected_material_ids: list | None,
+    api_key: str | None,
+    model: str | None = None,
+) -> dict:
+    """
+    LLM-based reference resolver for indirect follow-up turns.
+    """
+    cleaned_query = (current_query or "").strip()
+    if not cleaned_query:
+        return _default_resolver_output("")
+    if not _is_enabled("GROUNDING_RESOLVER_ENABLED", default=True):
+        return _default_resolver_output(cleaned_query)
+    if not chat_id or not api_key:
+        return _default_resolver_output(cleaned_query)
+
+    recent = _fetch_recent_messages(conn, chat_id, limit=_safe_int_env("GROUNDING_RECENT_LIMIT", 12, 4, 25))
+    semantic = _fetch_semantic_neighbors(conn, chat_id, cleaned_query, limit=_safe_int_env("GROUNDING_SEMANTIC_LIMIT", 8, 3, 20))
+    semantic_ids = {row.get("id") for row in semantic}
+    merged_messages = list(recent) + [row for row in semantic if row.get("id") not in semantic_ids]
+
+    all_refs = []
+    for row in merged_messages:
+        refs = row.get("retrieved_chunk_ids") or []
+        if isinstance(refs, str):
+            try:
+                refs = json.loads(refs)
+            except json.JSONDecodeError:
+                refs = []
+        if isinstance(refs, list):
+            all_refs.extend(str(cid) for cid in refs)
+    all_refs = _dedupe_preserve_order(all_refs)[:30]
+    hydrated = _fetch_chunk_context(conn, all_refs) if (_fetch_chunk_context and all_refs) else []
+    hydrated_ids = {str(c.get("id")) for c in hydrated}
+
+    payload = {
+        "current_query": cleaned_query,
+        "selected_material_ids": selected_material_ids or [],
+        "chat_slice_recent": [
+            {
+                "role": row.get("role"),
+                "message_index": row.get("message_index"),
+                "content": _truncate_text(row.get("content", ""), 420),
+            }
+            for row in recent
+        ],
+        "chat_slice_semantic": [
+            {
+                "role": row.get("role"),
+                "message_index": row.get("message_index"),
+                "distance": row.get("dist"),
+                "content": _truncate_text(row.get("content", ""), 320),
+            }
+            for row in semantic
+        ],
+        "prior_grounding_refs": all_refs[:20],
+        "hydrated_grounding_chunks": [
+            {
+                "id": str(chunk.get("id")),
+                "chunk_type": chunk.get("chunk_type"),
+                "material_id": chunk.get("material_id"),
+                "excerpt": _truncate_text(chunk.get("chunk_text", ""), 240),
+            }
+            for chunk in hydrated[:20]
+        ],
+    }
+
+    resolver_prompt = (
+        "You are a reference resolver for follow-up questions in a chat RAG system.\n"
+        "Resolve indirect references like 'those two algorithms' into explicit entities.\n"
+        "Return strict JSON with keys:\n"
+        "intent_type (followup|fresh|mixed), resolved_query (string),\n"
+        "resolved_entities (array of strings), carryover_chunk_ids (array of ids),\n"
+        "confidence (0..1 float), reasoning_brief (one sentence).\n"
+        "Only include carryover_chunk_ids that appear in provided hydrated_grounding_chunks.\n"
+    )
+    resolver_model = model or _RESOLVER_DEFAULT_MODEL
+
+    try:
+        response = requests.post(
+            _OPENAI_URL,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": resolver_model,
+                "response_format": {"type": "json_object"},
+                "temperature": 0,
+                "messages": [
+                    {"role": "system", "content": resolver_prompt},
+                    {"role": "user", "content": json.dumps(payload)},
+                ],
+            },
+            timeout=_safe_int_env("GROUNDING_RESOLVER_TIMEOUT_SEC", _RESOLVER_TIMEOUT, 3, 15),
+        )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+    except Exception:
+        logger.exception("resolve_references_llm_failed", extra={"chat_id": chat_id})
+        return _default_resolver_output(cleaned_query)
+
+    intent_type = str(parsed.get("intent_type", "fresh")).lower()
+    if intent_type not in ("followup", "fresh", "mixed"):
+        intent_type = "fresh"
+    resolved_query = str(parsed.get("resolved_query", "")).strip() or cleaned_query
+    entities = parsed.get("resolved_entities") or []
+    if not isinstance(entities, list):
+        entities = []
+    entities = _dedupe_preserve_order([str(e).strip() for e in entities if str(e).strip()])[:8]
+
+    carryover = parsed.get("carryover_chunk_ids") or []
+    if not isinstance(carryover, list):
+        carryover = []
+    carryover = _dedupe_preserve_order([str(cid) for cid in carryover if str(cid) in hydrated_ids])[:20]
+    carryover = _extract_known_chunk_ids(merged_messages, hydrated_ids) if not carryover else carryover
+
+    try:
+        confidence = float(parsed.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+    reasoning_brief = _truncate_text(str(parsed.get("reasoning_brief", "")).strip(), 220) or "resolver output"
+
+    return {
+        "intent_type": intent_type,
+        "resolved_query": resolved_query,
+        "resolved_entities": entities,
+        "carryover_chunk_ids": carryover,
+        "confidence": confidence,
+        "reasoning_brief": reasoning_brief,
+    }
 
 
 def _format_search_payload(query: str, chunks: list) -> str:
@@ -64,7 +366,15 @@ def _format_search_payload(query: str, chunks: list) -> str:
     return "\n".join(lines).strip()
 
 
-def execute_search_materials(conn, query: str, material_ids: list, top_k: int = 8) -> dict:
+def execute_search_materials(
+    conn,
+    query: str,
+    material_ids: list,
+    top_k: int = 8,
+    mode: str = "fresh",
+    anchor_chunk_ids: list | None = None,
+    resolved_entities: list | None = None,
+) -> dict:
     """
     Execute scoped material search for the agent loop.
 
@@ -79,6 +389,11 @@ def execute_search_materials(conn, query: str, material_ids: list, top_k: int = 
     cleaned_query = (query or "").strip()
     scoped_material_ids = material_ids if isinstance(material_ids, list) else []
     safe_top_k = max(1, min(int(top_k or 8), 12))
+    mode = (mode or "fresh").lower()
+    if mode not in ("followup", "fresh", "mixed"):
+        mode = "fresh"
+    anchor_chunk_ids = _dedupe_preserve_order(anchor_chunk_ids or [])
+    resolved_entities = _dedupe_preserve_order(resolved_entities or [])
 
     if not cleaned_query:
         return {
@@ -87,20 +402,81 @@ def execute_search_materials(conn, query: str, material_ids: list, top_k: int = 
             "meta": {"tool": "search_materials", "query": "", "result_count": 0, "latency_ms": 0},
         }
 
-    chunks = retrieve_chunks(conn, cleaned_query, scoped_material_ids, top_k=safe_top_k)
-    chunk_ids = _dedupe_preserve_order(
-        [_chunk_id(c.get("id")) for c in chunks if c.get("id") is not None]
-    )
+    fresh_chunks = retrieve_chunks(conn, cleaned_query, scoped_material_ids, top_k=safe_top_k)
+    carryover_chunks = _fetch_chunk_context(conn, anchor_chunk_ids) if (_fetch_chunk_context and anchor_chunk_ids) else []
+
+    anchor_set = {str(cid) for cid in anchor_chunk_ids}
+    recency_rank = {str(cid): idx for idx, cid in enumerate(anchor_chunk_ids)}
+    weights = _weight_profile(mode)
+
+    scored = {}
+    min_carryover_hits = _safe_int_env("GROUNDING_MIN_CARRYOVER_HITS", 5, 1, 10)
+    for chunk in fresh_chunks:
+        cid = _chunk_id(chunk.get("id"))
+        semantic_score = max(0.0, min(1.0, float(chunk.get("similarity", 0) or 0)))
+        anchor_score = 1.0 if cid in anchor_set else 0.0
+        entity_score = _entity_match_score(chunk.get("chunk_text", ""), resolved_entities)
+        if cid in recency_rank and len(recency_rank) > 1:
+            recency_score = 1.0 - (recency_rank[cid] / (len(recency_rank) - 1))
+        elif cid in recency_rank:
+            recency_score = 1.0
+        else:
+            recency_score = 0.0
+        fused = (
+            weights["semantic"] * semantic_score
+            + weights["anchor"] * anchor_score
+            + weights["entity"] * entity_score
+            + weights["recency"] * recency_score
+        )
+        chunk["fused_score"] = fused
+        chunk["source_branch"] = "fresh"
+        scored[cid] = chunk
+
+    for chunk in carryover_chunks:
+        cid = _chunk_id(chunk.get("id"))
+        semantic_score = max(0.0, min(1.0, float(chunk.get("similarity", 0.55) or 0.55)))
+        anchor_score = 1.0 if cid in anchor_set else 0.0
+        entity_score = _entity_match_score(chunk.get("chunk_text", ""), resolved_entities)
+        if cid in recency_rank and len(recency_rank) > 1:
+            recency_score = 1.0 - (recency_rank[cid] / (len(recency_rank) - 1))
+        elif cid in recency_rank:
+            recency_score = 1.0
+        else:
+            recency_score = 0.0
+        fused = (
+            weights["semantic"] * semantic_score
+            + weights["anchor"] * anchor_score
+            + weights["entity"] * entity_score
+            + weights["recency"] * recency_score
+        )
+        chunk["fused_score"] = fused
+        chunk["source_branch"] = "carryover"
+        if cid not in scored or fused > scored[cid].get("fused_score", -1):
+            scored[cid] = chunk
+
+    merged = sorted(scored.values(), key=lambda c: c.get("fused_score", 0), reverse=True)
+    if mode == "followup" and anchor_chunk_ids:
+        carryover_sorted = [c for c in merged if _chunk_id(c.get("id")) in anchor_set]
+        if len(carryover_sorted) >= min_carryover_hits:
+            remaining = [c for c in merged if _chunk_id(c.get("id")) not in anchor_set]
+            merged = carryover_sorted + remaining
+
+    chunks = merged[:safe_top_k]
+    chunk_ids = _dedupe_preserve_order([_chunk_id(c.get("id")) for c in chunks if c.get("id") is not None])
     latency_ms = int((time.time() - started) * 1000)
     return {
         "text": _format_search_payload(cleaned_query, chunks),
         "chunk_ids": chunk_ids,
         "meta": {
             "tool": "search_materials",
+            "mode": mode,
             "query": cleaned_query,
             "result_count": len(chunks),
             "material_scope_count": len(scoped_material_ids),
             "top_k": safe_top_k,
+            "carryover_count": len([c for c in chunks if c.get("source_branch") == "carryover"]),
+            "fresh_count": len([c for c in chunks if c.get("source_branch") == "fresh"]),
+            "weights": weights,
             "latency_ms": latency_ms,
         },
     }
@@ -161,7 +537,7 @@ def pull_grounding_context(conn, chat_id: int, query_text: str, max_msgs: int = 
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, role, content, retrieved_chunk_ids, message_index,
+        SELECT id, role, content, retrieved_chunk_ids, message_index, created_at,
                message_embedding <=> %s::vector AS dist
         FROM chat_messages
         WHERE chat_id = %s
@@ -218,4 +594,5 @@ def pull_grounding_context(conn, chat_id: int, query_text: str, max_msgs: int = 
         "chunks": ordered_chunks,
         "chunk_ids": deduped_chunk_ids,
         "text": "\n".join(lines).strip(),
+        "query_embedding": query_embedding,
     }

@@ -171,6 +171,7 @@ def init_db():
                 response_token_count INTEGER,
                 response_time_ms INTEGER,
                 finish_reason VARCHAR(50),
+                grounding_meta JSONB NOT NULL DEFAULT '{}',
                 message_index INTEGER NOT NULL,
                 is_edited BOOLEAN NOT NULL DEFAULT FALSE,
                 edited_at TIMESTAMP,
@@ -353,6 +354,9 @@ def init_db():
         # Phase 1 migration: message embeddings for conversation grounding (Phase 2)
         cursor.execute("""
             ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS message_embedding vector(1024);
+        """)
+        cursor.execute("""
+            ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS grounding_meta JSONB NOT NULL DEFAULT '{}';
         """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_messages_embedding

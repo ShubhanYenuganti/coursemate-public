@@ -14,6 +14,7 @@ Phase 2 (agentic loop): Each provider's tool-calling format will extend this mod
 import json
 import logging
 import os
+import re
 import time
 
 import requests
@@ -24,9 +25,9 @@ try:
 except ImportError:
     from crypto_utils import decrypt_api_key
 try:
-    from .tools import execute_search_materials, pull_grounding_context
+    from .tools import execute_search_materials, pull_grounding_context, resolve_references_llm
 except ImportError:
-    from tools import execute_search_materials, pull_grounding_context
+    from tools import execute_search_materials, pull_grounding_context, resolve_references_llm
 
 SYSTEM_PROMPT = (
     "You are a helpful course assistant. Answer the user's question using the "
@@ -103,6 +104,10 @@ def _truncate_text(value: str, limit: int = 180) -> str:
     return text[:limit] + "..."
 
 
+def _char_cap_from_tokens(tokens: int) -> int:
+    return max(200, int(tokens * 4))
+
+
 def _chunk_previews(chunks: list, max_items: int = 3, excerpt_chars: int = 120) -> list:
     previews = []
     for chunk in (chunks or [])[:max_items]:
@@ -154,6 +159,90 @@ def _build_system_context(chunks: list, grounding_text: str = "") -> str:
     if grounding_text:
         return f"{SYSTEM_PROMPT}\n\n{grounding_text}\n\nCourse material excerpts:\n{context}"
     return f"{SYSTEM_PROMPT}\n\nCourse material excerpts:\n{context}"
+
+
+def _build_layered_system_context(
+    *,
+    task_and_policy: str,
+    resolver_result: dict,
+    carryover_evidence_text: str,
+    fresh_evidence_text: str,
+    conflict_notes: str,
+    user_turn: str,
+) -> str:
+    resolved_tokens = _safe_int_env("GROUNDING_CONTEXT_TOKENS_RESOLVED", 300, 100, 1200)
+    carry_tokens = _safe_int_env("GROUNDING_CONTEXT_TOKENS_CARRYOVER", 2200, 500, 4000)
+    fresh_tokens = _safe_int_env("GROUNDING_CONTEXT_TOKENS_FRESH", 2500, 500, 4000)
+    conflict_tokens = _safe_int_env("GROUNDING_CONTEXT_TOKENS_CONFLICT", 300, 100, 1200)
+    return (
+        f"{task_and_policy}\n\n"
+        "## ResolvedFollowupContext\n"
+        f"{_truncate_text(json.dumps(resolver_result), _char_cap_from_tokens(resolved_tokens))}\n\n"
+        "## CarryoverEvidence\n"
+        f"{_truncate_text(carryover_evidence_text, _char_cap_from_tokens(carry_tokens))}\n\n"
+        "## FreshEvidence\n"
+        f"{_truncate_text(fresh_evidence_text, _char_cap_from_tokens(fresh_tokens))}\n\n"
+        "## ConflictNotes\n"
+        f"{_truncate_text(conflict_notes, _char_cap_from_tokens(conflict_tokens))}\n\n"
+        "## UserTurn\n"
+        f"{_truncate_text(user_turn, 1200)}"
+    )
+
+
+def _verify_grounding(final_text: str, resolver_result: dict, grounding_refs: list) -> dict:
+    text = (final_text or "").strip()
+    intent = str((resolver_result or {}).get("intent_type", "fresh")).lower()
+    entities = (resolver_result or {}).get("resolved_entities") or []
+    missing_entities = []
+    lowered = text.lower()
+
+    if intent == "followup" and entities:
+        for entity in entities:
+            token = str(entity or "").strip().lower()
+            if token and token not in lowered:
+                missing_entities.append(entity)
+
+    citation_refs = re.findall(r"\[(\d+)\]", text)
+    has_citation = len(citation_refs) > 0
+    generic_markers = ("entire course", "overall course", "generally in this course")
+    looks_generic = any(marker in lowered for marker in generic_markers)
+    passed = (
+        len(missing_entities) == 0
+        and (has_citation or len(grounding_refs or []) == 0)
+        and not looks_generic
+    )
+    return {
+        "passed": bool(passed),
+        "missing_entities": missing_entities,
+        "has_citation": has_citation,
+        "looks_generic": looks_generic,
+    }
+
+
+def _repair_response_openai(
+    *,
+    api_key: str,
+    model: str,
+    messages: list,
+    verifier_result: dict,
+    grounding_refs: list,
+) -> str:
+    missing_entities = verifier_result.get("missing_entities") or []
+    prompt = (
+        "Revise the assistant answer to be strictly grounded.\n"
+        f"Missing entities: {missing_entities}\n"
+        f"Grounding refs available: {grounding_refs[:20]}\n"
+        "Do not provide generic course-wide summaries."
+    )
+    repair_messages = list(messages) + [{"role": "user", "content": prompt}]
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"model": model, "messages": repair_messages, "temperature": 0.1},
+        timeout=_TIMEOUT,
+    )
+    response.raise_for_status()
+    return _message_text(response.json()["choices"][0]["message"]).strip()
 
 
 def _message_text(message: dict) -> str:
@@ -249,19 +338,72 @@ def run_agent_openai(
     chunks: list,
     chat_id: int | None,
     context_material_ids: list,
-) -> tuple[str, list, list]:
-    debug = _is_enabled("AGENTIC_LOOP_DEBUG", default=True)
+) -> tuple[str, list, list, dict]:
+    debug = _is_enabled("AGENTIC_LOOP_DEBUG", default=False)
+    resolver_enabled = _is_enabled("GROUNDING_RESOLVER_ENABLED", default=True)
+    fusion_enabled = _is_enabled("GROUNDING_FUSION_ENABLED", default=True)
+    verifier_enabled = _is_enabled("GROUNDING_VERIFIER_ENABLED", default=True)
+    mode = "fresh"
+    resolver_result = {
+        "intent_type": "fresh",
+        "resolved_query": user_message,
+        "resolved_entities": [],
+        "carryover_chunk_ids": [],
+        "confidence": 0.0,
+        "reasoning_brief": "resolver disabled",
+    }
+    if resolver_enabled:
+        resolver_result = resolve_references_llm(
+            conn=conn,
+            chat_id=chat_id,
+            current_query=user_message,
+            selected_material_ids=context_material_ids,
+            api_key=api_key,
+            model=model,
+        )
+    mode = resolver_result.get("intent_type", "fresh")
+    resolved_query = resolver_result.get("resolved_query") or user_message
+    resolved_entities = resolver_result.get("resolved_entities") or []
+    resolver_confidence = float(resolver_result.get("confidence", 0.0) or 0.0)
+
+    initial_search = execute_search_materials(
+        conn=conn,
+        query=resolved_query,
+        material_ids=context_material_ids,
+        top_k=10 if mode in ("followup", "mixed") else 8,
+        mode=mode if fusion_enabled else "fresh",
+        anchor_chunk_ids=resolver_result.get("carryover_chunk_ids") or [],
+        resolved_entities=resolved_entities,
+    )
+    initial_chunks = chunks or []
+    if initial_search.get("chunk_ids"):
+        initial_chunks = []
+        for cid in initial_search["chunk_ids"]:
+            initial_chunks.append(
+                {
+                    "id": cid,
+                    "chunk_type": "fused",
+                    "similarity": 0.7,
+                    "chunk_text": f"[ref:{cid}]",
+                }
+            )
+
     grounding_refs = _dedupe_preserve_order(
-        [_json_safe_chunk_id(c.get("id")) for c in chunks if c.get("id") is not None]
+        [_json_safe_chunk_id(c.get("id")) for c in initial_chunks if c.get("id") is not None]
     )
     grounding_text = ""
     pulled_chunk_ids = []
+    carryover_text = ""
+    fresh_text = initial_search.get("text", "")
+    carryover_count = initial_search.get("meta", {}).get("carryover_count", 0)
+    fresh_count = initial_search.get("meta", {}).get("fresh_count", len(chunks or []))
     if chat_id is not None:
         pulled = pull_grounding_context(conn, chat_id, user_message)
         grounding_text = pulled.get("text", "")
         pulled_chunk_ids = pulled.get("chunk_ids", []) or []
         grounding_refs.extend(pulled_chunk_ids)
         grounding_refs = _dedupe_preserve_order(grounding_refs)
+        carryover_text = grounding_text
 
     if debug:
         logger.info(
@@ -270,19 +412,38 @@ def run_agent_openai(
                 "event": "loop_start",
                 "chat_id": chat_id,
                 "model": model,
-                "seed_chunk_count": len(chunks or []),
+                "seed_chunk_count": len(initial_chunks or []),
                 "seed_chunk_ids": _id_preview(
-                    [_json_safe_chunk_id(c.get("id")) for c in chunks if c.get("id") is not None]
+                    [_json_safe_chunk_id(c.get("id")) for c in initial_chunks if c.get("id") is not None]
                 ),
-                "seed_chunk_previews": _chunk_previews(chunks),
+                "seed_chunk_previews": _chunk_previews(initial_chunks),
                 "grounding_pull_chunk_ids": _id_preview(pulled_chunk_ids),
                 "grounding_text_excerpt": _truncate_text(grounding_text, 280),
+                "resolver_intent_type": mode,
+                "resolver_confidence": resolver_confidence,
+                "resolver_entities": resolved_entities,
             },
         )
 
+    conflict_notes = ""
+    if mode == "followup" and fresh_count and carryover_count == 0:
+        conflict_notes = "Followup intent detected but no carryover evidence available."
+    elif mode == "fresh" and carryover_count > 0:
+        conflict_notes = "Fresh intent selected; carryover evidence deprioritized."
+
     messages = [
-        {"role": "system", "content": _build_system_context(chunks, grounding_text)},
-        {"role": "user", "content": user_message},
+        {
+            "role": "system",
+            "content": _build_layered_system_context(
+                task_and_policy=SYSTEM_PROMPT,
+                resolver_result=resolver_result,
+                carryover_evidence_text=carryover_text,
+                fresh_evidence_text=fresh_text,
+                conflict_notes=conflict_notes,
+                user_turn=user_message,
+            ),
+        },
+        {"role": "user", "content": resolved_query},
     ]
     tools = [
         {
@@ -402,6 +563,9 @@ def run_agent_openai(
                     query=args.get("query", ""),
                     material_ids=context_material_ids,
                     top_k=args.get("top_k", 8),
+                    mode=mode if fusion_enabled else "fresh",
+                    anchor_chunk_ids=grounding_refs,
+                    resolved_entities=resolved_entities,
                 )
             else:
                 result = {
@@ -440,6 +604,7 @@ def run_agent_openai(
                 "tool": name,
                 "latency_ms": result.get("meta", {}).get("latency_ms"),
                 "result_count": result.get("meta", {}).get("result_count"),
+                "mode": result.get("meta", {}).get("mode"),
             }
             tool_trace.append(trace_entry)
         tool_trace.append(
@@ -456,6 +621,27 @@ def run_agent_openai(
             "I ran out of tool-call iterations before finishing. "
             "Please ask a narrower follow-up."
         )
+
+    verifier_result = {
+        "passed": True,
+        "missing_entities": [],
+        "has_citation": False,
+        "looks_generic": False,
+    }
+    repair_invoked = False
+    if verifier_enabled:
+        verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
+        if not verifier_result["passed"]:
+            repair_invoked = True
+            final_text = _repair_response_openai(
+                api_key=api_key,
+                model=model,
+                messages=messages,
+                verifier_result=verifier_result,
+                grounding_refs=grounding_refs,
+            )
+            verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
+
     if debug:
         logger.info(
             "agentic_loop_debug",
@@ -468,9 +654,21 @@ def run_agent_openai(
                 "grounding_ref_count": len(grounding_refs),
                 "grounding_ref_ids": _id_preview(grounding_refs),
                 "final_excerpt": _truncate_text(final_text, 280),
+                "verifier_passed": verifier_result.get("passed", True),
+                "repair_invoked": repair_invoked,
             },
         )
-    return final_text, grounding_refs, tool_trace
+    metadata = {
+        "intent_type": mode,
+        "resolver_confidence": resolver_confidence,
+        "resolver_entities": resolved_entities,
+        "verifier_passed": verifier_result.get("passed", True),
+        "repair_invoked": repair_invoked,
+        "carryover_ref_count": carryover_count,
+        "fresh_ref_count": fresh_count,
+        "resolver_reasoning": resolver_result.get("reasoning_brief"),
+    }
+    return final_text, grounding_refs, tool_trace, metadata
 
 
 _PROVIDERS = {
@@ -507,13 +705,13 @@ def synthesize(
     api_key = _get_api_key(conn, user_id, ai_provider)
     material_scope = context_material_ids if isinstance(context_material_ids, list) else []
     use_agentic = (
-        _is_enabled("AGENTIC_LOOP_ENABLED", default=True)
+        _is_enabled("AGENTIC_LOOP_ENABLED", default=False)
         and ai_provider == "openai"
         and ai_model == DEFAULT_AGENTIC_MODEL
     )
 
     if use_agentic:
-        text, grounding_refs, tool_trace = run_agent_openai(
+        text, grounding_refs, tool_trace, metadata = run_agent_openai(
             conn=conn,
             user_message=user_message,
             model=ai_model,
@@ -530,9 +728,13 @@ def synthesize(
                 "model": ai_model,
                 "iterations": len([t for t in tool_trace if "tool_calls" in t]),
                 "tool_calls": len([t for t in tool_trace if t.get("tool")]),
+                "intent_type": metadata.get("intent_type"),
+                "resolver_confidence": metadata.get("resolver_confidence"),
+                "verifier_passed": metadata.get("verifier_passed"),
+                "repair_invoked": metadata.get("repair_invoked"),
             },
         )
-        return text, grounding_refs
+        return text, grounding_refs, metadata
 
     context = _format_context(chunks)
     fn = _PROVIDERS[ai_provider]
@@ -542,4 +744,11 @@ def synthesize(
         for c in chunks
         if c.get("id") is not None
     ]
-    return text, chunk_ids
+    return text, chunk_ids, {
+        "intent_type": "fresh",
+        "resolver_confidence": 0.0,
+        "verifier_passed": True,
+        "repair_invoked": False,
+        "carryover_ref_count": 0,
+        "fresh_ref_count": len(chunk_ids),
+    }
