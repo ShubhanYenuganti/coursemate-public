@@ -39,10 +39,14 @@ SYSTEM_PROMPT = (
     "(e.g. never write [1][2]).\n\n"
     "**Formatting**: Use rich Markdown to make your response clear and readable:\n"
     "- **Bold** or *italic* for key terms and emphasis.\n"
-    "- Fenced code blocks (```language\\n...\\n```) for code, pseudocode, and "
-    "command-line examples — specify the language (python, js, bash, etc.) where applicable.\n"
-    "- `inline code` for function names, variable names, file paths, and short "
-    "code references inline in prose.\n"
+    "- Fenced code blocks (```language\\n...\\n```) ONLY for multi-line code, pseudocode, and "
+    "command-line examples — specify the language (python, js, bash, etc.) where applicable. "
+    "NEVER use a fenced code block for a single identifier, class name, method name, or keyword "
+    "that appears inline within a sentence — use inline code instead.\n"
+    "- `inline code` (single backticks) for ALL function names, method names, class names, "
+    "variable names, file paths, and any short code token referenced inline in prose. "
+    "For example: 'use the `Robot` class' or 'call `robot.get_pose()`' — never break the "
+    "sentence into a fenced block just for a name or short token.\n"
     "- Block quotes (> ...) for verbatim quotations from readings or source material.\n"
     "- Numbered or bulleted lists for steps, enumerations, and comparisons.\n"
     "- Headers (## or ###) to organise longer multi-section responses.\n\n"
@@ -687,7 +691,7 @@ def run_agent_openai(
                 )
                 if on_event:
                     found_count = len(result.get("chunk_ids", []))
-                    on_event({"type": "sources_found", "chunks": [], "result_count": found_count})
+                    on_event({"type": "sources_found", "chunks": result.get("chunks", []), "result_count": found_count})
             elif name == "web_search":
                 if on_event:
                     on_event({"type": "web_search_start", "query": args.get("query", "")})
@@ -742,6 +746,8 @@ def run_agent_openai(
                 "result_count": result.get("meta", {}).get("result_count"),
                 "mode": result.get("meta", {}).get("mode"),
             }
+            if name == "web_search":
+                trace_entry["urls"] = result.get("meta", {}).get("urls") or []
             tool_trace.append(trace_entry)
         tool_trace.append(
             {

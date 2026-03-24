@@ -18,3 +18,6 @@ restore_log.txt
 INGESTION_PLAN.md
 PHASE_1.md
 .vercel
+.mcp.json
+.cursor/mcp.json
+.vscode/mcp.json

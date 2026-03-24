@@ -496,9 +496,20 @@ def execute_search_materials(
     chunks = merged[:safe_top_k]
     chunk_ids = _dedupe_preserve_order([_chunk_id(c.get("id")) for c in chunks if c.get("id") is not None])
     latency_ms = int((time.time() - started) * 1000)
+
+    def _five_words(text):
+        words = (text or "").split()
+        return " ".join(words[:5]) + ("..." if len(words) > 5 else "")
+
+    top_chunks_preview = [
+        {"material_id": c.get("material_id"), "snippet": _five_words(c.get("chunk_text", ""))}
+        for c in chunks[:3]
+    ]
+
     return {
         "text": _format_search_payload(cleaned_query, chunks),
         "chunk_ids": chunk_ids,
+        "chunks": top_chunks_preview,
         "meta": {
             "tool": "search_materials",
             "mode": mode,
@@ -554,10 +565,15 @@ def execute_web_search(conn, query: str, ttl_seconds: int = 3600) -> dict:
             )
             row = cur.fetchone()
         if row:
+            cached_text = row[0]
+            cached_urls = [
+                {"url": m.group(1), "title": m.group(1)}
+                for m in re.finditer(r'\[W\d+\] url=(\S+)', cached_text or "")
+            ]
             return {
-                "text": row[0],
+                "text": cached_text,
                 "chunk_ids": [],
-                "meta": {"tool": "web_search", "query": query, "cache_hit": True},
+                "meta": {"tool": "web_search", "query": query, "cache_hit": True, "urls": cached_urls},
             }
     except Exception:
         pass  # Cache read failure is non-fatal; proceed to live search
@@ -615,6 +631,12 @@ def execute_web_search(conn, query: str, ttl_seconds: int = 3600) -> dict:
     except Exception:
         pass  # Cache write failure is non-fatal
 
+    urls = [
+        {"url": r.get("url", ""), "title": r.get("title", "") or r.get("url", "")}
+        for r in results
+        if r.get("url")
+    ]
+
     return {
         "text": result_text,
         "chunk_ids": [],
@@ -624,6 +646,7 @@ def execute_web_search(conn, query: str, ttl_seconds: int = 3600) -> dict:
             "result_count": len(results),
             "latency_ms": latency_ms,
             "cache_hit": False,
+            "urls": urls,
         },
     }
 

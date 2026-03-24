@@ -461,6 +461,7 @@ function MessageBubble({
   courseName,
   userPicture,
   onCiteClick,
+  webSearchUrls,
   isEditing,
   editingContent,
   onEditStart,
@@ -648,6 +649,32 @@ function MessageBubble({
         <div className="text-sm text-gray-700 leading-relaxed space-y-0.5">
           {renderContent(msg.content)}
         </div>
+        {webSearchUrls && webSearchUrls.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {webSearchUrls.map((item, idx) => {
+              let hostname = item.url;
+              try { hostname = new URL(item.url).hostname.replace(/^www\./, ''); } catch {}
+              return (
+                <a
+                  key={idx}
+                  href={item.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={item.title || item.url}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 hover:border-teal-300 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                  </svg>
+                  {hostname}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </a>
+              );
+            })}
+          </div>
+        )}
         <div className="flex items-center gap-1 mt-3">
           <button type="button" className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors" title="Helpful">
             <ThumbsUpIcon />
@@ -759,31 +786,64 @@ function MessageBubble({
 
 // ─── streaming status bubble ──────────────────────────────────────────────────
 
-function StreamingStatusBubble({ status }) {
-  function getLabel() {
-    if (!status) return '';
+function StreamingStatusBubble({ status, materials }) {
+  if (!status) return null;
+
+  const materialMap = {};
+  (materials || []).forEach((m) => { materialMap[m.id] = m; });
+
+  function getPrimary() {
     switch (status.phase) {
       case 'loop_start':
-        return `Refining... (${status.iteration}/${status.maxIteration} iterations)`;
+        return `Refining answer… (pass ${status.iteration} of ${status.maxIteration})`;
       case 'sources_found':
-        return status.detail ? `Gathering sources... (${status.detail})` : 'Gathering sources...';
+        return `Reading course materials… (${status.result_count || 0} chunks)`;
       case 'web_search_start':
-        return 'Reading from web to augment answer...';
+        return 'Searching the web…';
       case 'web_result':
-        return status.detail ? `Found: ${status.detail}` : 'Found web result';
+        return `Reading ${status.hostname || 'web page'}…`;
       case 'rerank':
-        return status.detail ? `Re-ranking results... (${status.detail})` : 'Re-ranking results...';
+        return `Re-ranking results… (${status.input_count || '?'} → ${status.output_count || '?'})`;
       default:
-        return 'Searching course materials...';
+        return 'Searching course materials…';
     }
   }
+
+  function getSecondary() {
+    switch (status.phase) {
+      case 'sources_found': {
+        const chunks = status.chunks || [];
+        if (!chunks.length) return null;
+        const parts = chunks.map((c) => {
+          const mat = c.material_id != null ? materialMap[c.material_id] : null;
+          const name = mat?.name ? mat.name.replace(/\.[^.]+$/, '').slice(0, 20) : null;
+          return name ? `${name} — "${c.snippet}"` : `"${c.snippet}"`;
+        });
+        return parts.join('  ·  ');
+      }
+      case 'web_search_start':
+        return status.query ? `"${status.query.slice(0, 60)}"` : null;
+      case 'web_result':
+        return status.excerpt ? `"${status.excerpt}"` : null;
+      default:
+        return null;
+    }
+  }
+
+  const primary = getPrimary();
+  const secondary = getSecondary();
 
   return (
     <div className="flex items-start">
       <div className="w-10 flex-shrink-0" />
-      <div className="flex items-center gap-2 pt-1.5 px-3 py-2 rounded-xl bg-indigo-50 border border-indigo-100 max-w-sm">
-        <span className="flex-shrink-0 w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
-        <span className="text-xs text-indigo-600 truncate">{getLabel()}</span>
+      <div className="flex-1 flex flex-col justify-center gap-1.5 px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-100 min-h-[4rem]">
+        <div className="flex items-center gap-2">
+          <span className="flex-shrink-0 w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+          <span className="text-xs font-medium text-indigo-700">{primary}</span>
+        </div>
+        {secondary && (
+          <p className="text-[11px] text-indigo-400 pl-4 leading-snug line-clamp-2">{secondary}</p>
+        )}
       </div>
     </div>
   );
@@ -1168,21 +1228,20 @@ export default function ChatTab({ course, userData, sessionToken }) {
         setStreamingStatus({ phase: 'loop_start', detail: '', iteration: evt.iteration, maxIteration: evt.max });
         break;
       case 'sources_found': {
-        const top = (evt.chunks || [])[0];
-        setStreamingStatus({ phase: 'sources_found', detail: top ? `page ${top.page} — ${top.snippet}` : '', iteration: null, maxIteration: null });
+        setStreamingStatus({ phase: 'sources_found', chunks: evt.chunks || [], result_count: evt.result_count || 0, iteration: null, maxIteration: null });
         break;
       }
       case 'web_search_start':
-        setStreamingStatus({ phase: 'web_search_start', detail: evt.query, iteration: null, maxIteration: null });
+        setStreamingStatus({ phase: 'web_search_start', query: evt.query || '', iteration: null, maxIteration: null });
         break;
       case 'web_result': {
-        let host = evt.url;
-        try { host = new URL(evt.url).hostname; } catch {}
-        setStreamingStatus({ phase: 'web_result', detail: `${(evt.excerpt || '').slice(0, 120)}... from ${host}`, iteration: null, maxIteration: null });
+        let hostname = evt.url || '';
+        try { hostname = new URL(evt.url).hostname.replace(/^www\./, ''); } catch {}
+        setStreamingStatus({ phase: 'web_result', url: evt.url, hostname, excerpt: (evt.excerpt || '').slice(0, 80), iteration: null, maxIteration: null });
         break;
       }
       case 'rerank':
-        setStreamingStatus({ phase: 'rerank', detail: `${evt.input_count} → ${evt.output_count}`, iteration: null, maxIteration: null });
+        setStreamingStatus({ phase: 'rerank', input_count: evt.input_count, output_count: evt.output_count, iteration: null, maxIteration: null });
         break;
       case 'done':
         setStreamingStatus(null);
@@ -1322,11 +1381,12 @@ export default function ChatTab({ course, userData, sessionToken }) {
     setEditingContent('');
     setSending(true);
     sendingRef.current = true;
+    setStreamingStatus({ phase: 'init', detail: '', iteration: null, maxIteration: null });
     setSourcesPanel({ open: false, messageId: null, focusIndex: null });
     setMessages([...keptPrefix, optimisticEdited]);
 
     try {
-      const res = await fetch('/api/chat', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${sessionToken}`,
@@ -1334,7 +1394,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
         },
         body: JSON.stringify({
           resource: 'message',
-          action: 'edit',
+          action: 'stream_edit',
           message_id: messageId,
           content: trimmed,
           context_material_ids: contextIds,
@@ -1342,30 +1402,63 @@ export default function ChatTab({ course, userData, sessionToken }) {
           ai_model: selectedModelId || selectedModel,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to edit message');
 
-      const nextMessages = [...keptPrefix, data.user_message, data.assistant_message];
-      setMessages(nextMessages);
-      setMsgChunks((prev) => {
-        const keptIds = new Set(nextMessages.map((m) => m.id));
-        const cleaned = Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
-        if (data.chunks?.length) cleaned[data.assistant_message.id] = data.chunks;
-        return cleaned;
-      });
-      setChats((prev) => prev.map((c) =>
-        c.id === target.chat_id
-          ? {
-              ...c,
-              last_message_at: data.assistant_message.created_at,
-              message_count: nextMessages.length,
-            }
-          : c
-      ));
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to edit message');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let scheduledDelay = 0;
+      const PHASE_EVENTS = new Set(['loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
+        for (const part of parts) {
+          if (!part.startsWith('data: ')) continue;
+          try {
+            const evt = JSON.parse(part.slice(6));
+            const delay = scheduledDelay;
+            setTimeout(() => {
+              if (evt.type === 'done') {
+                setStreamingStatus(null);
+                const nextMessages = [...keptPrefix, evt.user_message, evt.assistant_message];
+                setMessages(nextMessages);
+                setMsgChunks((prev) => {
+                  const keptIds = new Set(nextMessages.map((m) => m.id));
+                  return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
+                });
+                setChats((prev) => prev.map((c) =>
+                  c.id === target.chat_id
+                    ? { ...c, last_message_at: evt.assistant_message?.created_at, message_count: nextMessages.length }
+                    : c
+                ));
+                setSending(false);
+                sendingRef.current = false;
+              } else if (evt.type === 'error') {
+                setStreamingStatus(null);
+                setMessages(prevMessages);
+                setMsgChunks(prevMsgChunks);
+                setSending(false);
+                sendingRef.current = false;
+              } else {
+                handleStreamEvent(evt, { tempId: null, chatId: target.chat_id });
+              }
+            }, delay);
+            if (PHASE_EVENTS.has(evt.type)) scheduledDelay += 400;
+          } catch {}
+        }
+      }
     } catch {
+      setStreamingStatus(null);
       setMessages(prevMessages);
       setMsgChunks(prevMsgChunks);
-    } finally {
       setSending(false);
       sendingRef.current = false;
     }
@@ -1469,33 +1562,73 @@ export default function ChatTab({ course, userData, sessionToken }) {
 
     setSending(true);
     sendingRef.current = true;
+    setStreamingStatus({ phase: 'init', detail: '', iteration: null, maxIteration: null });
     setSourcesPanel({ open: false, messageId: null, focusIndex: null });
 
     try {
-      const res = await fetch('/api/chat', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           resource: 'message',
-          action: 'regenerate',
+          action: 'stream_regenerate',
           message_id: assistantMsgId,
           ai_provider: provider,
           ai_model: modelId,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to regenerate');
 
-      const nextMessages = [...keptPrefix, data.user_message, data.assistant_message];
-      setMessages(nextMessages);
-      setMsgChunks((prev) => {
-        const keptIds = new Set(nextMessages.map((m) => m.id));
-        return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
-      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to regenerate');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let scheduledDelay = 0;
+      const PHASE_EVENTS = new Set(['loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
+        for (const part of parts) {
+          if (!part.startsWith('data: ')) continue;
+          try {
+            const evt = JSON.parse(part.slice(6));
+            const delay = scheduledDelay;
+            setTimeout(() => {
+              if (evt.type === 'done') {
+                setStreamingStatus(null);
+                const nextMessages = [...keptPrefix, evt.user_message, evt.assistant_message];
+                setMessages(nextMessages);
+                setMsgChunks((prev) => {
+                  const keptIds = new Set(nextMessages.map((m) => m.id));
+                  return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
+                });
+                setSending(false);
+                sendingRef.current = false;
+              } else if (evt.type === 'error') {
+                setStreamingStatus(null);
+                setMessages(prevMessages);
+                setMsgChunks(prevMsgChunks);
+                setSending(false);
+                sendingRef.current = false;
+              } else {
+                handleStreamEvent(evt, { tempId: null, chatId: userMsg.chat_id });
+              }
+            }, delay);
+            if (PHASE_EVENTS.has(evt.type)) scheduledDelay += 400;
+          } catch {}
+        }
+      }
     } catch {
+      setStreamingStatus(null);
       setMessages(prevMessages);
       setMsgChunks(prevMsgChunks);
-    } finally {
       setSending(false);
       sendingRef.current = false;
     }
@@ -1768,6 +1901,14 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 const b = rawHistory.back || [], f = rawHistory.forward || [];
                 return b.length || f.length ? { back: b, forward: f } : null;
               })();
+              const webSearchUrls = msg.role === 'assistant' ? (() => {
+                const trace = Array.isArray(msg.tool_trace) ? msg.tool_trace : [];
+                const seen = new Set();
+                return trace
+                  .filter((t) => t.tool === 'web_search' && Array.isArray(t.urls))
+                  .flatMap((t) => t.urls)
+                  .filter((u) => u.url && !seen.has(u.url) && seen.add(u.url));
+              })() : null;
               return (
               <MessageBubble
                 key={msg.id}
@@ -1775,6 +1916,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 courseName={course?.title}
                 userPicture={userData?.picture}
                 onCiteClick={msg.role === 'assistant' ? (n) => openSources(msg.id, n) : null}
+                webSearchUrls={webSearchUrls?.length ? webSearchUrls : null}
                 isEditing={editingMsgId === msg.id}
                 editingContent={editingContent}
                 onEditStart={(id, content) => {
@@ -1798,7 +1940,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
             })
           )}
           {sending && streamingStatus && (
-            <StreamingStatusBubble status={streamingStatus} />
+            <StreamingStatusBubble status={streamingStatus} materials={materials} />
           )}
           {sending && !streamingStatus && (
             <div className="flex items-start">

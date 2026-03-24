@@ -189,6 +189,11 @@ class handler(BaseHTTPRequestHandler):
                     send_json(self, 429, {"error": "Rate limit exceeded"})
                     return
                 self._edit_message(user, data)
+            elif action == 'stream_edit':
+                if not check_rate_limit(self, max_rpm=10):
+                    send_json(self, 429, {"error": "Rate limit exceeded"})
+                    return
+                self._stream_edit_message(user, data)
             elif action == 'revert':
                 self._revert_message(user, data)
             elif action == 'restore':
@@ -198,6 +203,11 @@ class handler(BaseHTTPRequestHandler):
                     send_json(self, 429, {"error": "Rate limit exceeded"})
                     return
                 self._regenerate_message(user, data)
+            elif action == 'stream_regenerate':
+                if not check_rate_limit(self, max_rpm=10):
+                    send_json(self, 429, {"error": "Rate limit exceeded"})
+                    return
+                self._stream_regenerate_message(user, data)
             elif action == 'delete':
                 self._delete_message(user, data)
             else:
@@ -343,7 +353,7 @@ class handler(BaseHTTPRequestHandler):
                         SELECT id, chat_id, role, content, ai_provider, ai_model,
                                context_material_ids, retrieved_chunk_ids, context_token_count,
                                response_token_count, response_time_ms, finish_reason, grounding_meta,
-                               is_edited, reply_history, edited_at, message_index, created_at
+                               is_edited, reply_history, edited_at, message_index, created_at, tool_trace
                         FROM chat_messages
                         WHERE chat_id = %s
                           AND is_deleted = FALSE
@@ -356,7 +366,7 @@ class handler(BaseHTTPRequestHandler):
                         SELECT id, chat_id, role, content, ai_provider, ai_model,
                                context_material_ids, retrieved_chunk_ids, context_token_count,
                                response_token_count, response_time_ms, finish_reason, grounding_meta,
-                               is_edited, reply_history, edited_at, message_index, created_at
+                               is_edited, reply_history, edited_at, message_index, created_at, tool_trace
                         FROM chat_messages
                         WHERE chat_id = %s
                           AND is_deleted = FALSE
@@ -689,7 +699,7 @@ class handler(BaseHTTPRequestHandler):
                 VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
-                          response_time_ms, finish_reason, message_index, created_at
+                          response_time_ms, finish_reason, message_index, created_at, tool_trace
             """, (
                 chat_id, chat['course_id'], user['id'], user_message['id'], assistant_content,
                 ai_provider, ai_model,
@@ -887,7 +897,10 @@ class handler(BaseHTTPRequestHandler):
                 "assistant_message": dict(assistant_message),
             })
 
-    def _edit_message(self, user, data):
+    def _stream_edit_message(self, user, data):
+        self._edit_message(user, data, is_streaming=True)
+
+    def _edit_message(self, user, data, is_streaming=False):
         message_id = data.get('message_id')
         content = sanitize_string(data.get('content', '') or '', max_length=10000)
         context_material_ids = data.get('context_material_ids')
@@ -981,6 +994,10 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             chunks = retrieve_chunks(conn, content, context_material_ids)
+
+            if is_streaming:
+                send_sse_headers(self)
+
             request_id = f"edit-{uuid4().hex[:10]}"
             logger.info(
                 "chat_synthesize_start",
@@ -997,6 +1014,7 @@ class handler(BaseHTTPRequestHandler):
                 },
             )
 
+            on_event = (lambda evt: send_sse_event(self, evt)) if is_streaming else None
             try:
                 assistant_content, retrieved_ids, grounding_meta, tool_trace = synthesize(
                     conn,
@@ -1007,6 +1025,7 @@ class handler(BaseHTTPRequestHandler):
                     chunks,
                     chat_id=msg['chat_id'],
                     context_material_ids=context_material_ids,
+                    on_event=on_event,
                 )
                 logger.info(
                     "chat_synthesize_done",
@@ -1024,21 +1043,22 @@ class handler(BaseHTTPRequestHandler):
                         "repair_invoked": grounding_meta.get("repair_invoked"),
                     },
                 )
-            except ValueError as e:
-                send_json(self, 400, {"error": str(e)})
-                cursor.close()
-                return
             except Exception as e:
+                cursor.close()
+                if is_streaming:
+                    send_sse_event(self, {"type": "error", "message": str(e)})
+                    return
                 import requests as _requests
+                if isinstance(e, ValueError):
+                    send_json(self, 400, {"error": str(e)})
+                    return
                 if isinstance(e, _requests.HTTPError) and e.response is not None and e.response.status_code == 429:
                     send_json(self, 429, {"error": (
                         f"Rate limit exceeded for {ai_provider}. "
                         "You have sent too many requests — please wait a moment and try again, "
                         "or check your API usage and quota in your provider's dashboard."
                     )})
-                    cursor.close()
                     return
-                cursor.close()
                 raise
 
             # Build v2 reply_history: push displaced assistant + old user query to back, clear forward.
@@ -1108,7 +1128,7 @@ class handler(BaseHTTPRequestHandler):
                 VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
-                          response_time_ms, finish_reason, message_index, created_at
+                          response_time_ms, finish_reason, message_index, created_at, tool_trace
             """, (
                 msg['chat_id'],
                 chat['course_id'],
@@ -1149,11 +1169,18 @@ class handler(BaseHTTPRequestHandler):
             }
             for c in chunks
         ]
-        send_json(self, 200, {
-            "user_message": edited_user_message,
-            "assistant_message": assistant_message,
-            "chunks": serialized_chunks,
-        })
+        if is_streaming:
+            send_sse_event(self, {
+                "type": "done",
+                "user_message": dict(edited_user_message),
+                "assistant_message": dict(assistant_message),
+            })
+        else:
+            send_json(self, 200, {
+                "user_message": edited_user_message,
+                "assistant_message": assistant_message,
+                "chunks": serialized_chunks,
+            })
 
     def _revert_message(self, user, data):
         message_id = data.get('message_id')
@@ -1485,7 +1512,10 @@ class handler(BaseHTTPRequestHandler):
             "assistant_message": new_assistant,
         })
 
-    def _regenerate_message(self, user, data):
+    def _stream_regenerate_message(self, user, data):
+        self._regenerate_message(user, data, is_streaming=True)
+
+    def _regenerate_message(self, user, data, is_streaming=False):
         """Re-run the parent user query through a (possibly different) model.
 
         Displaces the current assistant response into reply_history.back (clearing forward),
@@ -1571,6 +1601,10 @@ class handler(BaseHTTPRequestHandler):
 
             context_material_ids = user_msg.get('context_material_ids') or []
             chunks = retrieve_chunks(conn, user_msg['content'], context_material_ids)
+
+            if is_streaming:
+                send_sse_headers(self)
+
             request_id = f"regen-{uuid4().hex[:10]}"
             logger.info(
                 "chat_synthesize_start",
@@ -1587,6 +1621,7 @@ class handler(BaseHTTPRequestHandler):
                 },
             )
 
+            on_event = (lambda evt: send_sse_event(self, evt)) if is_streaming else None
             try:
                 assistant_content, retrieved_ids, grounding_meta, tool_trace = synthesize(
                     conn,
@@ -1597,6 +1632,7 @@ class handler(BaseHTTPRequestHandler):
                     chunks,
                     chat_id=msg['chat_id'],
                     context_material_ids=context_material_ids,
+                    on_event=on_event,
                 )
                 logger.info(
                     "chat_synthesize_done",
@@ -1614,21 +1650,22 @@ class handler(BaseHTTPRequestHandler):
                         "repair_invoked": grounding_meta.get("repair_invoked"),
                     },
                 )
-            except ValueError as e:
-                send_json(self, 400, {"error": str(e)})
-                cursor.close()
-                return
             except Exception as e:
+                cursor.close()
+                if is_streaming:
+                    send_sse_event(self, {"type": "error", "message": str(e)})
+                    return
                 import requests as _requests
+                if isinstance(e, ValueError):
+                    send_json(self, 400, {"error": str(e)})
+                    return
                 if isinstance(e, _requests.HTTPError) and e.response is not None and e.response.status_code == 429:
                     send_json(self, 429, {"error": (
                         f"Rate limit exceeded for {ai_provider}. "
                         "You have sent too many requests — please wait a moment and try again, "
                         "or check your API usage and quota in your provider's dashboard."
                     )})
-                    cursor.close()
                     return
-                cursor.close()
                 raise
 
             # Displace current response to back, clear forward (new branch).
@@ -1676,7 +1713,7 @@ class handler(BaseHTTPRequestHandler):
                      retrieved_chunk_ids, message_index)
                 VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, ai_provider, ai_model, retrieved_chunk_ids,
-                          message_index, created_at
+                          message_index, created_at, tool_trace
                 """,
                 (
                     msg['chat_id'],
@@ -1696,10 +1733,17 @@ class handler(BaseHTTPRequestHandler):
             new_assistant = cursor.fetchone()
             cursor.close()
 
-        send_json(self, 200, {
-            "user_message": updated_user_msg,
-            "assistant_message": new_assistant,
-        })
+        if is_streaming:
+            send_sse_event(self, {
+                "type": "done",
+                "user_message": dict(updated_user_msg),
+                "assistant_message": dict(new_assistant),
+            })
+        else:
+            send_json(self, 200, {
+                "user_message": updated_user_msg,
+                "assistant_message": new_assistant,
+            })
 
     def _delete_message(self, user, data):
         message_id = data.get('message_id')
