@@ -931,6 +931,7 @@ def synthesize(
     chat_id: int | None = None,
     context_material_ids: list | None = None,
     on_event=None,
+    force_context_only: bool = False,
 ) -> tuple:
     """
     Synthesize an LLM response using the user's chosen provider and model.
@@ -949,6 +950,8 @@ def synthesize(
     selected_provider_api_key = _get_api_key(conn, user_id, ai_provider)
     material_scope = context_material_ids if isinstance(context_material_ids, list) else []
     use_agentic = _is_enabled("AGENTIC_LOOP_ENABLED", default=False)
+    if force_context_only:
+        use_agentic = False
 
     if use_agentic:
         context = _format_context(chunks)

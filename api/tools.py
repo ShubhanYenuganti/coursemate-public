@@ -228,8 +228,8 @@ def resolve_references_llm(
 
     recent = _fetch_recent_messages(conn, chat_id, limit=_safe_int_env("GROUNDING_RECENT_LIMIT", 12, 4, 25))
     semantic = _fetch_semantic_neighbors(conn, chat_id, cleaned_query, limit=_safe_int_env("GROUNDING_SEMANTIC_LIMIT", 8, 3, 20))
-    semantic_ids = {row.get("id") for row in semantic}
-    merged_messages = list(recent) + [row for row in semantic if row.get("id") not in semantic_ids]
+    recent_ids = {row.get("id") for row in recent}
+    merged_messages = list(recent) + [row for row in semantic if row.get("id") not in recent_ids]
 
     all_refs = []
     for row in merged_messages:

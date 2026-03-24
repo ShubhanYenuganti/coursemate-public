@@ -27,6 +27,7 @@ try:
     from .db import get_db
     from .rag import retrieve_chunks
     from .llm import synthesize
+    from services.query.retrieval import _fetch_chunk_context
 except ImportError:
     from middleware import send_json, send_sse_headers, send_sse_event, handle_options, authenticate_request, sanitize_string, check_rate_limit
     from models import User
@@ -34,6 +35,7 @@ except ImportError:
     from db import get_db
     from rag import retrieve_chunks
     from llm import synthesize
+    from services.query.retrieval import _fetch_chunk_context
 
 try:
     from services.query.persistence import embed_text_via_lambda, write_chat_message_embedding
@@ -404,7 +406,6 @@ class handler(BaseHTTPRequestHandler):
                 send_json(self, 200, {"chunks": []})
                 return
 
-            from services.query.retrieval import _fetch_chunk_context
             raw_chunks = _fetch_chunk_context(conn, chunk_ids)
 
         chunk_map = {str(c['id']): c for c in raw_chunks}
@@ -1609,7 +1610,38 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             context_material_ids = user_msg.get('context_material_ids') or []
-            chunks = retrieve_chunks(conn, user_msg['content'], context_material_ids)
+            locked_chunk_ids = msg.get('retrieved_chunk_ids') or []
+            if isinstance(locked_chunk_ids, str):
+                try:
+                    locked_chunk_ids = json.loads(locked_chunk_ids)
+                except json.JSONDecodeError:
+                    locked_chunk_ids = []
+            if not isinstance(locked_chunk_ids, list):
+                locked_chunk_ids = []
+            locked_chunk_ids = [str(cid) for cid in locked_chunk_ids if cid is not None]
+
+            locked_chunks = []
+            if locked_chunk_ids:
+                hydrated_locked_chunks = _fetch_chunk_context(conn, locked_chunk_ids)
+                by_id = {str(c.get('id')): c for c in hydrated_locked_chunks}
+                ordered_hydrated = [by_id[cid] for cid in locked_chunk_ids if cid in by_id]
+                for idx, chunk in enumerate(ordered_hydrated):
+                    locked_chunks.append(
+                        {
+                            "id": chunk.get("id"),
+                            "chunk_text": chunk.get("chunk_text", ""),
+                            "chunk_type": chunk.get("chunk_type", ""),
+                            "page_number": chunk.get("page_number"),
+                            # Keep stable, deterministic ordering signal for prompt context.
+                            "similarity": max(0.0, 1.0 - (idx * 0.01)),
+                            "source_type": chunk.get("source_type", ""),
+                            "material_id": chunk.get("material_id"),
+                        }
+                    )
+
+            # Regenerate should default to the exact same grounding snapshot when available.
+            # Fall back to fresh retrieval only for legacy rows without stored chunk refs.
+            chunks = locked_chunks or retrieve_chunks(conn, user_msg['content'], context_material_ids)
 
             if is_streaming:
                 send_sse_headers(self)
@@ -1642,6 +1674,7 @@ class handler(BaseHTTPRequestHandler):
                     chat_id=msg['chat_id'],
                     context_material_ids=context_material_ids,
                     on_event=on_event,
+                    force_context_only=bool(locked_chunks),
                 )
                 logger.info(
                     "chat_synthesize_done",
