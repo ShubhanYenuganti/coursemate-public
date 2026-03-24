@@ -1272,6 +1272,11 @@ export default function ChatTab({ course, userData, sessionToken }) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      // scheduledDelay accumulates when events arrive batched in the same read()
+      // so each phase is visible for 400ms. Resets to 0 when a read() returns only
+      // non-phase events, meaning the stream is actually progressive.
+      let scheduledDelay = 0;
+      const PHASE_EVENTS = new Set(['loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1283,7 +1288,9 @@ export default function ChatTab({ course, userData, sessionToken }) {
           if (!part.startsWith('data: ')) continue;
           try {
             const evt = JSON.parse(part.slice(6));
-            handleStreamEvent(evt, { tempId, chatId });
+            const delay = scheduledDelay;
+            setTimeout(() => handleStreamEvent(evt, { tempId, chatId }), delay);
+            if (PHASE_EVENTS.has(evt.type)) scheduledDelay += 400;
           } catch {}
         }
       }
