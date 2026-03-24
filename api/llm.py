@@ -274,6 +274,8 @@ def _build_layered_system_context(
     user_turn: str,
     required_entities: list | None = None,
     selected_model_draft: str = "",
+    model_web_handoff: dict | None = None,
+    low_conf_not_needed_override: bool = False,
 ) -> str:
     resolved_tokens = _safe_int_env("GROUNDING_CONTEXT_TOKENS_RESOLVED", 300, 100, 1200)
     carry_tokens = _safe_int_env("GROUNDING_CONTEXT_TOKENS_CARRYOVER", 2200, 500, 4000)
@@ -294,6 +296,39 @@ def _build_layered_system_context(
             "a different item.\n\n"
         )
 
+    handoff_section = ""
+    handoff_policy = ""
+    if isinstance(model_web_handoff, dict) and model_web_handoff:
+        handoff_section = (
+            "## WebSearchHandoff\n"
+            f"{_truncate_text(json.dumps(model_web_handoff), 2000)}\n\n"
+        )
+        recommendation = str(model_web_handoff.get("web_search_recommendation", "optional")).lower()
+        if recommendation == "required":
+            handoff_policy = (
+                "## WebSearchHandoffPolicy\n"
+                "The first model recommends REQUIRED web search. Call `web_search` before finalizing if "
+                "the answer depends on external or underspecified facts.\n\n"
+            )
+        elif recommendation == "not_needed" and not low_conf_not_needed_override:
+            handoff_policy = (
+                "## WebSearchHandoffPolicy\n"
+                "The first model recommends NOT_NEEDED with sufficient confidence. Prefer course evidence "
+                "unless contradictions or critical gaps appear.\n\n"
+            )
+        elif recommendation == "not_needed" and low_conf_not_needed_override:
+            handoff_policy = (
+                "## WebSearchHandoffPolicy\n"
+                "Guardrail override active: first model said NOT_NEEDED at low confidence. Treat this as "
+                "OPTIONAL and call `web_search` whenever evidence is incomplete or uncertain.\n\n"
+            )
+        else:
+            handoff_policy = (
+                "## WebSearchHandoffPolicy\n"
+                "The first model marked web search as OPTIONAL. Call `web_search` when course evidence is "
+                "incomplete, vague, or missing implementation detail.\n\n"
+            )
+
     return (
         f"{task_and_policy}\n\n"
         "## ResolvedFollowupContext\n"
@@ -305,6 +340,8 @@ def _build_layered_system_context(
         "## ConflictNotes\n"
         f"{_truncate_text(conflict_notes, _char_cap_from_tokens(conflict_tokens))}\n\n"
         f"{required_coverage_section}"
+        f"{handoff_section}"
+        f"{handoff_policy}"
         "## SelectedModelDraft\n"
         f"{_truncate_text(selected_model_draft, 3000)}\n\n"
         "## UserTurn\n"
@@ -415,6 +452,107 @@ def _resolve_provider_model(ai_provider: str | None, ai_model: str | None) -> tu
     return provider, model
 
 
+def _extract_json_object(text: str) -> dict | None:
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("```"):
+        fenced = re.findall(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", raw, re.IGNORECASE)
+        if fenced:
+            raw = fenced[0].strip()
+    if raw.startswith("{") and raw.endswith("}"):
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            pass
+    match = re.search(r"\{[\s\S]*\}", raw)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group(0))
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _normalize_web_search_handoff(handoff: dict | None) -> dict:
+    data = handoff if isinstance(handoff, dict) else {}
+    recommendation = str(data.get("web_search_recommendation", "optional")).strip().lower()
+    if recommendation not in ("required", "optional", "not_needed"):
+        recommendation = "optional"
+
+    try:
+        confidence = float(data.get("confidence", 0.5))
+    except (TypeError, ValueError):
+        confidence = 0.5
+    confidence = max(0.0, min(1.0, confidence))
+
+    missing_facts = data.get("missing_facts")
+    if not isinstance(missing_facts, list):
+        missing_facts = []
+    missing_facts = [str(v).strip() for v in missing_facts if str(v).strip()][:6]
+
+    suggested_queries = data.get("suggested_queries")
+    if not isinstance(suggested_queries, list):
+        suggested_queries = []
+    suggested_queries = [str(v).strip() for v in suggested_queries if str(v).strip()][:4]
+
+    reasoning = str(data.get("reasoning", "") or "").strip()
+    return {
+        "web_search_recommendation": recommendation,
+        "confidence": confidence,
+        "missing_facts": missing_facts,
+        "suggested_queries": suggested_queries,
+        "reasoning": reasoning,
+    }
+
+
+def _assess_web_search_handoff(
+    *,
+    synthesis_fn,
+    model: str,
+    api_key: str,
+    user_message: str,
+    selected_model_draft: str,
+) -> dict:
+    """Ask the selected model for web-search routing hints and normalize response."""
+    if not (selected_model_draft or "").strip():
+        return _normalize_web_search_handoff({"web_search_recommendation": "optional", "confidence": 0.5})
+
+    assessment_context = "Assessment-only context for tool routing. No citations required."
+    assessment_prompt = (
+        "You are creating a structured handoff for another model that orchestrates tools.\n"
+        "Given USER_QUESTION and DRAFT_ANSWER, decide whether external web search is needed.\n"
+        "Use ONLY THE FOLLOWING LABELS: required, optional, not_needed.\n"
+        "Return ONLY valid JSON with this exact schema:\n"
+        "{\n"
+        '  "web_search_recommendation": "required|optional|not_needed",\n'
+        '  "confidence": 0.0,\n'
+        '  "missing_facts": ["..."],\n'
+        '  "suggested_queries": ["..."],\n'
+        '  "reasoning": "..."\n'
+        "}\n"
+        "Rules:\n"
+        "- confidence must be between 0 and 1.\n"
+        "- If there are notable unknowns in the draft answer, avoid not_needed.\n"
+        "- suggested_queries should be empty when recommendation is not_needed.\n\n"
+        f"USER_QUESTION:\n{_truncate_text(user_message, 2500)}\n\n"
+        f"DRAFT_ANSWER:\n{_truncate_text(selected_model_draft, 3500)}"
+    )
+
+    try:
+        raw = synthesis_fn(assessment_context, assessment_prompt, model, api_key)
+        parsed = _extract_json_object(raw)
+        normalized = _normalize_web_search_handoff(parsed)
+        normalized["raw_handoff_excerpt"] = _truncate_text(raw, 400)
+        return normalized
+    except Exception as exc:
+        fallback = _normalize_web_search_handoff({"web_search_recommendation": "optional", "confidence": 0.5})
+        fallback["error"] = f"handoff_assessment_failed: {exc}"
+        return fallback
+
+
 def _synthesize_claude(context: str, user_message: str, model: str, api_key: str) -> str:
     response = requests.post(
         "https://api.anthropic.com/v1/messages",
@@ -502,6 +640,7 @@ def run_agent_openai(
     chat_id: int | None,
     context_material_ids: list,
     selected_model_draft: str = "",
+    model_web_handoff: dict | None = None,
     on_event=None,
 ) -> tuple[str, list, list, dict]:
     debug = _is_enabled("AGENTIC_LOOP_DEBUG", default=False)
@@ -592,6 +731,35 @@ def run_agent_openai(
             },
         )
 
+    handoff = _normalize_web_search_handoff(model_web_handoff)
+    handoff_conf_threshold = float(
+        os.environ.get("AGENTIC_HANDOFF_NOT_NEEDED_MIN_CONFIDENCE", "0.70") or 0.70
+    )
+    handoff_conf_threshold = max(0.0, min(1.0, handoff_conf_threshold))
+    low_conf_not_needed_override = (
+        handoff.get("web_search_recommendation") == "not_needed"
+        and float(handoff.get("confidence", 0.0) or 0.0) < handoff_conf_threshold
+    )
+    web_search_allowed_by_handoff = (
+        handoff.get("web_search_recommendation") != "not_needed"
+        or low_conf_not_needed_override
+    )
+
+    if on_event:
+        on_event(
+            {
+                "type": "handoff_decision",
+                "recommendation": handoff.get("web_search_recommendation"),
+                "confidence": handoff.get("confidence"),
+                "threshold": handoff_conf_threshold,
+                "override": low_conf_not_needed_override,
+                "web_search_allowed": web_search_allowed_by_handoff,
+                "missing_facts": handoff.get("missing_facts", []),
+                "suggested_queries": handoff.get("suggested_queries", []),
+                "reasoning": handoff.get("reasoning", ""),
+            }
+        )
+
     conflict_notes = ""
     if mode == "followup" and fresh_count and carryover_count == 0:
         conflict_notes = "Followup intent detected but no carryover evidence available."
@@ -610,6 +778,8 @@ def run_agent_openai(
                 user_turn=user_message,
                 required_entities=required_entities,
                 selected_model_draft=selected_model_draft,
+                model_web_handoff=handoff,
+                low_conf_not_needed_override=low_conf_not_needed_override,
             ),
         },
         {"role": "user", "content": resolved_query},
@@ -633,7 +803,7 @@ def run_agent_openai(
             },
         }
     ]
-    if _is_enabled("AGENTIC_WEB_SEARCH_ENABLED"):
+    if _is_enabled("AGENTIC_WEB_SEARCH_ENABLED") and web_search_allowed_by_handoff:
         tools.append(
             {
                 "type": "function",
@@ -910,6 +1080,10 @@ def run_agent_openai(
         "carryover_ref_count": carryover_count,
         "fresh_ref_count": fresh_count,
         "resolver_reasoning": resolver_result.get("reasoning_brief"),
+        "web_handoff": handoff,
+        "web_handoff_not_needed_conf_threshold": handoff_conf_threshold,
+        "web_handoff_low_conf_override": low_conf_not_needed_override,
+        "web_search_allowed_by_handoff": web_search_allowed_by_handoff,
     }
     return final_text, grounding_refs, tool_trace, metadata
 
@@ -957,6 +1131,16 @@ def synthesize(
         context = _format_context(chunks)
         fn = _PROVIDERS[ai_provider]
         selected_model_draft = fn(context, user_message, ai_model, selected_provider_api_key)
+        web_handoff_enabled = _is_enabled("AGENTIC_WEB_HANDOFF_ENABLED", default=True)
+        selected_model_handoff = None
+        if web_handoff_enabled:
+            selected_model_handoff = _assess_web_search_handoff(
+                synthesis_fn=fn,
+                model=ai_model,
+                api_key=selected_provider_api_key,
+                user_message=user_message,
+                selected_model_draft=selected_model_draft,
+            )
         agentic_api_key = _get_api_key(conn, user_id, DEFAULT_AGENTIC_PROVIDER)
         text, grounding_refs, tool_trace, metadata = run_agent_openai(
             conn=conn,
@@ -967,6 +1151,7 @@ def synthesize(
             chat_id=chat_id,
             context_material_ids=material_scope,
             selected_model_draft=selected_model_draft,
+            model_web_handoff=selected_model_handoff,
             on_event=on_event,
         )
         logger.info(
@@ -983,6 +1168,10 @@ def synthesize(
                 "resolver_confidence": metadata.get("resolver_confidence"),
                 "verifier_passed": metadata.get("verifier_passed"),
                 "repair_invoked": metadata.get("repair_invoked"),
+                "web_handoff_recommendation": (metadata.get("web_handoff") or {}).get("web_search_recommendation"),
+                "web_handoff_confidence": (metadata.get("web_handoff") or {}).get("confidence"),
+                "web_handoff_low_conf_override": metadata.get("web_handoff_low_conf_override"),
+                "web_search_allowed_by_handoff": metadata.get("web_search_allowed_by_handoff"),
             },
         )
         return text, grounding_refs, metadata, tool_trace

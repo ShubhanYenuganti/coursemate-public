@@ -805,18 +805,31 @@ function StreamingStatusBubble({ status, materials }) {
 
   function getPrimary() {
     switch (status.phase) {
+      case 'handoff_decision': {
+        const rec = status.recommendation || 'optional';
+        const confPct = Number.isFinite(Number(status.confidence))
+          ? `${Math.round(Number(status.confidence) * 100)}%`
+          : 'unknown';
+        if (status.override) {
+          return `Handoff says "${rec}" at ${confPct} confidence — override enabled, web search remains available`;
+        }
+        if (status.web_search_allowed === false) {
+          return `Handoff says "${rec}" at ${confPct} confidence — web search constrained unless strong contradiction appears`;
+        }
+        return `Handoff says "${rec}" at ${confPct} confidence — web search can be used if needed`;
+      }
       case 'loop_start':
-        return `Refining answer… (pass ${status.iteration} of ${status.maxIteration})`;
+        return `Agentic pass ${status.iteration} of ${status.maxIteration}: evaluating evidence, handoff guidance, and tool options`;
       case 'sources_found':
-        return `Reading course materials… (${status.result_count || 0} chunks)`;
+        return `Retrieved ${status.result_count || 0} course chunks and grounding context`;
       case 'web_search_start':
-        return 'Searching the web…';
+        return 'Running web search for external coverage and implementation details';
       case 'web_result':
-        return `Reading ${status.hostname || 'web page'}…`;
+        return `Inspecting web result from ${status.hostname || 'source'} and extracting useful context`;
       case 'rerank':
-        return `Re-ranking results… (${status.input_count || '?'} → ${status.output_count || '?'})`;
+        return `Re-ranking candidate chunks by relevance (${status.input_count || '?'} → ${status.output_count || '?'})`;
       default:
-        return 'Searching course materials…';
+        return 'Initializing retrieval and planning tool steps…';
     }
   }
 
@@ -836,6 +849,24 @@ function StreamingStatusBubble({ status, materials }) {
         return status.query ? `"${status.query.slice(0, 60)}"` : null;
       case 'web_result':
         return status.excerpt ? `"${status.excerpt}"` : null;
+      case 'handoff_decision': {
+        const details = [];
+        if (status.override) {
+          details.push(`Guardrail override: confidence ${status.confidence ?? '?'} is below threshold ${status.threshold ?? '?'}`);
+        } else if (status.recommendation === 'not_needed') {
+          details.push(`High-confidence no-search recommendation (threshold ${status.threshold ?? '?'})`);
+        }
+        if (Array.isArray(status.missing_facts) && status.missing_facts.length) {
+          details.push(`Possible gaps: ${status.missing_facts.slice(0, 2).join(' · ')}`);
+        }
+        if (Array.isArray(status.suggested_queries) && status.suggested_queries.length) {
+          details.push(`Candidate queries: ${status.suggested_queries.slice(0, 2).join(' | ')}`);
+        }
+        if (!details.length && status.reasoning) {
+          details.push(status.reasoning);
+        }
+        return details.join('  ·  ') || null;
+      }
       default:
         return null;
     }
@@ -1232,6 +1263,21 @@ export default function ChatTab({ course, userData, sessionToken }) {
 
   function handleStreamEvent(evt, { tempId, chatId, setActiveConvFn }) {
     switch (evt.type) {
+      case 'handoff_decision':
+        setStreamingStatus({
+          phase: 'handoff_decision',
+          recommendation: evt.recommendation || 'optional',
+          confidence: evt.confidence,
+          threshold: evt.threshold,
+          override: Boolean(evt.override),
+          web_search_allowed: evt.web_search_allowed,
+          missing_facts: Array.isArray(evt.missing_facts) ? evt.missing_facts : [],
+          suggested_queries: Array.isArray(evt.suggested_queries) ? evt.suggested_queries : [],
+          reasoning: evt.reasoning || '',
+          iteration: null,
+          maxIteration: null,
+        });
+        break;
       case 'user_message':
         setMessages((prev) => [...prev.filter((m) => m.id !== tempId), evt.message]);
         break;
@@ -1346,7 +1392,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
       // so each phase is visible for 400ms. Resets to 0 when a read() returns only
       // non-phase events, meaning the stream is actually progressive.
       let scheduledDelay = 0;
-      const PHASE_EVENTS = new Set(['loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
+      const PHASE_EVENTS = new Set(['handoff_decision', 'loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1423,7 +1469,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
       const decoder = new TextDecoder();
       let buffer = '';
       let scheduledDelay = 0;
-      const PHASE_EVENTS = new Set(['loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
+      const PHASE_EVENTS = new Set(['handoff_decision', 'loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
 
       let editDoneReceived = false;
       while (true) {
@@ -1608,7 +1654,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
       const decoder = new TextDecoder();
       let buffer = '';
       let scheduledDelay = 0;
-      const PHASE_EVENTS = new Set(['loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
+      const PHASE_EVENTS = new Set(['handoff_decision', 'loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
 
       let regenDoneReceived = false;
       while (true) {
