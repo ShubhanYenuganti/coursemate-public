@@ -871,7 +871,7 @@ class handler(BaseHTTPRequestHandler):
                 VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
-                          response_time_ms, finish_reason, message_index, created_at
+                          response_time_ms, finish_reason, message_index, created_at, tool_trace
             """, (
                 chat_id, chat['course_id'], user['id'], user_message['id'], assistant_content,
                 ai_provider, ai_model,
