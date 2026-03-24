@@ -475,6 +475,7 @@ function MessageBubble({
   onRestore,
   onRegenerate,
   availableModels,
+  materials,
 }) {
   const isUser = msg.role === 'user';
   const modelLabel = getMessageModelLabel(msg);
@@ -657,6 +658,7 @@ function MessageBubble({
             <span className="w-1 h-1 rounded-full bg-indigo-300" />
           )}
         </div>
+        <ToolTraceIndicator toolTrace={msg.tool_trace} materials={materials} />
         <div className="text-sm text-gray-700 leading-relaxed space-y-0.5">
           {renderContent(msg.content)}
         </div>
@@ -797,95 +799,157 @@ function MessageBubble({
 
 // ─── streaming status bubble ──────────────────────────────────────────────────
 
-function StreamingStatusBubble({ status, materials }) {
-  if (!status) return null;
+function getTracePrimary(status) {
+  switch (status.phase) {
+    case 'handoff_decision': {
+      const rec = status.recommendation || 'optional';
+      const confPct = Number.isFinite(Number(status.confidence))
+        ? `${Math.round(Number(status.confidence) * 100)}%`
+        : 'unknown';
+      if (status.override) return `Handoff says "${rec}" at ${confPct} confidence — override enabled, web search remains available`;
+      if (status.web_search_allowed === false) return `Handoff says "${rec}" at ${confPct} confidence — web search constrained unless strong contradiction appears`;
+      return `Handoff says "${rec}" at ${confPct} confidence — web search can be used if needed`;
+    }
+    case 'loop_start':
+      return `Agentic pass ${status.iteration}${status.maxIteration ? ` of ${status.maxIteration}` : ''}: evaluating evidence and tool options`;
+    case 'sources_found':
+      return `Retrieved ${status.result_count || 0} course chunks and grounding context`;
+    case 'web_search_start':
+      return 'Running web search for external coverage and implementation details';
+    case 'web_result':
+      return `Inspecting web result from ${status.hostname || 'source'}`;
+    case 'rerank':
+      return `Re-ranking candidate chunks by relevance (${status.input_count || '?'} → ${status.output_count || '?'})`;
+    default:
+      return 'Initializing retrieval and planning tool steps…';
+  }
+}
 
+function getTraceSecondary(status, materialMap) {
+  switch (status.phase) {
+    case 'sources_found': {
+      const chunks = status.chunks || [];
+      if (!chunks.length) return null;
+      const parts = chunks.map((c) => {
+        const mat = c.material_id != null ? (materialMap || {})[c.material_id] : null;
+        const name = mat?.name ? mat.name.replace(/\.[^.]+$/, '').slice(0, 20) : null;
+        return name ? `${name} — "${c.snippet}"` : `"${c.snippet}"`;
+      });
+      return parts.join('  ·  ');
+    }
+    case 'web_search_start':
+      return status.query ? `"${status.query.slice(0, 60)}"` : null;
+    case 'web_result':
+      return status.excerpt ? `"${status.excerpt}"` : null;
+    case 'handoff_decision': {
+      const details = [];
+      if (status.override) details.push(`Guardrail override: confidence ${status.confidence ?? '?'} below threshold ${status.threshold ?? '?'}`);
+      else if (status.recommendation === 'not_needed') details.push(`High-confidence no-search recommendation (threshold ${status.threshold ?? '?'})`);
+      if (Array.isArray(status.missing_facts) && status.missing_facts.length) details.push(`Possible gaps: ${status.missing_facts.slice(0, 2).join(' · ')}`);
+      if (Array.isArray(status.suggested_queries) && status.suggested_queries.length) details.push(`Candidate queries: ${status.suggested_queries.slice(0, 2).join(' | ')}`);
+      if (!details.length && status.reasoning) details.push(status.reasoning);
+      return details.join('  ·  ') || null;
+    }
+    default:
+      return null;
+  }
+}
+
+function toolTraceToEvents(toolTrace) {
+  const events = [];
+  const seenIterations = new Set();
+  for (const entry of (toolTrace || [])) {
+    if (entry.iteration != null && !seenIterations.has(entry.iteration)) {
+      seenIterations.add(entry.iteration);
+      events.push({ phase: 'loop_start', iteration: entry.iteration, maxIteration: null });
+    }
+    if (entry.tool === 'search_materials') {
+      events.push({ phase: 'sources_found', result_count: entry.result_count || 0, chunks: [] });
+    } else if (entry.tool === 'web_search') {
+      events.push({ phase: 'web_search_start', query: '' });
+      for (const u of (entry.urls || [])) {
+        let hostname = u.url || '';
+        try { hostname = new URL(u.url).hostname.replace(/^www\./, ''); } catch {}
+        events.push({ phase: 'web_result', url: u.url, hostname, excerpt: u.title || '' });
+      }
+    } else if (entry.tool === 'rerank_results') {
+      events.push({ phase: 'rerank', input_count: entry.result_count, output_count: entry.result_count });
+    }
+  }
+  return events;
+}
+
+function ToolTraceIndicator({ toolTrace, materials }) {
+  const [open, setOpen] = useState(false);
+  const events = toolTraceToEvents(toolTrace);
+  if (!events.length) return null;
   const materialMap = {};
   (materials || []).forEach((m) => { materialMap[m.id] = m; });
+  return (
+    <div className="mb-3">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 text-[11px] text-indigo-400 hover:text-indigo-600 transition-colors select-none"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-70"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <span>{events.length} reasoning steps</span>
+        <span className="opacity-50">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="mt-2 flex flex-col gap-1.5 pl-1 border-l-2 border-indigo-100">
+          {events.map((s, i) => {
+            const secondary = getTraceSecondary(s, materialMap);
+            return (
+              <div key={i} className="flex items-start gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-200 mt-1 flex-shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-[11px] text-indigo-500 leading-snug">{getTracePrimary(s)}</p>
+                  {secondary && <p className="text-[10px] text-indigo-300 leading-snug truncate">{secondary}</p>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
-  function getPrimary() {
-    switch (status.phase) {
-      case 'handoff_decision': {
-        const rec = status.recommendation || 'optional';
-        const confPct = Number.isFinite(Number(status.confidence))
-          ? `${Math.round(Number(status.confidence) * 100)}%`
-          : 'unknown';
-        if (status.override) {
-          return `Handoff says "${rec}" at ${confPct} confidence — override enabled, web search remains available`;
-        }
-        if (status.web_search_allowed === false) {
-          return `Handoff says "${rec}" at ${confPct} confidence — web search constrained unless strong contradiction appears`;
-        }
-        return `Handoff says "${rec}" at ${confPct} confidence — web search can be used if needed`;
-      }
-      case 'loop_start':
-        return `Agentic pass ${status.iteration} of ${status.maxIteration}: evaluating evidence, handoff guidance, and tool options`;
-      case 'sources_found':
-        return `Retrieved ${status.result_count || 0} course chunks and grounding context`;
-      case 'web_search_start':
-        return 'Running web search for external coverage and implementation details';
-      case 'web_result':
-        return `Inspecting web result from ${status.hostname || 'source'} and extracting useful context`;
-      case 'rerank':
-        return `Re-ranking candidate chunks by relevance (${status.input_count || '?'} → ${status.output_count || '?'})`;
-      default:
-        return 'Initializing retrieval and planning tool steps…';
-    }
+function StreamingHistoryBubble({ history, materials }) {
+  const materialMap = {};
+  (materials || []).forEach((m) => { materialMap[m.id] = m; });
+  const items = (history || []).filter((s) => s.phase !== 'init');
+
+  if (!items.length) {
+    return (
+      <div className="flex items-start">
+        <div className="w-10 flex-shrink-0" />
+        <div className="flex items-center gap-1 pt-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+        </div>
+      </div>
+    );
   }
-
-  function getSecondary() {
-    switch (status.phase) {
-      case 'sources_found': {
-        const chunks = status.chunks || [];
-        if (!chunks.length) return null;
-        const parts = chunks.map((c) => {
-          const mat = c.material_id != null ? materialMap[c.material_id] : null;
-          const name = mat?.name ? mat.name.replace(/\.[^.]+$/, '').slice(0, 20) : null;
-          return name ? `${name} — "${c.snippet}"` : `"${c.snippet}"`;
-        });
-        return parts.join('  ·  ');
-      }
-      case 'web_search_start':
-        return status.query ? `"${status.query.slice(0, 60)}"` : null;
-      case 'web_result':
-        return status.excerpt ? `"${status.excerpt}"` : null;
-      case 'handoff_decision': {
-        const details = [];
-        if (status.override) {
-          details.push(`Guardrail override: confidence ${status.confidence ?? '?'} is below threshold ${status.threshold ?? '?'}`);
-        } else if (status.recommendation === 'not_needed') {
-          details.push(`High-confidence no-search recommendation (threshold ${status.threshold ?? '?'})`);
-        }
-        if (Array.isArray(status.missing_facts) && status.missing_facts.length) {
-          details.push(`Possible gaps: ${status.missing_facts.slice(0, 2).join(' · ')}`);
-        }
-        if (Array.isArray(status.suggested_queries) && status.suggested_queries.length) {
-          details.push(`Candidate queries: ${status.suggested_queries.slice(0, 2).join(' | ')}`);
-        }
-        if (!details.length && status.reasoning) {
-          details.push(status.reasoning);
-        }
-        return details.join('  ·  ') || null;
-      }
-      default:
-        return null;
-    }
-  }
-
-  const primary = getPrimary();
-  const secondary = getSecondary();
 
   return (
     <div className="flex items-start">
       <div className="w-10 flex-shrink-0" />
-      <div className="flex-1 flex flex-col justify-center gap-1.5 px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-100 min-h-[4rem]">
-        <div className="flex items-center gap-2">
-          <span className="flex-shrink-0 w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
-          <span className="text-xs font-medium text-indigo-700">{primary}</span>
-        </div>
-        {secondary && (
-          <p className="text-[11px] text-indigo-400 pl-4 leading-snug line-clamp-2">{secondary}</p>
-        )}
+      <div className="flex-1 flex flex-col gap-1.5 px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-100">
+        {items.map((s, i) => {
+          const isLast = i === items.length - 1;
+          const secondary = getTraceSecondary(s, materialMap);
+          return (
+            <div key={i} className="flex items-start gap-2">
+              <span className={`w-2 h-2 rounded-full mt-0.5 flex-shrink-0 ${isLast ? 'bg-indigo-400 animate-pulse' : 'bg-indigo-200'}`} />
+              <div className="min-w-0">
+                <p className={`text-xs font-medium leading-snug ${isLast ? 'text-indigo-700' : 'text-indigo-400'}`}>{getTracePrimary(s)}</p>
+                {secondary && <p className="text-[11px] text-indigo-300 leading-snug truncate">{secondary}</p>}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -904,7 +968,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   // null = idle; { phase, detail, iteration, maxIteration } = streaming in progress
-  const [streamingStatus, setStreamingStatus] = useState(null);
+  const [streamingHistory, setStreamingHistory] = useState([]);
   const [selectedModel, setSelectedModel] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
@@ -1264,7 +1328,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
   function handleStreamEvent(evt, { tempId, chatId, setActiveConvFn }) {
     switch (evt.type) {
       case 'handoff_decision':
-        setStreamingStatus({
+        setStreamingHistory((prev) => [...prev, {
           phase: 'handoff_decision',
           recommendation: evt.recommendation || 'optional',
           confidence: evt.confidence,
@@ -1274,34 +1338,31 @@ export default function ChatTab({ course, userData, sessionToken }) {
           missing_facts: Array.isArray(evt.missing_facts) ? evt.missing_facts : [],
           suggested_queries: Array.isArray(evt.suggested_queries) ? evt.suggested_queries : [],
           reasoning: evt.reasoning || '',
-          iteration: null,
-          maxIteration: null,
-        });
+        }]);
         break;
       case 'user_message':
         setMessages((prev) => [...prev.filter((m) => m.id !== tempId), evt.message]);
         break;
       case 'loop_start':
-        setStreamingStatus({ phase: 'loop_start', detail: '', iteration: evt.iteration, maxIteration: evt.max });
+        setStreamingHistory((prev) => [...prev, { phase: 'loop_start', iteration: evt.iteration, maxIteration: evt.max }]);
         break;
-      case 'sources_found': {
-        setStreamingStatus({ phase: 'sources_found', chunks: evt.chunks || [], result_count: evt.result_count || 0, iteration: null, maxIteration: null });
+      case 'sources_found':
+        setStreamingHistory((prev) => [...prev, { phase: 'sources_found', chunks: evt.chunks || [], result_count: evt.result_count || 0 }]);
         break;
-      }
       case 'web_search_start':
-        setStreamingStatus({ phase: 'web_search_start', query: evt.query || '', iteration: null, maxIteration: null });
+        setStreamingHistory((prev) => [...prev, { phase: 'web_search_start', query: evt.query || '' }]);
         break;
       case 'web_result': {
         let hostname = evt.url || '';
         try { hostname = new URL(evt.url).hostname.replace(/^www\./, ''); } catch {}
-        setStreamingStatus({ phase: 'web_result', url: evt.url, hostname, excerpt: (evt.excerpt || '').slice(0, 80), iteration: null, maxIteration: null });
+        setStreamingHistory((prev) => [...prev, { phase: 'web_result', url: evt.url, hostname, excerpt: (evt.excerpt || '').slice(0, 80) }]);
         break;
       }
       case 'rerank':
-        setStreamingStatus({ phase: 'rerank', input_count: evt.input_count, output_count: evt.output_count, iteration: null, maxIteration: null });
+        setStreamingHistory((prev) => [...prev, { phase: 'rerank', input_count: evt.input_count, output_count: evt.output_count }]);
         break;
       case 'done':
-        setStreamingStatus(null);
+        setStreamingHistory([]);
         setMessages((prev) => {
           const withoutTemp = prev.filter((m) => m.id !== tempId && m.id !== evt.user_message?.id);
           return [...withoutTemp, evt.user_message, evt.assistant_message];
@@ -1315,7 +1376,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
         sendingRef.current = false;
         break;
       case 'error':
-        setStreamingStatus(null);
+        setStreamingHistory([]);
         setSending(false);
         sendingRef.current = false;
         setMessages((prev) => prev.filter((m) => m.id !== tempId));
@@ -1332,7 +1393,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setSending(true);
     sendingRef.current = true;
-    setStreamingStatus({ phase: 'init', detail: '', iteration: null, maxIteration: null });
+    setStreamingHistory([{ phase: 'init' }]);
 
     const tempId = Date.now();
     const tempUserMsg = { id: tempId, role: 'user', content: text };
@@ -1411,7 +1472,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
         }
       }
     } catch {
-      setStreamingStatus(null);
+      setStreamingHistory([]);
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setSending(false);
       sendingRef.current = false;
@@ -1438,7 +1499,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
     setEditingContent('');
     setSending(true);
     sendingRef.current = true;
-    setStreamingStatus({ phase: 'init', detail: '', iteration: null, maxIteration: null });
+    setStreamingHistory([{ phase: 'init' }]);
     setSourcesPanel({ open: false, messageId: null, focusIndex: null });
     setMessages([...keptPrefix, optimisticEdited]);
 
@@ -1486,7 +1547,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
             setTimeout(() => {
               if (evt.type === 'done') {
                 editDoneReceived = true;
-                setStreamingStatus(null);
+                setStreamingHistory([]);
                 const nextMessages = [...keptPrefix, evt.user_message, evt.assistant_message];
                 setMessages(nextMessages);
                 setMsgChunks((prev) => {
@@ -1502,7 +1563,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 sendingRef.current = false;
               } else if (evt.type === 'error') {
                 editDoneReceived = true;
-                setStreamingStatus(null);
+                setStreamingHistory([]);
                 setMessages(prevMessages);
                 setMsgChunks(prevMsgChunks);
                 setSending(false);
@@ -1516,14 +1577,14 @@ export default function ChatTab({ course, userData, sessionToken }) {
         }
       }
       if (!editDoneReceived) {
-        setStreamingStatus(null);
+        setStreamingHistory([]);
         setMessages(prevMessages);
         setMsgChunks(prevMsgChunks);
         setSending(false);
         sendingRef.current = false;
       }
     } catch {
-      setStreamingStatus(null);
+      setStreamingHistory([]);
       setMessages(prevMessages);
       setMsgChunks(prevMsgChunks);
       setSending(false);
@@ -1629,7 +1690,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
 
     setSending(true);
     sendingRef.current = true;
-    setStreamingStatus({ phase: 'init', detail: '', iteration: null, maxIteration: null });
+    setStreamingHistory([{ phase: 'init' }]);
     setSourcesPanel({ open: false, messageId: null, focusIndex: null });
 
     try {
@@ -1671,7 +1732,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
             setTimeout(() => {
               if (evt.type === 'done') {
                 regenDoneReceived = true;
-                setStreamingStatus(null);
+                setStreamingHistory([]);
                 const nextMessages = [...keptPrefix, evt.user_message, evt.assistant_message];
                 setMessages(nextMessages);
                 setMsgChunks((prev) => {
@@ -1682,7 +1743,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 sendingRef.current = false;
               } else if (evt.type === 'error') {
                 regenDoneReceived = true;
-                setStreamingStatus(null);
+                setStreamingHistory([]);
                 setMessages(prevMessages);
                 setMsgChunks(prevMsgChunks);
                 setSending(false);
@@ -1696,14 +1757,14 @@ export default function ChatTab({ course, userData, sessionToken }) {
         }
       }
       if (!regenDoneReceived) {
-        setStreamingStatus(null);
+        setStreamingHistory([]);
         setMessages(prevMessages);
         setMsgChunks(prevMsgChunks);
         setSending(false);
         sendingRef.current = false;
       }
     } catch {
-      setStreamingStatus(null);
+      setStreamingHistory([]);
       setMessages(prevMessages);
       setMsgChunks(prevMsgChunks);
       setSending(false);
@@ -2012,22 +2073,13 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 onRestore={replyHistory?.forward?.length ? handleRestoreMessage : null}
                 onRegenerate={msg.role === 'assistant' && !sending ? handleRegenerateMessage : null}
                 availableModels={availableModels}
+                materials={materials}
               />
               );
             })
           )}
-          {sending && streamingStatus && (
-            <StreamingStatusBubble status={streamingStatus} materials={materials} />
-          )}
-          {sending && !streamingStatus && (
-            <div className="flex items-start">
-              <div className="w-10 flex-shrink-0" />
-              <div className="flex items-center gap-1 pt-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-              </div>
-            </div>
+          {sending && (
+            <StreamingHistoryBubble history={streamingHistory} materials={materials} />
           )}
           <div ref={messagesEndRef} />
         </div>
