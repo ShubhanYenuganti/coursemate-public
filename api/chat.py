@@ -1061,102 +1061,108 @@ class handler(BaseHTTPRequestHandler):
                     return
                 raise
 
-            # Build v2 reply_history: push displaced assistant + old user query to back, clear forward.
-            # Store original_msg_id so revert can look up retrieved_chunk_ids directly from the DB row.
-            back, _ = _parse_reply_history(msg.get('reply_history'))
-            back = back + [{
-                'content': displaced_reply,
-                'user_query': msg['content'],  # user query before this edit
-                'ts': datetime.now(timezone.utc).isoformat(),
-                'original_msg_id': old_assistant['id'],
-                'ai_provider': old_assistant.get('ai_provider'),
-                'ai_model': old_assistant.get('ai_model'),
-            }]
-            new_reply_history = _build_reply_history(back, [])
+            try:
+                # Build v2 reply_history: push displaced assistant + old user query to back, clear forward.
+                # Store original_msg_id so revert can look up retrieved_chunk_ids directly from the DB row.
+                back, _ = _parse_reply_history(msg.get('reply_history'))
+                back = back + [{
+                    'content': displaced_reply,
+                    'user_query': msg['content'],  # user query before this edit
+                    'ts': datetime.now(timezone.utc).isoformat(),
+                    'original_msg_id': old_assistant['id'],
+                    'ai_provider': old_assistant.get('ai_provider'),
+                    'ai_model': old_assistant.get('ai_model'),
+                }]
+                new_reply_history = _build_reply_history(back, [])
 
-            cursor.execute(
-                """
-                UPDATE chat_messages
-                SET reply_history = %s::jsonb,
-                    content = %s,
-                    context_material_ids = %s,
-                    ai_provider = %s,
-                    ai_model = %s,
-                    is_edited = TRUE,
-                    edited_at = NOW()
-                WHERE id = %s
-                RETURNING id, chat_id, role, content, context_material_ids, ai_provider, ai_model,
-                          is_edited, reply_history, edited_at, message_index, created_at
-                """,
-                (
-                    new_reply_history,
-                    content,
-                    json.dumps(context_material_ids),
+                cursor.execute(
+                    """
+                    UPDATE chat_messages
+                    SET reply_history = %s::jsonb,
+                        content = %s,
+                        context_material_ids = %s,
+                        ai_provider = %s,
+                        ai_model = %s,
+                        is_edited = TRUE,
+                        edited_at = NOW()
+                    WHERE id = %s
+                    RETURNING id, chat_id, role, content, context_material_ids, ai_provider, ai_model,
+                              is_edited, reply_history, edited_at, message_index, created_at
+                    """,
+                    (
+                        new_reply_history,
+                        content,
+                        json.dumps(context_material_ids),
+                        ai_provider,
+                        ai_model,
+                        message_id,
+                    )
+                )
+                edited_user_message = cursor.fetchone()
+
+                cursor.execute("""
+                    UPDATE chat_messages
+                    SET is_deleted = TRUE
+                    WHERE chat_id = %s
+                      AND message_index >= %s
+                      AND is_deleted = FALSE
+                """, (msg['chat_id'], msg['message_index'] + 1))
+
+                next_idx = _next_message_index(conn, msg['chat_id'])
+
+                if embed_text_via_lambda and write_chat_message_embedding:
+                    try:
+                        edited_user_embedding = embed_text_via_lambda(content)
+                        if edited_user_embedding:
+                            write_chat_message_embedding(conn, edited_user_message['id'], edited_user_embedding)
+                    except Exception:
+                        logger.exception("Failed to persist edited user message embedding", extra={
+                            "chat_id": msg['chat_id'],
+                            "message_id": edited_user_message.get('id'),
+                        })
+                cursor.execute("""
+                    INSERT INTO chat_messages
+                        (chat_id, course_id, user_id, parent_message_id, role, content,
+                         ai_provider, ai_model, context_material_ids,
+                         grounding_meta, tool_trace,
+                         retrieved_chunk_ids, message_index)
+                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id, chat_id, role, content, ai_provider, ai_model,
+                              retrieved_chunk_ids, context_token_count, response_token_count,
+                              response_time_ms, finish_reason, message_index, created_at, tool_trace
+                """, (
+                    msg['chat_id'],
+                    chat['course_id'],
+                    user['id'],
+                    edited_user_message['id'],
+                    assistant_content,
                     ai_provider,
                     ai_model,
-                    message_id,
-                )
-            )
-            edited_user_message = cursor.fetchone()
+                    json.dumps(context_material_ids),
+                    json.dumps(grounding_meta or {}),
+                    json.dumps(tool_trace or []),
+                    json.dumps(retrieved_ids),
+                    next_idx,
+                ))
+                assistant_message = cursor.fetchone()
 
-            cursor.execute("""
-                UPDATE chat_messages
-                SET is_deleted = TRUE
-                WHERE chat_id = %s
-                  AND message_index >= %s
-                  AND is_deleted = FALSE
-            """, (msg['chat_id'], msg['message_index'] + 1))
-
-            next_idx = _next_message_index(conn, msg['chat_id'])
-
-            if embed_text_via_lambda and write_chat_message_embedding:
-                try:
-                    edited_user_embedding = embed_text_via_lambda(content)
-                    if edited_user_embedding:
-                        write_chat_message_embedding(conn, edited_user_message['id'], edited_user_embedding)
-                except Exception:
-                    logger.exception("Failed to persist edited user message embedding", extra={
-                        "chat_id": msg['chat_id'],
-                        "message_id": edited_user_message.get('id'),
-                    })
-            cursor.execute("""
-                INSERT INTO chat_messages
-                    (chat_id, course_id, user_id, parent_message_id, role, content,
-                     ai_provider, ai_model, context_material_ids,
-                     grounding_meta, tool_trace,
-                     retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, chat_id, role, content, ai_provider, ai_model,
-                          retrieved_chunk_ids, context_token_count, response_token_count,
-                          response_time_ms, finish_reason, message_index, created_at, tool_trace
-            """, (
-                msg['chat_id'],
-                chat['course_id'],
-                user['id'],
-                edited_user_message['id'],
-                assistant_content,
-                ai_provider,
-                ai_model,
-                json.dumps(context_material_ids),
-                json.dumps(grounding_meta or {}),
-                json.dumps(tool_trace or []),
-                json.dumps(retrieved_ids),
-                next_idx,
-            ))
-            assistant_message = cursor.fetchone()
-
-            if embed_text_via_lambda and write_chat_message_embedding:
-                try:
-                    assistant_embedding = embed_text_via_lambda(assistant_content)
-                    if assistant_embedding:
-                        write_chat_message_embedding(conn, assistant_message['id'], assistant_embedding)
-                except Exception:
-                    logger.exception("Failed to persist edited assistant message embedding", extra={
-                        "chat_id": msg['chat_id'],
-                        "message_id": assistant_message.get('id'),
-                    })
-
-            cursor.close()
+                if embed_text_via_lambda and write_chat_message_embedding:
+                    try:
+                        assistant_embedding = embed_text_via_lambda(assistant_content)
+                        if assistant_embedding:
+                            write_chat_message_embedding(conn, assistant_message['id'], assistant_embedding)
+                    except Exception:
+                        logger.exception("Failed to persist edited assistant message embedding", extra={
+                            "chat_id": msg['chat_id'],
+                            "message_id": assistant_message.get('id'),
+                        })
+            except Exception as e:
+                if is_streaming:
+                    send_sse_event(self, {"type": "error", "message": str(e)})
+                    return
+                raise
+            finally:
+                cursor.close()
 
         serialized_chunks = [
             {
@@ -1674,70 +1680,77 @@ class handler(BaseHTTPRequestHandler):
                     return
                 raise
 
-            # Displace current response to back, clear forward (new branch).
-            back, _ = _parse_reply_history(user_msg.get('reply_history'))
-            back = back + [{
-                'content': msg['content'],
-                'user_query': user_msg['content'],
-                'ts': datetime.now(timezone.utc).isoformat(),
-                'original_msg_id': msg['id'],
-                'ai_provider': msg.get('ai_provider'),
-                'ai_model': msg.get('ai_model'),
-            }]
-            new_reply_history = _build_reply_history(back, [])
+            try:
+                # Displace current response to back, clear forward (new branch).
+                back, _ = _parse_reply_history(user_msg.get('reply_history'))
+                back = back + [{
+                    'content': msg['content'],
+                    'user_query': user_msg['content'],
+                    'ts': datetime.now(timezone.utc).isoformat(),
+                    'original_msg_id': msg['id'],
+                    'ai_provider': msg.get('ai_provider'),
+                    'ai_model': msg.get('ai_model'),
+                }]
+                new_reply_history = _build_reply_history(back, [])
 
-            cursor.execute(
-                """
-                UPDATE chat_messages
-                SET reply_history = %s::jsonb
-                WHERE id = %s
-                RETURNING id, chat_id, role, content, context_material_ids, ai_provider, ai_model,
-                          is_edited, reply_history, edited_at, message_index, created_at
-                """,
-                (new_reply_history, user_msg['id'])
-            )
-            updated_user_msg = cursor.fetchone()
-
-            cursor.execute(
-                """
-                UPDATE chat_messages
-                SET is_deleted = TRUE
-                WHERE chat_id = %s
-                  AND message_index >= %s
-                  AND is_deleted = FALSE
-                """,
-                (msg['chat_id'], msg['message_index'])
-            )
-
-            next_idx = _next_message_index(conn, msg['chat_id'])
-
-            cursor.execute(
-                """
-                INSERT INTO chat_messages
-                    (chat_id, course_id, user_id, parent_message_id, role, content,
-                     ai_provider, ai_model, context_material_ids, grounding_meta, tool_trace,
-                     retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, chat_id, role, content, ai_provider, ai_model, retrieved_chunk_ids,
-                          message_index, created_at, tool_trace
-                """,
-                (
-                    msg['chat_id'],
-                    chat['course_id'],
-                    user['id'],
-                    user_msg['id'],
-                    assistant_content,
-                    ai_provider,
-                    ai_model,
-                    json.dumps(context_material_ids),
-                    json.dumps(grounding_meta or {}),
-                    json.dumps(tool_trace or []),
-                    json.dumps(retrieved_ids),
-                    next_idx,
+                cursor.execute(
+                    """
+                    UPDATE chat_messages
+                    SET reply_history = %s::jsonb
+                    WHERE id = %s
+                    RETURNING id, chat_id, role, content, context_material_ids, ai_provider, ai_model,
+                              is_edited, reply_history, edited_at, message_index, created_at
+                    """,
+                    (new_reply_history, user_msg['id'])
                 )
-            )
-            new_assistant = cursor.fetchone()
-            cursor.close()
+                updated_user_msg = cursor.fetchone()
+
+                cursor.execute(
+                    """
+                    UPDATE chat_messages
+                    SET is_deleted = TRUE
+                    WHERE chat_id = %s
+                      AND message_index >= %s
+                      AND is_deleted = FALSE
+                    """,
+                    (msg['chat_id'], msg['message_index'])
+                )
+
+                next_idx = _next_message_index(conn, msg['chat_id'])
+
+                cursor.execute(
+                    """
+                    INSERT INTO chat_messages
+                        (chat_id, course_id, user_id, parent_message_id, role, content,
+                         ai_provider, ai_model, context_material_ids, grounding_meta, tool_trace,
+                         retrieved_chunk_ids, message_index)
+                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id, chat_id, role, content, ai_provider, ai_model, retrieved_chunk_ids,
+                              message_index, created_at, tool_trace
+                    """,
+                    (
+                        msg['chat_id'],
+                        chat['course_id'],
+                        user['id'],
+                        user_msg['id'],
+                        assistant_content,
+                        ai_provider,
+                        ai_model,
+                        json.dumps(context_material_ids),
+                        json.dumps(grounding_meta or {}),
+                        json.dumps(tool_trace or []),
+                        json.dumps(retrieved_ids),
+                        next_idx,
+                    )
+                )
+                new_assistant = cursor.fetchone()
+            except Exception as e:
+                if is_streaming:
+                    send_sse_event(self, {"type": "error", "message": str(e)})
+                    return
+                raise
+            finally:
+                cursor.close()
 
         if is_streaming:
             send_sse_event(self, {

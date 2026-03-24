@@ -1425,6 +1425,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
       let scheduledDelay = 0;
       const PHASE_EVENTS = new Set(['loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
 
+      let editDoneReceived = false;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -1438,6 +1439,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
             const delay = scheduledDelay;
             setTimeout(() => {
               if (evt.type === 'done') {
+                editDoneReceived = true;
                 setStreamingStatus(null);
                 const nextMessages = [...keptPrefix, evt.user_message, evt.assistant_message];
                 setMessages(nextMessages);
@@ -1453,6 +1455,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 setSending(false);
                 sendingRef.current = false;
               } else if (evt.type === 'error') {
+                editDoneReceived = true;
                 setStreamingStatus(null);
                 setMessages(prevMessages);
                 setMsgChunks(prevMsgChunks);
@@ -1465,6 +1468,13 @@ export default function ChatTab({ course, userData, sessionToken }) {
             if (PHASE_EVENTS.has(evt.type)) scheduledDelay += 400;
           } catch {}
         }
+      }
+      if (!editDoneReceived) {
+        setStreamingStatus(null);
+        setMessages(prevMessages);
+        setMsgChunks(prevMsgChunks);
+        setSending(false);
+        sendingRef.current = false;
       }
     } catch {
       setStreamingStatus(null);
@@ -1600,6 +1610,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
       let scheduledDelay = 0;
       const PHASE_EVENTS = new Set(['loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
 
+      let regenDoneReceived = false;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -1613,6 +1624,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
             const delay = scheduledDelay;
             setTimeout(() => {
               if (evt.type === 'done') {
+                regenDoneReceived = true;
                 setStreamingStatus(null);
                 const nextMessages = [...keptPrefix, evt.user_message, evt.assistant_message];
                 setMessages(nextMessages);
@@ -1623,6 +1635,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
                 setSending(false);
                 sendingRef.current = false;
               } else if (evt.type === 'error') {
+                regenDoneReceived = true;
                 setStreamingStatus(null);
                 setMessages(prevMessages);
                 setMsgChunks(prevMsgChunks);
@@ -1635,6 +1648,13 @@ export default function ChatTab({ course, userData, sessionToken }) {
             if (PHASE_EVENTS.has(evt.type)) scheduledDelay += 400;
           } catch {}
         }
+      }
+      if (!regenDoneReceived) {
+        setStreamingStatus(null);
+        setMessages(prevMessages);
+        setMsgChunks(prevMsgChunks);
+        setSending(false);
+        sendingRef.current = false;
       }
     } catch {
       setStreamingStatus(null);

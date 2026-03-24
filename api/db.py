@@ -192,7 +192,7 @@ def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_messages_course_content_search
                 ON chat_messages(course_id)
-                INCLUDE (chat_id, content, created_at)
+                INCLUDE (chat_id, created_at)
                 WHERE is_deleted = FALSE;
 
             CREATE INDEX IF NOT EXISTS idx_messages_content_fulltext
