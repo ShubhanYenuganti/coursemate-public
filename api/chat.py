@@ -104,11 +104,8 @@ def _is_enabled(env_name: str, default: bool = False) -> bool:
 
 
 def _is_agentic_request(ai_provider: str, ai_model: str) -> bool:
-    return (
-        _is_enabled("AGENTIC_LOOP_ENABLED", default=False)
-        and ai_provider == "openai"
-        and ai_model == DEFAULT_AI_MODEL
-    )
+    _ = (ai_provider, ai_model)  # kept for backward-compatible call sites
+    return _is_enabled("AGENTIC_LOOP_ENABLED", default=False)
 
 
 class handler(BaseHTTPRequestHandler):

@@ -29,7 +29,7 @@ try:
 except ImportError:
     from tools import execute_rerank, execute_search_materials, execute_web_search, pull_grounding_context, resolve_references_llm
 
-SYSTEM_PROMPT = (
+_SYSTEM_PROMPT_BASE = (
     "You are a helpful course assistant. Answer the user's question using the "
     "provided course material excerpts.\n\n"
     "**Citations**: Cite sources using isolated bracket notation — [1] for one "
@@ -57,8 +57,11 @@ SYSTEM_PROMPT = (
     "- Headers (## or ###) to organise longer multi-section responses.\n\n"
     "**Math**: Wrap all mathematical expressions in LaTeX delimiters: "
     "$...$ for inline math and $$...$$ for display/block equations.\n\n"
-    "If the materials don't contain enough information to answer fully, say so clearly.\n\n"
-    "**Tool use**: Always call `search_materials` first. After reviewing the results, ask: "
+    "If the materials don't contain enough information to answer fully, say so clearly."
+)
+
+_SYSTEM_PROMPT_TOOL_USE = (
+    "\n\n**Tool use**: Always call `search_materials` first. After reviewing the results, ask: "
     "can I give a complete, specific, and accurate answer from these materials alone? "
     "If there is any doubt — the material is vague, missing key details, doesn't directly "
     "address the question, or the question involves implementation specifics, external libraries, "
@@ -70,6 +73,11 @@ SYSTEM_PROMPT = (
     "noisy or loosely related to the query — pass the chunk_ids from the search result and the "
     "same query. Skip reranking when results are already clearly relevant."
 )
+
+# Full prompt with tool use instructions — only used for agentic loop (OpenAI).
+# Non-agentic providers (Claude, Gemini) use _SYSTEM_PROMPT_BASE to avoid the
+# model hallucinating tool call syntax as plain text in its response.
+SYSTEM_PROMPT = _SYSTEM_PROMPT_BASE + _SYSTEM_PROMPT_TOOL_USE
 
 _TIMEOUT = 60  # seconds
 DEFAULT_AGENTIC_PROVIDER = "openai"
@@ -190,6 +198,7 @@ def _build_layered_system_context(
     conflict_notes: str,
     user_turn: str,
     required_entities: list | None = None,
+    selected_model_draft: str = "",
 ) -> str:
     resolved_tokens = _safe_int_env("GROUNDING_CONTEXT_TOKENS_RESOLVED", 300, 100, 1200)
     carry_tokens = _safe_int_env("GROUNDING_CONTEXT_TOKENS_CARRYOVER", 2200, 500, 4000)
@@ -221,6 +230,8 @@ def _build_layered_system_context(
         "## ConflictNotes\n"
         f"{_truncate_text(conflict_notes, _char_cap_from_tokens(conflict_tokens))}\n\n"
         f"{required_coverage_section}"
+        "## SelectedModelDraft\n"
+        f"{_truncate_text(selected_model_draft, 3000)}\n\n"
         "## UserTurn\n"
         f"{_truncate_text(user_turn, 1200)}"
     )
@@ -340,7 +351,7 @@ def _synthesize_claude(context: str, user_message: str, model: str, api_key: str
         json={
             "model": model,
             "max_tokens": 4096,
-            "system": f"{SYSTEM_PROMPT}\n\nCourse material excerpts:\n{context}",
+            "system": f"{_SYSTEM_PROMPT_BASE}\n\nCourse material excerpts:\n{context}",
             "messages": [{"role": "user", "content": user_message}],
         },
         timeout=_TIMEOUT,
@@ -361,7 +372,7 @@ def _synthesize_openai(context: str, user_message: str, model: str, api_key: str
             "messages": [
                 {
                     "role": "system",
-                    "content": f"{SYSTEM_PROMPT}\n\nCourse material excerpts:\n{context}",
+                    "content": f"{_SYSTEM_PROMPT_BASE}\n\nCourse material excerpts:\n{context}",
                 },
                 {"role": "user", "content": user_message},
             ],
@@ -381,7 +392,7 @@ def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str
         },
         json={
             "system_instruction": {
-                "parts": [{"text": f"{SYSTEM_PROMPT}\n\nCourse material excerpts:\n{context}"}]
+                "parts": [{"text": f"{_SYSTEM_PROMPT_BASE}\n\nCourse material excerpts:\n{context}"}]
             },
             "contents": [{"parts": [{"text": user_message}]}],
         },
@@ -415,6 +426,7 @@ def run_agent_openai(
     chunks: list,
     chat_id: int | None,
     context_material_ids: list,
+    selected_model_draft: str = "",
     on_event=None,
 ) -> tuple[str, list, list, dict]:
     debug = _is_enabled("AGENTIC_LOOP_DEBUG", default=False)
@@ -522,6 +534,7 @@ def run_agent_openai(
                 conflict_notes=conflict_notes,
                 user_turn=user_message,
                 required_entities=required_entities,
+                selected_model_draft=selected_model_draft,
             ),
         },
         {"role": "user", "content": resolved_query},
@@ -856,22 +869,24 @@ def synthesize(
     if ai_provider not in _PROVIDERS:
         raise ValueError(f"Unsupported provider: {ai_provider}")
 
-    api_key = _get_api_key(conn, user_id, ai_provider)
+    selected_provider_api_key = _get_api_key(conn, user_id, ai_provider)
     material_scope = context_material_ids if isinstance(context_material_ids, list) else []
-    use_agentic = (
-        _is_enabled("AGENTIC_LOOP_ENABLED", default=False)
-        and ai_provider == "openai"
-    )
+    use_agentic = _is_enabled("AGENTIC_LOOP_ENABLED", default=False)
 
     if use_agentic:
+        context = _format_context(chunks)
+        fn = _PROVIDERS[ai_provider]
+        selected_model_draft = fn(context, user_message, ai_model, selected_provider_api_key)
+        agentic_api_key = _get_api_key(conn, user_id, DEFAULT_AGENTIC_PROVIDER)
         text, grounding_refs, tool_trace, metadata = run_agent_openai(
             conn=conn,
             user_message=user_message,
             model=DEFAULT_AGENTIC_MODEL,
-            api_key=api_key,
+            api_key=agentic_api_key,
             chunks=chunks,
             chat_id=chat_id,
             context_material_ids=material_scope,
+            selected_model_draft=selected_model_draft,
             on_event=on_event,
         )
         logger.info(
@@ -880,6 +895,8 @@ def synthesize(
                 "chat_id": chat_id,
                 "provider": ai_provider,
                 "model": ai_model,
+                "agentic_provider": DEFAULT_AGENTIC_PROVIDER,
+                "agentic_model": DEFAULT_AGENTIC_MODEL,
                 "iterations": len([t for t in tool_trace if "tool_calls" in t]),
                 "tool_calls": len([t for t in tool_trace if t.get("tool")]),
                 "intent_type": metadata.get("intent_type"),
@@ -892,7 +909,7 @@ def synthesize(
 
     context = _format_context(chunks)
     fn = _PROVIDERS[ai_provider]
-    text = fn(context, user_message, ai_model, api_key)
+    text = fn(context, user_message, ai_model, selected_provider_api_key)
     chunk_ids = [
         _json_safe_chunk_id(c.get("id"))
         for c in chunks
