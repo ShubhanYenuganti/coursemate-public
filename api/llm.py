@@ -55,8 +55,10 @@ _SYSTEM_PROMPT_BASE = (
     "- Block quotes (> ...) for verbatim quotations from readings or source material.\n"
     "- Numbered or bulleted lists for steps, enumerations, and comparisons.\n"
     "- Headers (## or ###) to organise longer multi-section responses.\n\n"
-    "**Math**: Wrap all mathematical expressions in LaTeX delimiters: "
-    "$...$ for inline math and $$...$$ for display/block equations.\n\n"
+    "**Math**: Wrap mathematical expressions in LaTeX delimiters: "
+    "$...$ for inline math and $$...$$ for display/block equations. "
+    "Never use LaTeX delimiters for code-like tokens (e.g. env.step(action), file paths, "
+    "class names, API identifiers) — these must use inline backticks.\n\n"
     "If the materials don't contain enough information to answer fully, say so clearly."
 )
 
@@ -130,6 +132,79 @@ def _truncate_text(value: str, limit: int = 180) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "..."
+
+
+_INLINE_TOKEN_PATTERN = re.compile(
+    r"^(?:"
+    r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\([^`\n]*\)"  # fn()/obj.method()
+    r"|[A-Za-z_][A-Za-z0-9_./:-]*"  # identifier/path/token
+    r"|[A-Za-z_][A-Za-z0-9_]*\[[^`\n]+\]"  # key[index]
+    r")$"
+)
+
+_LIKELY_MATH_PATTERN = re.compile(
+    r"(\\[A-Za-z]+|\d|[=+\-*/^_])"
+)
+
+
+def _looks_inline_token(value: str) -> bool:
+    text = (value or "").strip()
+    if not text or "\n" in text or len(text) > 120:
+        return False
+    if text.startswith(("-", "*", ">")):
+        return False
+    return _INLINE_TOKEN_PATTERN.match(text) is not None
+
+
+def _looks_like_math(value: str) -> bool:
+    text = (value or "").strip()
+    if not text:
+        return False
+    return _LIKELY_MATH_PATTERN.search(text) is not None
+
+
+def _normalize_llm_markdown(text: str) -> str:
+    """
+    Apply deterministic formatting fixes for common model mistakes:
+    - one-line fenced blocks -> inline code
+    - non-math $$...$$ blocks -> inline code
+    - punctuation stranded on a new line after inline code
+    """
+    normalized = (text or "").strip()
+    if not normalized:
+        return ""
+
+    # Convert one-line fenced code blocks to inline code tokens.
+    fence_pattern = re.compile(r"```[ \t]*([A-Za-z0-9_+-]+)?[ \t]*\n([^\n`]+)\n```")
+
+    def _replace_one_line_fence(match: re.Match) -> str:
+        token = match.group(2).strip()
+        if _looks_inline_token(token):
+            return f"`{token}`"
+        return match.group(0)
+
+    normalized = fence_pattern.sub(_replace_one_line_fence, normalized)
+
+    # Convert non-math display LaTeX tokens to inline code.
+    display_math_pattern = re.compile(r"\$\$\s*([^$\n][^$]{0,140}?)\s*\$\$")
+
+    def _replace_non_math_display(match: re.Match) -> str:
+        token = match.group(1).strip()
+        if _looks_like_math(token):
+            return match.group(0)
+        if _looks_inline_token(token):
+            return f"`{token}`"
+        return match.group(0)
+
+    normalized = display_math_pattern.sub(_replace_non_math_display, normalized)
+
+    # Keep punctuation on same line when it follows an inline code token.
+    normalized = re.sub(r"`([^`\n]+)`\n([:;,.!?])", r"`\1`\2", normalized)
+
+    # Collapse sentence fragments split around converted inline code.
+    normalized = re.sub(r"([A-Za-z0-9)\]])\n`([^`\n]+)`\n([A-Za-z(])", r"\1 `\2` \3", normalized)
+
+    return normalized
 
 
 def _char_cap_from_tokens(tokens: int) -> int:
@@ -803,6 +878,8 @@ def run_agent_openai(
             )
             verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
 
+    final_text = _normalize_llm_markdown(final_text)
+
     if on_event:
         on_event({"type": "text", "content": final_text})
 
@@ -910,6 +987,7 @@ def synthesize(
     context = _format_context(chunks)
     fn = _PROVIDERS[ai_provider]
     text = fn(context, user_message, ai_model, selected_provider_api_key)
+    text = _normalize_llm_markdown(text)
     chunk_ids = [
         _json_safe_chunk_id(c.get("id"))
         for c in chunks
