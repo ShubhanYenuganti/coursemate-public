@@ -94,6 +94,33 @@ def _dedupe_preserve_order(values: list) -> list:
     return out
 
 
+def _truncate_text(value: str, limit: int = 180) -> str:
+    if not value:
+        return ""
+    text = str(value).strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
+
+
+def _chunk_previews(chunks: list, max_items: int = 3, excerpt_chars: int = 120) -> list:
+    previews = []
+    for chunk in (chunks or [])[:max_items]:
+        previews.append(
+            {
+                "id": _json_safe_chunk_id(chunk.get("id")),
+                "chunk_type": chunk.get("chunk_type"),
+                "similarity": chunk.get("similarity"),
+                "excerpt": _truncate_text(chunk.get("chunk_text", ""), excerpt_chars),
+            }
+        )
+    return previews
+
+
+def _id_preview(values: list, max_items: int = 12) -> list:
+    return [str(v) for v in (values or [])[:max_items]]
+
+
 def _get_api_key(conn, user_id: int, provider: str) -> str:
     """Fetch and decrypt the user's stored API key for the given provider."""
     cursor = conn.cursor()
@@ -223,15 +250,35 @@ def run_agent_openai(
     chat_id: int | None,
     context_material_ids: list,
 ) -> tuple[str, list, list]:
+    debug = _is_enabled("AGENTIC_LOOP_DEBUG", default=False)
     grounding_refs = _dedupe_preserve_order(
         [_json_safe_chunk_id(c.get("id")) for c in chunks if c.get("id") is not None]
     )
     grounding_text = ""
+    pulled_chunk_ids = []
     if chat_id is not None:
         pulled = pull_grounding_context(conn, chat_id, user_message)
         grounding_text = pulled.get("text", "")
-        grounding_refs.extend(pulled.get("chunk_ids", []))
+        pulled_chunk_ids = pulled.get("chunk_ids", []) or []
+        grounding_refs.extend(pulled_chunk_ids)
         grounding_refs = _dedupe_preserve_order(grounding_refs)
+
+    if debug:
+        logger.info(
+            "agentic_loop_debug",
+            extra={
+                "event": "loop_start",
+                "chat_id": chat_id,
+                "model": model,
+                "seed_chunk_count": len(chunks or []),
+                "seed_chunk_ids": _id_preview(
+                    [_json_safe_chunk_id(c.get("id")) for c in chunks if c.get("id") is not None]
+                ),
+                "seed_chunk_previews": _chunk_previews(chunks),
+                "grounding_pull_chunk_ids": _id_preview(pulled_chunk_ids),
+                "grounding_text_excerpt": _truncate_text(grounding_text, 280),
+            },
+        )
 
     messages = [
         {"role": "system", "content": _build_system_context(chunks, grounding_text)},
@@ -263,6 +310,18 @@ def run_agent_openai(
 
     for iteration in range(1, max_iterations + 1):
         started = time.time()
+        if debug:
+            logger.info(
+                "agentic_loop_debug",
+                extra={
+                    "event": "openai_request",
+                    "chat_id": chat_id,
+                    "iteration": iteration,
+                    "message_count": len(messages),
+                    "grounding_ref_count": len(grounding_refs),
+                    "grounding_ref_ids": _id_preview(grounding_refs),
+                },
+            )
         response = requests.post(
             "https://api.openai.com/v1/chat/completions",
             headers={
@@ -283,6 +342,18 @@ def run_agent_openai(
         choice = payload["choices"][0]
         message = choice.get("message", {})
         tool_calls = message.get("tool_calls") or []
+        if debug:
+            logger.info(
+                "agentic_loop_debug",
+                extra={
+                    "event": "openai_response",
+                    "chat_id": chat_id,
+                    "iteration": iteration,
+                    "finish_reason": choice.get("finish_reason"),
+                    "tool_call_count": len(tool_calls),
+                    "assistant_excerpt": _truncate_text(_message_text(message), 240),
+                },
+            )
 
         if not tool_calls:
             final_text = _message_text(message).strip()
@@ -313,6 +384,17 @@ def run_agent_openai(
                 args = json.loads(raw_args)
             except json.JSONDecodeError:
                 args = {}
+            if debug:
+                logger.info(
+                    "agentic_loop_debug",
+                    extra={
+                        "event": "tool_dispatch",
+                        "chat_id": chat_id,
+                        "iteration": iteration,
+                        "tool_name": name,
+                        "tool_args": args,
+                    },
+                )
 
             if name == "search_materials":
                 result = execute_search_materials(
@@ -330,6 +412,21 @@ def run_agent_openai(
 
             grounding_refs.extend(result.get("chunk_ids", []))
             grounding_refs = _dedupe_preserve_order(grounding_refs)
+            if debug:
+                logger.info(
+                    "agentic_loop_debug",
+                    extra={
+                        "event": "tool_result",
+                        "chat_id": chat_id,
+                        "iteration": iteration,
+                        "tool_name": name,
+                        "result_chunk_count": len(result.get("chunk_ids", []) or []),
+                        "result_chunk_ids": _id_preview(result.get("chunk_ids", []) or []),
+                        "result_excerpt": _truncate_text(result.get("text", ""), 280),
+                        "grounding_ref_count": len(grounding_refs),
+                        "grounding_ref_ids": _id_preview(grounding_refs),
+                    },
+                )
             messages.append(
                 {
                     "role": "tool",
@@ -358,6 +455,20 @@ def run_agent_openai(
         final_text = (
             "I ran out of tool-call iterations before finishing. "
             "Please ask a narrower follow-up."
+        )
+    if debug:
+        logger.info(
+            "agentic_loop_debug",
+            extra={
+                "event": "loop_end",
+                "chat_id": chat_id,
+                "max_iterations": max_iterations,
+                "trace_entries": len(tool_trace),
+                "tool_call_entries": len([t for t in tool_trace if t.get("tool")]),
+                "grounding_ref_count": len(grounding_refs),
+                "grounding_ref_ids": _id_preview(grounding_refs),
+                "final_excerpt": _truncate_text(final_text, 280),
+            },
         )
     return final_text, grounding_refs, tool_trace
 

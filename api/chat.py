@@ -14,9 +14,11 @@
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+from uuid import uuid4
 
 try:
     from .middleware import send_json, handle_options, authenticate_request, sanitize_string, check_rate_limit
@@ -92,6 +94,21 @@ def _parse_body(handler):
         return json.loads(body) if body else {}, None
     except ValueError:
         return None, "Invalid request body"
+
+
+def _is_enabled(env_name: str, default: bool = False) -> bool:
+    value = os.environ.get(env_name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _is_agentic_request(ai_provider: str, ai_model: str) -> bool:
+    return (
+        _is_enabled("AGENTIC_LOOP_ENABLED", default=False)
+        and ai_provider == "openai"
+        and ai_model == DEFAULT_AI_MODEL
+    )
 
 
 class handler(BaseHTTPRequestHandler):
@@ -601,6 +618,21 @@ class handler(BaseHTTPRequestHandler):
 
             # RAG retrieval + LLM synthesis
             chunks = retrieve_chunks(conn, content, context_material_ids)
+            request_id = f"send-{uuid4().hex[:10]}"
+            logger.info(
+                "chat_synthesize_start",
+                extra={
+                    "request_id": request_id,
+                    "action": "send",
+                    "chat_id": chat_id,
+                    "user_id": user["id"],
+                    "ai_provider": ai_provider,
+                    "ai_model": ai_model,
+                    "agentic_enabled": _is_agentic_request(ai_provider, ai_model),
+                    "retrieved_seed_chunks": len(chunks),
+                    "context_material_count": len(context_material_ids),
+                },
+            )
 
             try:
                 assistant_content, retrieved_ids = synthesize(
@@ -612,6 +644,18 @@ class handler(BaseHTTPRequestHandler):
                     chunks,
                     chat_id=chat_id,
                     context_material_ids=context_material_ids,
+                )
+                logger.info(
+                    "chat_synthesize_done",
+                    extra={
+                        "request_id": request_id,
+                        "action": "send",
+                        "chat_id": chat_id,
+                        "ai_provider": ai_provider,
+                        "ai_model": ai_model,
+                        "assistant_char_count": len(assistant_content or ""),
+                        "grounding_ref_count": len(retrieved_ids or []),
+                    },
                 )
             except ValueError as e:
                 send_json(self, 400, {"error": str(e)})
@@ -774,6 +818,21 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             chunks = retrieve_chunks(conn, content, context_material_ids)
+            request_id = f"edit-{uuid4().hex[:10]}"
+            logger.info(
+                "chat_synthesize_start",
+                extra={
+                    "request_id": request_id,
+                    "action": "edit",
+                    "chat_id": msg["chat_id"],
+                    "user_id": user["id"],
+                    "ai_provider": ai_provider,
+                    "ai_model": ai_model,
+                    "agentic_enabled": _is_agentic_request(ai_provider, ai_model),
+                    "retrieved_seed_chunks": len(chunks),
+                    "context_material_count": len(context_material_ids),
+                },
+            )
 
             try:
                 assistant_content, retrieved_ids = synthesize(
@@ -785,6 +844,18 @@ class handler(BaseHTTPRequestHandler):
                     chunks,
                     chat_id=msg['chat_id'],
                     context_material_ids=context_material_ids,
+                )
+                logger.info(
+                    "chat_synthesize_done",
+                    extra={
+                        "request_id": request_id,
+                        "action": "edit",
+                        "chat_id": msg["chat_id"],
+                        "ai_provider": ai_provider,
+                        "ai_model": ai_model,
+                        "assistant_char_count": len(assistant_content or ""),
+                        "grounding_ref_count": len(retrieved_ids or []),
+                    },
                 )
             except ValueError as e:
                 send_json(self, 400, {"error": str(e)})
@@ -1330,6 +1401,21 @@ class handler(BaseHTTPRequestHandler):
 
             context_material_ids = user_msg.get('context_material_ids') or []
             chunks = retrieve_chunks(conn, user_msg['content'], context_material_ids)
+            request_id = f"regen-{uuid4().hex[:10]}"
+            logger.info(
+                "chat_synthesize_start",
+                extra={
+                    "request_id": request_id,
+                    "action": "regenerate",
+                    "chat_id": msg["chat_id"],
+                    "user_id": user["id"],
+                    "ai_provider": ai_provider,
+                    "ai_model": ai_model,
+                    "agentic_enabled": _is_agentic_request(ai_provider, ai_model),
+                    "retrieved_seed_chunks": len(chunks),
+                    "context_material_count": len(context_material_ids),
+                },
+            )
 
             try:
                 assistant_content, retrieved_ids = synthesize(
@@ -1341,6 +1427,18 @@ class handler(BaseHTTPRequestHandler):
                     chunks,
                     chat_id=msg['chat_id'],
                     context_material_ids=context_material_ids,
+                )
+                logger.info(
+                    "chat_synthesize_done",
+                    extra={
+                        "request_id": request_id,
+                        "action": "regenerate",
+                        "chat_id": msg["chat_id"],
+                        "ai_provider": ai_provider,
+                        "ai_model": ai_model,
+                        "assistant_char_count": len(assistant_content or ""),
+                        "grounding_ref_count": len(retrieved_ids or []),
+                    },
                 )
             except ValueError as e:
                 send_json(self, 400, {"error": str(e)})
