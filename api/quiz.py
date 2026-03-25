@@ -6,6 +6,7 @@
 
 import json
 import os
+import re
 import requests
 import boto3
 from http.server import BaseHTTPRequestHandler
@@ -184,13 +185,13 @@ def _call_openai_json(api_key: str, model_id: str, system: str, user: str) -> di
                 {'role': 'system', 'content': system},
                 {'role': 'user', 'content': user},
             ],
-            'response_format': {'type': 'json_object'},
             'temperature': 0.7,
         },
         timeout=_TIMEOUT,
     )
     resp.raise_for_status()
-    return json.loads(resp.json()['choices'][0]['message']['content'])
+    raw = (resp.json().get('choices') or [{}])[0].get('message', {}).get('content', '')
+    return _parse_model_json(raw)
 
 
 def _call_claude_json(api_key: str, model_id: str, system: str, user: str) -> dict:
@@ -210,32 +211,61 @@ def _call_claude_json(api_key: str, model_id: str, system: str, user: str) -> di
         timeout=_TIMEOUT,
     )
     resp.raise_for_status()
-    raw = resp.json()['content'][0]['text'].strip()
-    if raw.startswith('```'):
-        raw = raw.split('\n', 1)[-1].rsplit('```', 1)[0].strip()
-    return json.loads(raw)
+    payload = resp.json()
+    content_blocks = payload.get('content') or []
+    text_parts = [b.get('text', '') for b in content_blocks if isinstance(b, dict) and b.get('type') == 'text']
+    raw = '\n'.join([p for p in text_parts if p]).strip()
+    return _parse_model_json(raw)
 
 
 def _call_gemini_json(api_key: str, model_id: str, system: str, user: str) -> dict:
-    url = (
-        f'https://generativelanguage.googleapis.com/v1beta/models/'
-        f'{model_id}:generateContent?key={api_key}'
-    )
+    url = f'https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent'
     resp = requests.post(
         url,
+        headers={
+            'x-goog-api-key': api_key,
+            'Content-Type': 'application/json',
+        },
         json={
+            'system_instruction': {'parts': [{'text': system}]},
             'contents': [{'parts': [{'text': user}]}],
-            'systemInstruction': {'parts': [{'text': system}]},
-            'generationConfig': {
-                'responseMimeType': 'application/json',
-                'temperature': 0.7,
-            },
         },
         timeout=_TIMEOUT,
     )
     resp.raise_for_status()
-    raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
-    return json.loads(raw)
+    payload = resp.json()
+    candidates = payload.get('candidates') or []
+    parts = (((candidates[0] if candidates else {}).get('content') or {}).get('parts') or [])
+    raw = '\n'.join([str(p.get('text', '')) for p in parts if isinstance(p, dict) and p.get('text')]).strip()
+    return _parse_model_json(raw)
+
+
+def _parse_model_json(raw: str) -> dict:
+    raw = (raw or '').strip()
+    if not raw:
+        raise ValueError("Model returned empty content; expected JSON object")
+
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+
+    if raw.startswith('```'):
+        stripped = raw.split('\n', 1)[-1].rsplit('```', 1)[0].strip()
+        try:
+            return json.loads(stripped)
+        except Exception:
+            raw = stripped
+
+    match = re.search(r'\{.*\}', raw, flags=re.DOTALL)
+    if match:
+        candidate = match.group(0).strip()
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+    raise ValueError("Could not parse model JSON output")
 
 
 def _call_llm_json(provider: str, api_key: str, model_id: str, system: str, user: str) -> dict:

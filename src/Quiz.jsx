@@ -358,8 +358,12 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
         stopPolling(genId);
       }
       return true;
-    } catch {
-      setGenerateError('Failed to start generation. Please try again.');
+    } catch (err) {
+      if (err?.name === 'AbortError') {
+        setGenerateError('Request was interrupted. Please try again.');
+      } else {
+        setGenerateError(`Failed to start generation. ${err?.message || 'Please try again.'}`);
+      }
       loadHistory();
       return false;
     }
@@ -466,8 +470,12 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
           setGenerateError('Estimate returned no generation_id.');
         }
       }
-    } catch {
-      setGenerateError('Something went wrong. Please try again.');
+    } catch (err) {
+      if (err?.name === 'AbortError') {
+        setGenerateError('Estimate request was interrupted. Please try again.');
+      } else {
+        setGenerateError(`Estimate request failed. ${err?.message || 'Please try again.'}`);
+      }
     } finally {
       setEstimating(false);
     }
