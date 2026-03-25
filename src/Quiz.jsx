@@ -258,8 +258,18 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
       });
       const data = await r.json();
       const generations = Array.isArray(data?.generations) ? data.generations : [];
-      setHistoryGenerations(generations);
-      generations.forEach((g) => {
+      // Preserve local in-flight state if list_generations briefly returns stale "draft".
+      const locallyGenerating = new Set([
+        ...Array.from(generatingIds, (id) => String(id)),
+        ...Object.keys(pollTimersRef.current),
+      ]);
+      const normalizedGenerations = generations.map((g) => (
+        locallyGenerating.has(String(g.generation_id)) && g.status === 'draft'
+          ? { ...g, status: 'generating' }
+          : g
+      ));
+      setHistoryGenerations(normalizedGenerations);
+      normalizedGenerations.forEach((g) => {
         if (g.status === 'generating') startPolling(g.generation_id);
       });
     } catch {}
@@ -346,7 +356,6 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
         // If the response failed, polling will catch 'failed' status.
       })
       .catch(() => { /* connection dropped — polling will detect completion */ });
-    loadHistory();
   }, [sessionToken, startPolling, stopPolling]);
 
   async function reopenFromHistory(gen) {
