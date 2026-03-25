@@ -1,15 +1,28 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
-export default function GenerationConfirmModal({ data, onConfirm, onCancel, onSaveDraft }) {
+export default function GenerationConfirmModal({
+  data,
+  onConfirm,
+  onCancel,
+  onSaveDraft,
+  availableProviders = [],
+  providerModels = {},
+  modelLabels = {},
+}) {
+  const [selectedProvider, setSelectedProvider] = useState(data?.provider || '');
+  const [selectedModelId, setSelectedModelId] = useState(data?.model_id || '');
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
   useEffect(() => {
     function onKeyDown(e) {
       if (e.key === 'Escape') {
+        if (dropdownOpen) { setDropdownOpen(false); return; }
         onCancel?.();
       }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onCancel]);
+  }, [onCancel, dropdownOpen]);
 
   if (!data) return null;
 
@@ -28,6 +41,13 @@ export default function GenerationConfirmModal({ data, onConfirm, onCancel, onSa
       ? `Total: ${totalLow}-${totalHigh}`
       : 'Total: N/A';
 
+  const providerLabel = modelLabels[selectedProvider] || selectedProvider || data.provider;
+  const modelLabel =
+    (providerModels[selectedProvider] || []).find((m) => m.id === selectedModelId)?.label ||
+    selectedModelId ||
+    data.model_id;
+  const hasProviders = availableProviders.length > 0;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-6">
       <div className="w-full max-w-lg rounded-2xl bg-white border border-gray-200 shadow-xl p-4 sm:p-5">
@@ -44,9 +64,54 @@ export default function GenerationConfirmModal({ data, onConfirm, onCancel, onSa
         </div>
 
         <div className="mt-4 space-y-3">
-          <div className="text-xs text-gray-600">
-            Model: <span className="font-medium text-gray-900">{data.provider || 'provider'}</span>{' '}
-            <span className="font-medium text-gray-900">{data.model_id || ''}</span>
+          {/* Model picker */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-600 flex-shrink-0">Model:</span>
+            {hasProviders ? (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setDropdownOpen((o) => !o)}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-xs text-gray-700 hover:border-indigo-400 transition-colors"
+                >
+                  <span className="font-medium">{providerLabel}</span>
+                  <span className="text-gray-400">·</span>
+                  <span>{modelLabel}</span>
+                  <svg className="w-3 h-3 text-gray-400 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                </button>
+                {dropdownOpen && (
+                  <div className="absolute z-10 mt-1 left-0 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-[200px] max-h-[220px] overflow-y-auto">
+                    {availableProviders.map((prov) => (
+                      <div key={prov}>
+                        <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                          {modelLabels[prov] || prov}
+                        </p>
+                        {(providerModels[prov] || []).map((model) => (
+                          <button
+                            key={model.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedProvider(prov);
+                              setSelectedModelId(model.id);
+                              setDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-4 py-1.5 text-xs hover:bg-indigo-50 transition-colors ${
+                              model.id === selectedModelId ? 'text-indigo-600 font-medium' : 'text-gray-700'
+                            }`}
+                          >
+                            {model.label}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <span className="text-xs font-medium text-gray-900">
+                {providerLabel} {modelLabel}
+              </span>
+            )}
           </div>
 
           <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2">
@@ -82,7 +147,7 @@ export default function GenerationConfirmModal({ data, onConfirm, onCancel, onSa
             )}
             <button
               type="button"
-              onClick={() => onConfirm?.()}
+              onClick={() => onConfirm?.({ provider: selectedProvider, model_id: selectedModelId })}
               className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors"
             >
               Confirm generate

@@ -619,8 +619,10 @@ class handler(BaseHTTPRequestHandler):
                     return
 
                 course_id = draft['course_id']
-                provider = draft.get('provider') or provider
-                model_id = draft.get('model_id') or model_id
+                # Request body provider/model_id take precedence over stored draft values
+                # so the user can switch models at confirm time.
+                provider = body.get('provider') or draft.get('provider') or provider
+                model_id = body.get('model_id') or draft.get('model_id') or model_id
                 topic = draft.get('topic') or topic
                 tf_count = int(draft.get('tf_count') or 0)
                 sa_count = int(draft.get('sa_count') or 0)
@@ -657,10 +659,10 @@ class handler(BaseHTTPRequestHandler):
                         send_json(self, 403, {'error': 'parent_generation_id not owned by user'})
                         return
 
-                # Move draft to generating (reuses same generation_id)
+                # Move draft to generating, persisting any model override from the request body.
                 cursor.execute(
-                    "UPDATE quiz_generations SET status='generating', parent_generation_id=%s WHERE id=%s",
-                    (parent_generation_id_int, draft_generation_id),
+                    "UPDATE quiz_generations SET status='generating', provider=%s, model_id=%s, parent_generation_id=%s WHERE id=%s",
+                    (provider, model_id, parent_generation_id_int, draft_generation_id),
                 )
                 gen_id = draft_generation_id
 

@@ -318,17 +318,20 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   }, [sessionToken, stopPolling]);
 
   // Fire generate (from draft or confirm) and begin polling.
-  const triggerGeneration = useCallback((genId, parentId = null) => {
+  const triggerGeneration = useCallback((genId, parentId = null, provider = null, modelId = null) => {
     startPolling(genId);
     // Optimistically flip the row to 'generating' in the local list so the UI
     // updates instantly without waiting for the loadHistory round-trip.
     setHistoryGenerations((prev) =>
       prev.map((g) => g.generation_id === genId ? { ...g, status: 'generating' } : g)
     );
+    const body = { action: 'generate', generation_id: genId, parent_generation_id: parentId };
+    if (provider) body.provider = provider;
+    if (modelId) body.model_id = modelId;
     fetch('/api/quiz', {
       method: 'POST',
       headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'generate', generation_id: genId, parent_generation_id: parentId }),
+      body: JSON.stringify(body),
     })
       .then(async (res) => {
         if (res.ok) {
@@ -454,12 +457,12 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
     }
   }
 
-  function confirmGenerate() {
+  function confirmGenerate({ provider, model_id: modelId } = {}) {
     if (!confirmModalData) return;
     const { generation_id: genId, parent_generation_id: parentId } = confirmModalData;
     setConfirmModalData(null);
     setGenerateError('');
-    triggerGeneration(genId, parentId);
+    triggerGeneration(genId, parentId, provider || null, modelId || null);
   }
 
   function saveDraft() {
@@ -469,7 +472,15 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   }
 
   function cancelConfirm() {
+    const genId = confirmModalData?.generation_id;
     setConfirmModalData(null);
+    if (!genId) return;
+    // Optimistically remove the draft row created by the estimate step.
+    setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== genId));
+    fetch(`/api/quiz?generation_id=${genId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    }).catch(() => {});
   }
 
   async function deleteGeneration(genId) {
@@ -506,7 +517,15 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
           }}
         />
         {confirmModalData && (
-          <GenerationConfirmModal data={confirmModalData} onConfirm={confirmGenerate} onCancel={cancelConfirm} onSaveDraft={saveDraft} />
+          <GenerationConfirmModal
+            data={confirmModalData}
+            onConfirm={confirmGenerate}
+            onCancel={cancelConfirm}
+            onSaveDraft={saveDraft}
+            availableProviders={availableProviders}
+            providerModels={PROVIDER_MODELS}
+            modelLabels={MODEL_LABELS}
+          />
         )}
       </>
     );
@@ -847,7 +866,15 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
         </p>
 
         {confirmModalData && (
-          <GenerationConfirmModal data={confirmModalData} onConfirm={confirmGenerate} onCancel={cancelConfirm} onSaveDraft={saveDraft} />
+          <GenerationConfirmModal
+            data={confirmModalData}
+            onConfirm={confirmGenerate}
+            onCancel={cancelConfirm}
+            onSaveDraft={saveDraft}
+            availableProviders={availableProviders}
+            providerModels={PROVIDER_MODELS}
+            modelLabels={MODEL_LABELS}
+          />
         )}
       </div>
 
