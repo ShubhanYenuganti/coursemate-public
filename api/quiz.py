@@ -508,6 +508,17 @@ class handler(BaseHTTPRequestHandler):
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute(
+                "SELECT artifact_material_id FROM quiz_generations WHERE id=%s AND generated_by=%s",
+                (gen_id, user_id),
+            )
+            row = cursor.fetchone()
+            if not row:
+                cursor.close()
+                send_json(self, 404, {'error': 'Generation not found'})
+                return
+            if row['artifact_material_id']:
+                cursor.execute("DELETE FROM materials WHERE id=%s", (row['artifact_material_id'],))
+            cursor.execute(
                 "DELETE FROM quiz_generations WHERE id=%s AND generated_by=%s RETURNING id",
                 (gen_id, user_id),
             )

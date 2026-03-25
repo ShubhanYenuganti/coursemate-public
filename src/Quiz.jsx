@@ -248,6 +248,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   }, [providerDropdownOpen]);
 
   // Load generation history for the current course.
+  // Also resumes polling for any rows that are still mid-generation (e.g. after a page refresh).
   async function loadHistory() {
     if (!course?.id || !sessionToken) return;
     setHistoryLoading(true);
@@ -256,7 +257,11 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
         headers: { Authorization: `Bearer ${sessionToken}` },
       });
       const data = await r.json();
-      setHistoryGenerations(Array.isArray(data?.generations) ? data.generations : []);
+      const generations = Array.isArray(data?.generations) ? data.generations : [];
+      setHistoryGenerations(generations);
+      generations.forEach((g) => {
+        if (g.status === 'generating') startPolling(g.generation_id);
+      });
     } catch {}
     finally { setHistoryLoading(false); }
   }
@@ -297,15 +302,6 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
           setHistoryGenerations((prev) =>
             prev.map((g) => g.generation_id === genId ? { ...g, status: 'ready' } : g)
           );
-          const genR = await fetch(`/api/quiz?action=get_generation&generation_id=${genId}`, {
-            headers: { Authorization: `Bearer ${sessionToken}` },
-          });
-          const genData = await genR.json().catch(() => null);
-          if (genData?.generation_id) {
-            setGenerationId(genData.generation_id);
-            setParentGenerationId(genData.parent_generation_id || null);
-            setQuizData(genData);
-          }
           loadHistory();
         } else if (data.status === 'failed') {
           stopPolling(genId);
@@ -342,9 +338,6 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
             setHistoryGenerations((prev) =>
               prev.map((g) => g.generation_id === genId ? { ...g, status: 'ready' } : g)
             );
-            setGenerationId(data.generation_id);
-            setParentGenerationId(data.parent_generation_id || null);
-            setQuizData(data);
           }
         }
         // If the response failed, polling will catch 'failed' status.
@@ -377,6 +370,16 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
+  }
+
+  function toggleSelectAll() {
+    if (selectAll) {
+      setSelectAll(false);
+      setSelectedSources(new Set());
+    } else {
+      setSelectAll(true);
+      setSelectedSources(new Set());
+    }
   }
 
   const selectedCount = selectAll ? materials.length : selectedSources.size;
@@ -519,7 +522,10 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
             <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Sources</span>
             <span className="text-[10px] text-gray-400 tabular-nums">{selectedCount}/{materials.length}</span>
           </div>
-          <p className="text-[10px] text-gray-400 leading-snug">Select sources to include in generation</p>
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] text-gray-400 leading-snug">Select sources to include in generation</p>
+            <SourceToggle checked={selectAll} onToggle={toggleSelectAll} />
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
@@ -771,7 +777,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
                               onClick={() => reopenFromHistory(g)}
                               className="px-2 py-1 rounded-lg border border-gray-200 text-[10px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
                             >
-                              Reopen
+                              Open
                             </button>
                             {status === 'ready' && (
                               <button
