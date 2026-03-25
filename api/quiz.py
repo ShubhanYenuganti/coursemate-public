@@ -322,9 +322,9 @@ def _persist_draft_generation(
             estimated_prompt_tokens_high,
             estimated_total_tokens_low,
             estimated_total_tokens_high,
-            material_ids,
+            json.dumps(material_ids),
             prompt_text,
-            generation_settings,
+            json.dumps(generation_settings),
         ),
     )
     gen_id = cursor.fetchone()["id"]
@@ -668,17 +668,19 @@ class handler(BaseHTTPRequestHandler):
                     WHERE id=%s
                     """,
                     (
-                        material_ids,
-                        {
-                            "topic": topic,
-                            "tf_count": tf_count,
-                            "sa_count": sa_count,
-                            "la_count": la_count,
-                            "mcq_count": mcq_count,
-                            "mcq_options": mcq_options,
-                            "provider": provider,
-                            "model_id": model_id,
-                        },
+                        json.dumps(material_ids),
+                        json.dumps(
+                            {
+                                "topic": topic,
+                                "tf_count": tf_count,
+                                "sa_count": sa_count,
+                                "la_count": la_count,
+                                "mcq_count": mcq_count,
+                                "mcq_options": mcq_options,
+                                "provider": provider,
+                                "model_id": model_id,
+                            }
+                        ),
                         gen_id,
                     ),
                 )
