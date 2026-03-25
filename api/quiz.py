@@ -382,7 +382,8 @@ def _build_viewer_payload(generation_id: int, questions: list, title: str,
                            mcq_options=None,
                            provider=None,
                            model_id=None,
-                           selected_material_ids=None) -> dict:
+                           selected_material_ids=None,
+                           artifact_material_id=None) -> dict:
     """Build the viewer-ready response payload."""
     return {
         'generation_id': generation_id,
@@ -397,6 +398,7 @@ def _build_viewer_payload(generation_id: int, questions: list, title: str,
         'provider': provider,
         'model_id': model_id,
         'selected_material_ids': selected_material_ids,
+        'artifact_material_id': artifact_material_id,
         'title': title,
         'questions': questions,
     }
@@ -448,6 +450,7 @@ def _load_generation_from_db(conn, generation_id: int) -> dict:
         provider=gen.get('provider'),
         model_id=gen.get('model_id'),
         selected_material_ids=gen.get('selected_material_ids'),
+        artifact_material_id=gen.get('artifact_material_id'),
     )
 
 
@@ -475,10 +478,45 @@ class handler(BaseHTTPRequestHandler):
             self._get_generation_status(params, user)
         elif action == 'list_generations':
             self._list_generations(params, user)
+        elif action == 'list_attempts':
+            self._list_attempts(params, user)
+        elif action == 'get_attempt':
+            self._get_attempt(params, user)
         elif action == 'export_pdf':
             self._export_pdf(params, user)
         else:
             send_json(self, 400, {'error': f'Unknown action: {action}'})
+
+    # --- DELETE ----------------------------------------------------------------
+
+    def do_DELETE(self):
+        google_id, _ = authenticate_request(self)
+        if not google_id:
+            send_json(self, 401, {'error': 'Unauthorized'})
+            return
+        user = User.get_by_google_id(google_id)
+        if not user:
+            send_json(self, 404, {'error': 'User not found'})
+            return
+        params = parse_qs(urlparse(self.path).query)
+        gen_id_raw = params.get('generation_id', [None])[0]
+        if not gen_id_raw or not str(gen_id_raw).isdigit():
+            send_json(self, 400, {'error': 'generation_id required'})
+            return
+        gen_id = int(gen_id_raw)
+        user_id = user['id']
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM quiz_generations WHERE id=%s AND generated_by=%s RETURNING id",
+                (gen_id, user_id),
+            )
+            deleted = cursor.fetchone()
+            cursor.close()
+        if not deleted:
+            send_json(self, 404, {'error': 'Generation not found'})
+            return
+        send_json(self, 200, {'deleted': gen_id})
 
     # --- POST ------------------------------------------------------------------
 
@@ -992,6 +1030,121 @@ class handler(BaseHTTPRequestHandler):
                 'per_question': grade.get('per_question', []),
             },
         )
+
+    # --- list_attempts ---------------------------------------------------------
+
+    def _list_attempts(self, params: dict, user: dict):
+        gen_id_raw = params.get('generation_id', [None])[0]
+        if not gen_id_raw or not str(gen_id_raw).isdigit():
+            send_json(self, 400, {'error': 'generation_id required'})
+            return
+        gen_id = int(gen_id_raw)
+        user_id = user['id']
+        with get_db() as conn:
+            cursor = conn.cursor()
+            # Verify ownership
+            cursor.execute(
+                "SELECT id FROM quiz_generations WHERE id=%s AND generated_by=%s",
+                (gen_id, user_id),
+            )
+            if not cursor.fetchone():
+                cursor.close()
+                send_json(self, 404, {'error': 'Generation not found'})
+                return
+            cursor.execute(
+                """
+                SELECT id AS attempt_id, submitted_at, score_percent, manual_review_count
+                FROM quiz_attempts
+                WHERE generation_id=%s AND user_id=%s
+                ORDER BY submitted_at DESC
+                """,
+                (gen_id, user_id),
+            )
+            rows = cursor.fetchall()
+            cursor.close()
+        send_json(self, 200, {'attempts': rows})
+
+    # --- get_attempt -----------------------------------------------------------
+
+    def _get_attempt(self, params: dict, user: dict):
+        attempt_id_raw = params.get('attempt_id', [None])[0]
+        if not attempt_id_raw or not str(attempt_id_raw).isdigit():
+            send_json(self, 400, {'error': 'attempt_id required'})
+            return
+        attempt_id = int(attempt_id_raw)
+        user_id = user['id']
+        with get_db() as conn:
+            cursor = conn.cursor()
+            # Fetch attempt, verify it belongs to this user
+            cursor.execute(
+                """
+                SELECT qa.id, qa.submitted_at, qa.score_percent, qa.manual_review_count,
+                       qa.result_summary
+                FROM quiz_attempts qa
+                JOIN quiz_generations qg ON qa.generation_id = qg.id
+                WHERE qa.id=%s AND qa.user_id=%s AND qg.generated_by=%s
+                """,
+                (attempt_id, user_id, user_id),
+            )
+            attempt = cursor.fetchone()
+            if not attempt:
+                cursor.close()
+                send_json(self, 404, {'error': 'Attempt not found'})
+                return
+
+            cursor.execute(
+                """
+                SELECT qaa.response_text, qaa.is_correct, qaa.skipped,
+                       qq.id AS question_id, qq.question_index, qq.question_type,
+                       qq.question_text, qq.correct_answer_text, qq.explanation
+                FROM quiz_attempt_answers qaa
+                JOIN quiz_questions qq ON qaa.question_id = qq.id
+                WHERE qaa.attempt_id=%s
+                ORDER BY qq.question_index
+                """,
+                (attempt_id,),
+            )
+            answer_rows = cursor.fetchall()
+
+            # Fetch MCQ options for any MCQ questions in one query
+            mcq_ids = [r['question_id'] for r in answer_rows if r['question_type'] == 'mcq']
+            options_by_qid = {}
+            if mcq_ids:
+                cursor.execute(
+                    """
+                    SELECT question_id, option_text
+                    FROM quiz_question_options
+                    WHERE question_id = ANY(%s::int[])
+                    ORDER BY question_id, option_index
+                    """,
+                    (mcq_ids,),
+                )
+                for opt in cursor.fetchall():
+                    options_by_qid.setdefault(opt['question_id'], []).append(opt['option_text'])
+
+            cursor.close()
+
+        per_question = []
+        for r in answer_rows:
+            per_question.append({
+                'question_index': r['question_index'],
+                'question_type': r['question_type'],
+                'question_text': r['question_text'],
+                'correct_answer': r['correct_answer_text'],
+                'explanation': r['explanation'],
+                'options': options_by_qid.get(r['question_id']),
+                'user_response': r['response_text'],
+                'is_correct': r['is_correct'],
+                'skipped': r['skipped'],
+            })
+
+        send_json(self, 200, {
+            'attempt_id': attempt['id'],
+            'submitted_at': str(attempt['submitted_at']),
+            'score_percent': attempt['score_percent'],
+            'manual_review_count': attempt['manual_review_count'],
+            'per_question': per_question,
+        })
 
     # --- get_generation_status -------------------------------------------------
 

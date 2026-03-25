@@ -30,6 +30,18 @@ function SparkleIcon() {
   );
 }
 
+function TrashIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
+    </svg>
+  );
+}
+
 function ChevronDownIcon() {
   return (
     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -282,6 +294,9 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
 
         if (data.status === 'ready') {
           stopPolling(genId);
+          setHistoryGenerations((prev) =>
+            prev.map((g) => g.generation_id === genId ? { ...g, status: 'ready' } : g)
+          );
           const genR = await fetch(`/api/quiz?action=get_generation&generation_id=${genId}`, {
             headers: { Authorization: `Bearer ${sessionToken}` },
           });
@@ -294,6 +309,9 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
           loadHistory();
         } else if (data.status === 'failed') {
           stopPolling(genId);
+          setHistoryGenerations((prev) =>
+            prev.map((g) => g.generation_id === genId ? { ...g, status: 'failed' } : g)
+          );
           setGenerateError(data.error ? `Generation failed: ${data.error}` : 'Generation failed.');
           loadHistory();
         }
@@ -306,6 +324,11 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   // Fire generate (from draft or confirm) and begin polling.
   const triggerGeneration = useCallback((genId, parentId = null) => {
     startPolling(genId);
+    // Optimistically flip the row to 'generating' in the local list so the UI
+    // updates instantly without waiting for the loadHistory round-trip.
+    setHistoryGenerations((prev) =>
+      prev.map((g) => g.generation_id === genId ? { ...g, status: 'generating' } : g)
+    );
     fetch('/api/quiz', {
       method: 'POST',
       headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
@@ -316,6 +339,9 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
           const data = await res.json().catch(() => null);
           if (data?.generation_id) {
             stopPolling(genId);
+            setHistoryGenerations((prev) =>
+              prev.map((g) => g.generation_id === genId ? { ...g, status: 'ready' } : g)
+            );
             setGenerationId(data.generation_id);
             setParentGenerationId(data.parent_generation_id || null);
             setQuizData(data);
@@ -327,31 +353,16 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
     loadHistory();
   }, [sessionToken, startPolling, stopPolling]);
 
-  function reopenFromHistory(gen) {
+  async function reopenFromHistory(gen) {
     if (!gen) return;
-    setTopic(gen.topic || '');
-    setTfCount(gen.tf_count || 0);
-    setSaCount(gen.sa_count || 0);
-    setLaCount(gen.la_count || 0);
-    setMcqCount(gen.mcq_count || 0);
-    setMcqOptions(gen.mcq_options || 4);
-
-    const mids = Array.isArray(gen.selected_material_ids) ? gen.selected_material_ids : null;
-    if (mids && mids.length > 0) {
-      setSelectAll(false);
-      setSelectedSources(new Set(mids));
-    } else {
-      setSelectAll(true);
-      setSelectedSources(new Set());
-    }
-
-    if (gen.provider) {
-      setSelectedProvider(gen.provider);
-      localStorage.setItem('quiz_selected_provider', gen.provider);
-    }
-    if (gen.model_id) {
-      setSelectedModelId(gen.model_id);
-      localStorage.setItem('quiz_selected_model_id', gen.model_id);
+    const res = await fetch(`/api/quiz?action=get_generation&generation_id=${gen.generation_id}`, {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    });
+    const data = await res.json().catch(() => null);
+    if (data?.generation_id) {
+      setGenerationId(data.generation_id);
+      setParentGenerationId(data.parent_generation_id || null);
+      setQuizData(data);
     }
   }
 
@@ -427,6 +438,8 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
             mcq_options: mcqOptionsToUse,
             parent_generation_id: parentId,
           });
+          // Refresh history so the draft row is already in the list before the user confirms.
+          loadHistory();
         } else {
           setGenerateError('Estimate returned no generation_id.');
         }
@@ -454,6 +467,15 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
 
   function cancelConfirm() {
     setConfirmModalData(null);
+  }
+
+  async function deleteGeneration(genId) {
+    stopPolling(genId);
+    setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== genId));
+    await fetch(`/api/quiz?generation_id=${genId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    }).catch(() => {});
   }
 
   if (quizData) {
@@ -704,15 +726,25 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
                           {g.provider || 'provider'} · {g.model_id || 'model'} · {createdAt}
                         </p>
                       </div>
-                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-medium ${badgeClass}`}>
-                        {status === 'generating' && (
-                          <svg className="animate-spin h-2.5 w-2.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                          </svg>
-                        )}
-                        {status}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-medium ${badgeClass}`}>
+                          {status === 'generating' && (
+                            <svg className="animate-spin h-2.5 w-2.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                            </svg>
+                          )}
+                          {status}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => deleteGeneration(g.generation_id)}
+                          className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                          aria-label="Delete"
+                        >
+                          <TrashIcon />
+                        </button>
+                      </div>
                     </div>
 
                     <div className="mt-2 flex items-center justify-between gap-3">

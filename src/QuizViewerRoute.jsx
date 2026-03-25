@@ -2,6 +2,23 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import QuizViewer from './QuizViewer';
 
+function ToolbarItem({ icon, label, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex items-center gap-2 transition-all duration-150 rounded-xl px-1 py-1 focus:outline-none cursor-pointer"
+    >
+      <span className="max-w-0 overflow-hidden whitespace-nowrap text-sm font-medium transition-all duration-200 ease-out group-hover:max-w-xs text-gray-700">
+        {label}
+      </span>
+      <div className="w-10 h-10 flex items-center justify-center rounded-xl border shadow-sm text-lg transition-all duration-200 bg-white/80 border-gray-200 text-gray-600 group-hover:text-indigo-600 group-hover:border-indigo-300 group-hover:shadow-md">
+        {icon}
+      </div>
+    </button>
+  );
+}
+
 export default function QuizViewerRoute({ sessionToken }) {
   const navigate = useNavigate();
   const params = useParams();
@@ -116,16 +133,30 @@ export default function QuizViewerRoute({ sessionToken }) {
     );
   }
 
+  function goToTab(tab) {
+    localStorage.setItem(`coursemate_active_tab_${courseId}`, tab);
+    navigate(`/course/${courseId}`);
+  }
+
   return (
-    <QuizViewer
-      quiz={quiz}
-      generationId={generationId}
-      parentGenerationId={parentGenerationId}
-      sessionToken={sessionToken}
-      onClose={() => navigate(`/course/${courseId}`)}
-      onRegenerate={handleRegenerate}
-      onResolve={handleResolve}
-    />
+    <>
+      <QuizViewer
+        quiz={quiz}
+        generationId={generationId}
+        parentGenerationId={parentGenerationId}
+        sessionToken={sessionToken}
+        onClose={() => navigate(`/course/${courseId}`)}
+        onRegenerate={handleRegenerate}
+        onResolve={handleResolve}
+      />
+      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-gray-200 shadow-lg z-20">
+        <ToolbarItem icon="📄" label="Materials" onClick={() => goToTab('materials')} />
+        <div className="w-px h-6 bg-gray-200" />
+        <ToolbarItem icon="💬" label="Chat"      onClick={() => goToTab('chat')} />
+        <div className="w-px h-6 bg-gray-200" />
+        <ToolbarItem icon="💡" label="Generate"  onClick={() => goToTab('generate')} />
+      </div>
+    </>
   );
 }
 
