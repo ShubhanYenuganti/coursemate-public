@@ -344,6 +344,8 @@ function MaterialCard({ material, courseId, onVisibilityChange, onDelete, isOwne
 
   const quizGenMatch = material?.file_url?.match(/^quiz:\/\/generation\/(\d+)$/);
   const quizGenerationId = quizGenMatch ? quizGenMatch[1] : null;
+  const flashcardsGenMatch = material?.file_url?.match(/^flashcards:\/\/generation\/(\d+)$/);
+  const flashcardsGenerationId = flashcardsGenMatch ? flashcardsGenMatch[1] : null;
 
   return (
     <div className="flex rounded-lg border border-gray-200 bg-white overflow-hidden hover:shadow-md transition-shadow group">
@@ -361,6 +363,14 @@ function MaterialCard({ material, courseId, onVisibilityChange, onDelete, isOwne
           <button
             type="button"
             onClick={() => navigate(`/course/${courseId}/quiz/${quizGenerationId}`)}
+            className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug text-left"
+          >
+            {material.name}
+          </button>
+        ) : flashcardsGenerationId ? (
+          <button
+            type="button"
+            onClick={() => navigate(`/course/${courseId}/flashcards/${flashcardsGenerationId}`)}
             className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug text-left"
           >
             {material.name}

@@ -5,6 +5,7 @@ import Dashboard from "./Dashboard.jsx";
 import CoursePage from "./CoursePage.jsx";
 import ProfilePage from "./ProfilePage.jsx";
 import QuizViewerRoute from "./QuizViewerRoute.jsx";
+import FlashcardViewerRoute from "./FlashcardViewerRoute.jsx";
 import "./App.css";
 
 function CourseRoute({ userData, sessionToken, csrfToken, onSignOut, onUserUpdate }) {
@@ -200,6 +201,16 @@ export default function App() {
         element={
           userData ? (
             <QuizViewerRoute sessionToken={sessionToken} />
+          ) : (
+            <Navigate to="/" replace />
+          )
+        }
+      />
+      <Route
+        path="/course/:id/flashcards/:generationId"
+        element={
+          userData ? (
+            <FlashcardViewerRoute sessionToken={sessionToken} />
           ) : (
             <Navigate to="/" replace />
           )
