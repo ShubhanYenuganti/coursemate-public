@@ -32,6 +32,7 @@ except ImportError:
 
 _TIMEOUT = 90  # seconds -- LLM generation can be slow
 _QUIZ_QUEUE_URL = os.environ.get('QUIZ_GENERATION_QUEUE_URL')
+_AWS_REGION = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
 
 _TYPE_ALIASES = {
     'multiple_choice': 'mcq',
@@ -252,7 +253,7 @@ def _enqueue_quiz_generation_job(generation_id: int, user_id: int):
     """Enqueue a quiz generation job to SQS."""
     if not _QUIZ_QUEUE_URL:
         raise ValueError("QUIZ_GENERATION_QUEUE_URL env var is not set")
-    sqs = boto3.client('sqs')
+    sqs = boto3.client('sqs', region_name=_AWS_REGION)
     sqs.send_message(
         QueueUrl=_QUIZ_QUEUE_URL,
         MessageBody=json.dumps({
