@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import FlashcardViewer from './FlashcardViewer';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -109,6 +110,7 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
 
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
+  const [flashcardData, setFlashcardData] = useState(null);
 
   useEffect(() => {
     if (!course?.id || !sessionToken) return;
@@ -164,12 +166,26 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         setGenerateError(err.error || 'Generation failed. Please try again.');
+      } else {
+        const data = await res.json().catch(() => null);
+        if (data) setFlashcardData(data);
       }
     } catch {
       setGenerateError('Something went wrong. Please try again.');
     } finally {
       setGenerating(false);
     }
+  }
+
+  if (flashcardData) {
+    return (
+      <FlashcardViewer
+        data={flashcardData}
+        course={course}
+        onClose={() => setFlashcardData(null)}
+        onRegenerate={() => { setFlashcardData(null); handleGenerate(); }}
+      />
+    );
   }
 
   return (

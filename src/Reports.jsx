@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import ReportsViewer from './ReportsViewer';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -149,6 +150,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
 
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
+  const [reportData, setReportData] = useState(null);
 
   useEffect(() => {
     if (!course?.id || !sessionToken) return;
@@ -204,12 +206,31 @@ export default function Reports({ course, sessionToken, onAddSource }) {
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         setGenerateError(err.error || 'Generation failed. Please try again.');
+      } else {
+        const data = await res.json().catch(() => null);
+        if (data) setReportData(data);
       }
     } catch {
       setGenerateError('Something went wrong. Please try again.');
     } finally {
       setGenerating(false);
     }
+  }
+
+  if (reportData) {
+    const usedMaterials = selectAll
+      ? materials
+      : materials.filter((m) => selectedSources.has(m.id));
+    return (
+      <ReportsViewer
+        report={reportData}
+        course={course}
+        sourceMaterials={usedMaterials}
+        templateLabel={activeTemplate?.label || 'Report'}
+        onClose={() => setReportData(null)}
+        onRegenerate={() => { setReportData(null); handleGenerate(); }}
+      />
+    );
   }
 
   return (

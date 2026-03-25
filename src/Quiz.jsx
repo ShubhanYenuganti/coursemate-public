@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import QuizViewer from './QuizViewer';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -113,6 +114,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
 
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
+  const [quizData, setQuizData] = useState(null);
 
   useEffect(() => {
     if (!course?.id || !sessionToken) return;
@@ -171,12 +173,25 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         setGenerateError(err.error || 'Generation failed. Please try again.');
+      } else {
+        const data = await res.json().catch(() => null);
+        if (data) setQuizData(data);
       }
     } catch {
       setGenerateError('Something went wrong. Please try again.');
     } finally {
       setGenerating(false);
     }
+  }
+
+  if (quizData) {
+    return (
+      <QuizViewer
+        quiz={quizData}
+        onClose={() => setQuizData(null)}
+        onRegenerate={() => { setQuizData(null); handleGenerate(); }}
+      />
+    );
   }
 
   return (
