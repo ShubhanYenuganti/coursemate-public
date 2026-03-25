@@ -9,7 +9,7 @@
         "sqs:GetQueueAttributes",
         "sqs:GetQueueUrl"
       ],
-      "Resource": "arn:aws:sqs:<AWS_REGION>:<AWS_ACCOUNT_ID>:flashcards-generate"
+      "Resource": "arn:aws:sqs:<AWS_REGION>:<AWS_ACCOUNT_ID>:flaschard-generate"
     }
   ]
 }

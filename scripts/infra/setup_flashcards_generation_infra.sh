@@ -6,8 +6,8 @@ set -euo pipefail
 
 AWS_REGION="${AWS_REGION:-us-east-1}"
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-}"
-QUEUE_NAME="${QUEUE_NAME:-flashcard-generate}"
-DLQ_NAME="${DLQ_NAME:-flashcard-generate-dlq}"
+QUEUE_NAME="${QUEUE_NAME:-flaschard-generate}"
+DLQ_NAME="${DLQ_NAME:-flaschard-generate-dlq}"
 WORKER_FUNCTION_NAME="${WORKER_FUNCTION_NAME:-flashcards_generate}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 VISIBILITY_TIMEOUT_SECONDS="${VISIBILITY_TIMEOUT_SECONDS:-900}"
