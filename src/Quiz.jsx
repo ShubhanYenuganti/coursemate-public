@@ -190,6 +190,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   const [quizData, setQuizData] = useState(null);
   const [generationId, setGenerationId] = useState(null);
   const [parentGenerationId, setParentGenerationId] = useState(null);
+  const [pendingRegenerationParentId, setPendingRegenerationParentId] = useState(null);
 
   const [confirmModalData, setConfirmModalData] = useState(null);
   const [startingGeneration, setStartingGeneration] = useState(false);
@@ -408,6 +409,55 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   const selectedCount = selectAll ? materials.length : selectedSources.size;
   const totalQuestions = tfCount + saCount + laCount + mcqCount;
 
+  function applyQuizPreset(preset, parentId = null) {
+    if (!preset) return;
+
+    setTopic(preset.topic || '');
+    setTfCount(Number.isFinite(Number(preset.tf_count)) ? Number(preset.tf_count) : 0);
+    setSaCount(Number.isFinite(Number(preset.sa_count)) ? Number(preset.sa_count) : 0);
+    setLaCount(Number.isFinite(Number(preset.la_count)) ? Number(preset.la_count) : 0);
+    setMcqCount(Number.isFinite(Number(preset.mcq_count)) ? Number(preset.mcq_count) : 0);
+
+    const options = Number(preset.mcq_options);
+    setMcqOptions(options === 5 ? 5 : 4);
+
+    if (preset.provider) {
+      setSelectedProvider(preset.provider);
+      localStorage.setItem('quiz_selected_provider', preset.provider);
+    }
+    if (preset.model_id) {
+      setSelectedModelId(preset.model_id);
+      localStorage.setItem('quiz_selected_model_id', preset.model_id);
+    }
+
+    const selectedIds = Array.isArray(preset.selected_material_ids)
+      ? preset.selected_material_ids.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+      : [];
+
+    if (selectedIds.length === 0) {
+      setSelectAll(true);
+      setSelectedSources(new Set());
+    } else if (
+      materials.length > 0 &&
+      selectedIds.length === materials.length &&
+      materials.every((m) => selectedIds.includes(Number(m.id)))
+    ) {
+      setSelectAll(true);
+      setSelectedSources(new Set());
+    } else {
+      setSelectAll(false);
+      setSelectedSources(new Set(selectedIds));
+    }
+
+    const normalizedParentId =
+      (typeof parentId === 'number' && Number.isFinite(parentId))
+        ? parentId
+        : (typeof parentId === 'string' && /^\d+$/.test(parentId))
+          ? Number(parentId)
+          : null;
+    setPendingRegenerationParentId(normalizedParentId);
+  }
+
   async function handleGenerate(parentId = null, overrides = null) {
     if (estimating) return;
     setGenerateError('');
@@ -497,6 +547,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
     const started = await triggerGeneration(genId, parentId, provider || null, modelId || null);
     if (started) {
       setConfirmModalData(null);
+      setPendingRegenerationParentId(null);
     }
     setStartingGeneration(false);
   }
@@ -541,7 +592,11 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
             setGenerationId(null);
             setParentGenerationId(null);
           }}
-          onRegenerate={() => handleGenerate(generationId)}
+          onRegenerate={(regeneratePayload) => {
+            const current = regeneratePayload || quizData || {};
+            applyQuizPreset(current, generationId);
+            setQuizData(null);
+          }}
           onResolve={(resolution, revertPayload) => {
             if (resolution === 'revert' && revertPayload) {
               setQuizData(revertPayload);
@@ -842,19 +897,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
                             {status === 'ready' && (
                               <button
                                 type="button"
-                                onClick={() =>
-                                  handleGenerate(null, {
-                                    topic: g.topic || '',
-                                    tf_count: g.tf_count || 0,
-                                    sa_count: g.sa_count || 0,
-                                    la_count: g.la_count || 0,
-                                    mcq_count: g.mcq_count || 0,
-                                    mcq_options: g.mcq_options || mcqOptions,
-                                    material_ids: Array.isArray(g.selected_material_ids) ? g.selected_material_ids : undefined,
-                                    provider: g.provider,
-                                    model_id: g.model_id,
-                                  })
-                                }
+                                onClick={() => applyQuizPreset(g, g.generation_id)}
                                 disabled={estimating}
                                 className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                               >
@@ -880,7 +923,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
         {/* Generate button */}
         <button
           type="button"
-          onClick={() => handleGenerate()}
+          onClick={() => handleGenerate(pendingRegenerationParentId)}
           disabled={estimating || totalQuestions === 0 || selectedCount === 0}
           className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
         >

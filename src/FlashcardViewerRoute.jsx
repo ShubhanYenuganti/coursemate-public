@@ -192,6 +192,11 @@ export default function FlashcardViewerRoute({ sessionToken }) {
     }
   }
 
+  function goToTab(tab) {
+    localStorage.setItem(`coursemate_active_tab_${courseId}`, tab);
+    navigate(`/course/${courseId}`);
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -226,6 +231,7 @@ export default function FlashcardViewerRoute({ sessionToken }) {
         onRegenerate={handleRegenerate}
         onResolve={handleResolve}
         onClose={() => navigate(`/course/${courseId}`)}
+        onGoToTab={goToTab}
       />
       {confirmModalData && (
         <GenerationConfirmModal

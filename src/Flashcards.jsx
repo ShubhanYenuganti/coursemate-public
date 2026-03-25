@@ -157,6 +157,7 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
   const [flashcardData, setFlashcardData] = useState(null);
   const [generationId, setGenerationId] = useState(null);
   const [parentGenerationId, setParentGenerationId] = useState(null);
+  const [pendingRegenerationParentId, setPendingRegenerationParentId] = useState(null);
 
   useEffect(() => {
     generatingIdsRef.current = generatingIds;
@@ -410,7 +411,10 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
       provider || null,
       modelId || null,
     );
-    if (started) setConfirmModalData(null);
+    if (started) {
+      setConfirmModalData(null);
+      setPendingRegenerationParentId(null);
+    }
     setStartingGeneration(false);
   }
 
@@ -478,6 +482,55 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
   const selectedCount = selectAll ? materials.length : selectedSources.size;
   const activeDepth = DEPTH_OPTIONS.find((d) => d.id === depth);
 
+  function applyFlashcardsPreset(preset, parentId = null) {
+    if (!preset) return;
+
+    setTopic(preset.topic || '');
+    const normalizedCardCount = Number(preset.card_count);
+    setCardCount(
+      Number.isFinite(normalizedCardCount)
+        ? Math.max(1, Math.min(100, normalizedCardCount))
+        : 20
+    );
+    if (preset.depth) setDepth(preset.depth);
+
+    if (preset.provider) {
+      setSelectedProvider(preset.provider);
+      localStorage.setItem('flashcards_selected_provider', preset.provider);
+    }
+    if (preset.model_id) {
+      setSelectedModelId(preset.model_id);
+      localStorage.setItem('flashcards_selected_model_id', preset.model_id);
+    }
+
+    const selectedIds = Array.isArray(preset.selected_material_ids)
+      ? preset.selected_material_ids.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+      : [];
+
+    if (selectedIds.length === 0) {
+      setSelectAll(true);
+      setSelectedSources(new Set());
+    } else if (
+      materials.length > 0 &&
+      selectedIds.length === materials.length &&
+      materials.every((m) => selectedIds.includes(Number(m.id)))
+    ) {
+      setSelectAll(true);
+      setSelectedSources(new Set());
+    } else {
+      setSelectAll(false);
+      setSelectedSources(new Set(selectedIds));
+    }
+
+    const normalizedParentId =
+      (typeof parentId === 'number' && Number.isFinite(parentId))
+        ? parentId
+        : (typeof parentId === 'string' && /^\d+$/.test(parentId))
+          ? Number(parentId)
+          : null;
+    setPendingRegenerationParentId(normalizedParentId);
+  }
+
   if (flashcardData) {
     return (
       <>
@@ -492,17 +545,10 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
             setGenerationId(null);
             setParentGenerationId(null);
           }}
-          onRegenerate={() => {
-            const current = flashcardData || {};
+          onRegenerate={(regeneratePayload) => {
+            const current = regeneratePayload || flashcardData || {};
+            applyFlashcardsPreset(current, generationId);
             setFlashcardData(null);
-            handleGenerate(generationId, {
-              topic: current.topic || topic,
-              card_count: current.card_count || cardCount,
-              depth: current.depth || depth,
-              material_ids: Array.isArray(current.selected_material_ids) ? current.selected_material_ids : undefined,
-              provider: current.provider || selectedProvider,
-              model_id: current.model_id || selectedModelId,
-            });
           }}
           onResolve={(resolution, revertPayload) => {
             if (resolution === 'revert' && revertPayload) {
@@ -743,16 +789,7 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
                             {status === 'ready' && (
                               <button
                                 type="button"
-                                onClick={() =>
-                                  handleGenerate(g.generation_id, {
-                                    topic: g.topic || '',
-                                    card_count: g.card_count || cardCount,
-                                    depth: g.depth || depth,
-                                    material_ids: Array.isArray(g.selected_material_ids) ? g.selected_material_ids : undefined,
-                                    provider: g.provider,
-                                    model_id: g.model_id,
-                                  })
-                                }
+                                onClick={() => applyFlashcardsPreset(g, g.generation_id)}
                                 disabled={estimating}
                                 className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                               >
@@ -774,7 +811,7 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
 
         <button
           type="button"
-          onClick={() => handleGenerate()}
+          onClick={() => handleGenerate(pendingRegenerationParentId)}
           disabled={estimating || selectedCount === 0}
           className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
         >

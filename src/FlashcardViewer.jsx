@@ -118,6 +118,23 @@ function ShuffleIcon() {
   );
 }
 
+function ToolbarItem({ icon, label, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex items-center gap-2 transition-all duration-150 rounded-xl px-1 py-1 focus:outline-none cursor-pointer"
+    >
+      <span className="max-w-0 overflow-hidden whitespace-nowrap text-sm font-medium transition-all duration-200 ease-out group-hover:max-w-xs text-gray-700">
+        {label}
+      </span>
+      <div className="w-10 h-10 flex items-center justify-center rounded-xl border shadow-sm text-lg transition-all duration-200 bg-white/80 border-gray-200 text-gray-600 group-hover:text-indigo-600 group-hover:border-indigo-300 group-hover:shadow-md">
+        {icon}
+      </div>
+    </button>
+  );
+}
+
 // ─── FlashcardViewer ───────────────────────────────────────────────────────────
 
 export default function FlashcardViewer({
@@ -129,6 +146,7 @@ export default function FlashcardViewer({
   onClose,
   onRegenerate,
   onResolve,
+  onGoToTab,
 }) {
   const cards = data?.flashcards || data?.cards || (Array.isArray(data) ? data : []);
 
@@ -314,7 +332,7 @@ export default function FlashcardViewer({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onRegenerate}
+              onClick={() => onRegenerate?.(data)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-colors"
             >
               <RefreshIcon />
@@ -324,7 +342,13 @@ export default function FlashcardViewer({
               type="button"
               onClick={handleSave}
               disabled={saveStatus === 'saving' || saveStatus === 'saved'}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs transition-colors ${
+                saveStatus === 'saved'
+                  ? 'border-green-300 text-green-700 bg-green-50 cursor-default'
+                  : saveStatus === 'error'
+                    ? 'border-red-300 text-red-600 hover:bg-red-50'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+              }`}
             >
               <BookmarkIcon />
               {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved ✓' : saveStatus === 'error' ? 'Retry Save' : 'Save Flashcards'}
@@ -525,6 +549,16 @@ export default function FlashcardViewer({
 
         </div>
       </footer>
+
+      {onGoToTab && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-gray-200 shadow-lg z-20">
+          <ToolbarItem icon="📄" label="Materials" onClick={() => onGoToTab('materials')} />
+          <div className="w-px h-6 bg-gray-200" />
+          <ToolbarItem icon="💬" label="Chat" onClick={() => onGoToTab('chat')} />
+          <div className="w-px h-6 bg-gray-200" />
+          <ToolbarItem icon="💡" label="Generate" onClick={() => onGoToTab('generate')} />
+        </div>
+      )}
     </div>
   );
 }
