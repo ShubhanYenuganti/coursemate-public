@@ -787,20 +787,23 @@ class handler(BaseHTTPRequestHandler):
                     ),
                 )
 
-            # Fetch API key
-            cursor.execute(
-                'SELECT encrypted_key FROM user_api_keys WHERE user_id=%s AND provider=%s',
-                (user_id, provider),
-            )
-            key_row = cursor.fetchone()
-            cursor.close()
-            if not key_row:
-                send_json(self, 400, {'error': f'No {provider} API key configured. Add it in Settings.'})
-                return
-            api_key = decrypt_api_key(key_row['encrypted_key'])
+            # Legacy synchronous generation path still needs API key + context.
+            # Draft async path returns after commit and should skip this section.
+            if draft_status_response is None:
+                # Fetch API key
+                cursor.execute(
+                    'SELECT encrypted_key FROM user_api_keys WHERE user_id=%s AND provider=%s',
+                    (user_id, provider),
+                )
+                key_row = cursor.fetchone()
+                cursor.close()
+                if not key_row:
+                    send_json(self, 400, {'error': f'No {provider} API key configured. Add it in Settings.'})
+                    return
+                api_key = decrypt_api_key(key_row['encrypted_key'])
 
-            # Fetch material context
-            material_context = _fetch_material_context(conn, material_ids)
+                # Fetch material context
+                material_context = _fetch_material_context(conn, material_ids)
 
         # Draft flow returns after transaction commit to avoid race:
         # message consumption before status='queued' is committed.

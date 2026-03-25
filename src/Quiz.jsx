@@ -192,6 +192,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   const [parentGenerationId, setParentGenerationId] = useState(null);
 
   const [confirmModalData, setConfirmModalData] = useState(null);
+  const [startingGeneration, setStartingGeneration] = useState(false);
 
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyGenerations, setHistoryGenerations] = useState([]);
@@ -327,39 +328,40 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
     }, 5000);
   }, [sessionToken, stopPolling]);
 
-  // Fire generate (from draft or confirm) and begin polling.
-  const triggerGeneration = useCallback((genId, parentId = null, provider = null, modelId = null) => {
-    startPolling(genId);
-    // Optimistically flip the row to 'queued' in the local list so the UI
-    // updates instantly without waiting for the loadHistory round-trip.
-    setHistoryGenerations((prev) =>
-      prev.map((g) => g.generation_id === genId ? { ...g, status: 'queued' } : g)
-    );
+  // Fire generate (from draft or confirm) and begin polling after server ack.
+  const triggerGeneration = useCallback(async (genId, parentId = null, provider = null, modelId = null) => {
     const body = { action: 'generate', generation_id: genId, parent_generation_id: parentId };
     if (provider) body.provider = provider;
     if (modelId) body.model_id = modelId;
-    fetch('/api/quiz', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-      .then(async (res) => {
-        const data = await res.json().catch(() => null);
-        if (!res.ok) {
-          stopPolling(genId);
-          setGenerateError(data?.error || `Failed to start generation (HTTP ${res.status})`);
-          loadHistory();
-          return;
-        }
-        const nextStatus = data?.status || 'queued';
-        if (nextStatus === 'ready') {
-          stopPolling(genId);
-        }
-        setHistoryGenerations((prev) =>
-          prev.map((g) => g.generation_id === genId ? { ...g, status: nextStatus } : g)
-        );
-      })
-      .catch(() => { /* connection dropped — polling will detect completion */ });
+    try {
+      const res = await fetch('/api/quiz', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        // Helps the request continue during quick route changes / refresh.
+        keepalive: true,
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setGenerateError(data?.error || `Failed to start generation (HTTP ${res.status})`);
+        loadHistory();
+        return false;
+      }
+      const nextStatus = data?.status || 'queued';
+      setHistoryGenerations((prev) =>
+        prev.map((g) => g.generation_id === genId ? { ...g, status: nextStatus } : g)
+      );
+      if (nextStatus === 'queued' || nextStatus === 'generating') {
+        startPolling(genId);
+      } else if (nextStatus === 'ready') {
+        stopPolling(genId);
+      }
+      return true;
+    } catch {
+      setGenerateError('Failed to start generation. Please try again.');
+      loadHistory();
+      return false;
+    }
   }, [sessionToken, startPolling, stopPolling]);
 
   async function reopenFromHistory(gen) {
@@ -470,12 +472,16 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
     }
   }
 
-  function confirmGenerate({ provider, model_id: modelId } = {}) {
-    if (!confirmModalData) return;
+  async function confirmGenerate({ provider, model_id: modelId } = {}) {
+    if (!confirmModalData || startingGeneration) return;
     const { generation_id: genId, parent_generation_id: parentId } = confirmModalData;
-    setConfirmModalData(null);
     setGenerateError('');
-    triggerGeneration(genId, parentId, provider || null, modelId || null);
+    setStartingGeneration(true);
+    const started = await triggerGeneration(genId, parentId, provider || null, modelId || null);
+    if (started) {
+      setConfirmModalData(null);
+    }
+    setStartingGeneration(false);
   }
 
   function saveDraft() {
@@ -535,6 +541,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
             onConfirm={confirmGenerate}
             onCancel={cancelConfirm}
             onSaveDraft={saveDraft}
+            isLoading={startingGeneration}
             availableProviders={availableProviders}
             providerModels={PROVIDER_MODELS}
             modelLabels={MODEL_LABELS}
@@ -888,6 +895,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
             onConfirm={confirmGenerate}
             onCancel={cancelConfirm}
             onSaveDraft={saveDraft}
+            isLoading={startingGeneration}
             availableProviders={availableProviders}
             providerModels={PROVIDER_MODELS}
             modelLabels={MODEL_LABELS}

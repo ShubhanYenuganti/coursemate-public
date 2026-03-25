@@ -5,6 +5,7 @@ export default function GenerationConfirmModal({
   onConfirm,
   onCancel,
   onSaveDraft,
+  isLoading = false,
   availableProviders = [],
   providerModels = {},
   modelLabels = {},
@@ -17,12 +18,13 @@ export default function GenerationConfirmModal({
     function onKeyDown(e) {
       if (e.key === 'Escape') {
         if (dropdownOpen) { setDropdownOpen(false); return; }
+        if (isLoading) return;
         onCancel?.();
       }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onCancel, dropdownOpen]);
+  }, [onCancel, dropdownOpen, isLoading]);
 
   if (!data) return null;
 
@@ -55,8 +57,9 @@ export default function GenerationConfirmModal({
           <h3 className="text-sm font-semibold text-gray-900">Confirm Quiz Generation</h3>
           <button
             type="button"
+            disabled={isLoading}
             onClick={() => onCancel?.()}
-            className="px-2 py-1 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+            className="px-2 py-1 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             aria-label="Close"
           >
             Esc
@@ -139,18 +142,20 @@ export default function GenerationConfirmModal({
             {onSaveDraft && (
               <button
                 type="button"
+                disabled={isLoading}
                 onClick={() => onSaveDraft?.()}
-                className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Save as Draft
               </button>
             )}
             <button
               type="button"
+              disabled={isLoading}
               onClick={() => onConfirm?.({ provider: selectedProvider, model_id: selectedModelId })}
-              className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors"
+              className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Confirm generate
+              {isLoading ? 'Queueing…' : 'Confirm generate'}
             </button>
           </div>
         </div>
