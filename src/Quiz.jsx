@@ -413,6 +413,14 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
     setGenerateError('');
     setEstimating(true);
     try {
+      const normalizedParentId = (
+        (typeof parentId === 'number' && Number.isFinite(parentId))
+          ? parentId
+          : (typeof parentId === 'string' && /^\d+$/.test(parentId))
+            ? Number(parentId)
+            : null
+      );
+
       const contextIds = Array.isArray(overrides?.material_ids)
         ? overrides.material_ids
         : (selectAll ? materials.map((m) => m.id) : Array.from(selectedSources));
@@ -462,7 +470,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
             la_count: laCountToUse,
             mcq_count: mcqCountToUse,
             mcq_options: mcqOptionsToUse,
-            parent_generation_id: parentId,
+            parent_generation_id: normalizedParentId,
           });
           // Refresh history so the draft row is already in the list before the user confirms.
           loadHistory();
@@ -872,7 +880,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
         {/* Generate button */}
         <button
           type="button"
-          onClick={handleGenerate}
+          onClick={() => handleGenerate()}
           disabled={estimating || totalQuestions === 0 || selectedCount === 0}
           className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
         >

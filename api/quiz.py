@@ -185,11 +185,20 @@ def _call_openai_json(api_key: str, model_id: str, system: str, user: str) -> di
                 {'role': 'system', 'content': system},
                 {'role': 'user', 'content': user},
             ],
-            'temperature': 0.7,
         },
         timeout=_TIMEOUT,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        detail = ''
+        try:
+            payload = resp.json()
+            detail = payload.get('error', {}).get('message') or payload.get('error') or ''
+        except Exception:
+            detail = resp.text[:500]
+        raise requests.HTTPError(
+            f"OpenAI chat.completions failed ({resp.status_code}): {detail}",
+            response=resp,
+        )
     raw = (resp.json().get('choices') or [{}])[0].get('message', {}).get('content', '')
     return _parse_model_json(raw)
 
@@ -200,7 +209,7 @@ def _call_claude_json(api_key: str, model_id: str, system: str, user: str) -> di
         headers={
             'x-api-key': api_key,
             'anthropic-version': '2023-06-01',
-            'Content-Type': 'application/json',
+            'content-type': 'application/json',
         },
         json={
             'model': model_id,
