@@ -5,7 +5,9 @@
 # GET  /api/quiz  action=get_generation    -> fetch stored generation in viewer-ready shape
 
 import json
+import os
 import requests
+import boto3
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -29,6 +31,7 @@ except ImportError:
     from services.quiz_pdf_builder import build_quiz_pdf_bytes
 
 _TIMEOUT = 90  # seconds -- LLM generation can be slow
+_QUIZ_QUEUE_URL = os.environ.get('QUIZ_GENERATION_QUEUE_URL')
 
 _TYPE_ALIASES = {
     'multiple_choice': 'mcq',
@@ -243,6 +246,20 @@ def _call_llm_json(provider: str, api_key: str, model_id: str, system: str, user
     if provider == 'gemini':
         return _call_gemini_json(api_key, model_id, system, user)
     raise ValueError(f"Unsupported provider: {provider}")
+
+
+def _enqueue_quiz_generation_job(generation_id: int, user_id: int):
+    """Enqueue a quiz generation job to SQS."""
+    if not _QUIZ_QUEUE_URL:
+        raise ValueError("QUIZ_GENERATION_QUEUE_URL env var is not set")
+    sqs = boto3.client('sqs')
+    sqs.send_message(
+        QueueUrl=_QUIZ_QUEUE_URL,
+        MessageBody=json.dumps({
+            'generation_id': generation_id,
+            'generated_by': user_id,
+        }),
+    )
 
 
 def _persist_generation(conn, course_id: int, user_id: int, title: str, topic: str,
@@ -609,7 +626,7 @@ class handler(BaseHTTPRequestHandler):
             # --- Draft flow: generate from an existing estimate row ---
             if draft_generation_id is not None:
                 cursor.execute(
-                    "SELECT * FROM quiz_generations WHERE id=%s AND generated_by=%s",
+                    "SELECT * FROM quiz_generations WHERE id=%s AND generated_by=%s FOR UPDATE",
                     (draft_generation_id, user_id),
                 )
                 draft = cursor.fetchone()
@@ -659,12 +676,52 @@ class handler(BaseHTTPRequestHandler):
                         send_json(self, 403, {'error': 'parent_generation_id not owned by user'})
                         return
 
-                # Move draft to generating, persisting any model override from the request body.
-                cursor.execute(
-                    "UPDATE quiz_generations SET status='generating', provider=%s, model_id=%s, parent_generation_id=%s WHERE id=%s",
-                    (provider, model_id, parent_generation_id_int, draft_generation_id),
-                )
+                current_status = draft.get('status')
+                should_enqueue = False
+
+                if current_status == 'draft' or current_status == 'failed':
+                    cursor.execute(
+                        """
+                        UPDATE quiz_generations
+                        SET status='queued',
+                            provider=%s,
+                            model_id=%s,
+                            parent_generation_id=%s,
+                            error=NULL
+                        WHERE id=%s
+                        """,
+                        (provider, model_id, parent_generation_id_int, draft_generation_id),
+                    )
+                    should_enqueue = True
+                    current_status = 'queued'
+                elif current_status in ('queued', 'generating'):
+                    # Already enqueued/processing; return idempotent accepted response.
+                    current_status = 'queued' if current_status == 'queued' else 'generating'
+                elif current_status == 'ready':
+                    # Already completed; allow client polling/opening behavior to proceed idempotently.
+                    current_status = 'ready'
+                else:
+                    cursor.close()
+                    send_json(self, 409, {'error': f"Generation cannot be queued from status '{current_status}'"})
+                    return
+
                 gen_id = draft_generation_id
+                cursor.close()
+
+                if should_enqueue:
+                    try:
+                        _enqueue_quiz_generation_job(gen_id, user_id)
+                    except Exception as exc:
+                        with get_db() as conn2:
+                            _mark_generation_failed(conn2, gen_id, f'Failed to enqueue generation job: {exc}')
+                        send_json(self, 500, {'error': 'Failed to queue generation'})
+                        return
+
+                send_json(self, 202, {
+                    'generation_id': gen_id,
+                    'status': current_status,
+                })
+                return
 
             # --- Legacy flow: create a new generation row directly ---
             else:

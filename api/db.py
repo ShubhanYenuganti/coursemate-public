@@ -403,8 +403,8 @@ def init_db():
                 mcq_options INTEGER NOT NULL DEFAULT 4,
                 provider VARCHAR(20),
                 model_id VARCHAR(100),
-                status VARCHAR(20) NOT NULL DEFAULT 'generating'
-                    CHECK (status IN ('draft', 'generating', 'ready', 'failed')),
+                status VARCHAR(20) NOT NULL DEFAULT 'draft'
+                    CHECK (status IN ('draft', 'queued', 'generating', 'ready', 'failed')),
                 error TEXT,
                 parent_generation_id INTEGER REFERENCES quiz_generations(id) ON DELETE SET NULL,
                 artifact_material_id INTEGER REFERENCES materials(id) ON DELETE SET NULL,
@@ -441,7 +441,7 @@ def init_db():
 
             ALTER TABLE quiz_generations
                 ADD CONSTRAINT quiz_generations_status_check
-                CHECK (status IN ('draft', 'generating', 'ready', 'failed'));
+                CHECK (status IN ('draft', 'queued', 'generating', 'ready', 'failed'));
 
             -- Estimate snapshots (nullable so older generations remain valid)
             ALTER TABLE quiz_generations

@@ -87,6 +87,7 @@ export default function QuizViewerRoute({ sessionToken }) {
   const [availableProviders, setAvailableProviders] = useState([]);
   const [confirmModalData, setConfirmModalData] = useState(null);
   const [estimating, setEstimating] = useState(false);
+  const [regeneratingId, setRegeneratingId] = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -172,11 +173,44 @@ export default function QuizViewerRoute({ sessionToken }) {
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data?.generation_id) {
-      setQuiz(data);
+      setRegeneratingId(data.generation_id);
       setGenerationId(data.generation_id);
-      setParentGenerationId(data.parent_generation_id || null);
     }
   }
+
+  useEffect(() => {
+    if (!regeneratingId || !sessionToken) return;
+    const timer = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/quiz?action=get_generation_status&generation_id=${regeneratingId}`, {
+          headers: authHeaders,
+        });
+        if (!r.ok) return;
+        const statusData = await r.json().catch(() => null);
+        if (!statusData) return;
+        if (statusData.status === 'ready') {
+          clearInterval(timer);
+          setRegeneratingId(null);
+          const full = await fetch(`/api/quiz?action=get_generation&generation_id=${regeneratingId}`, {
+            headers: authHeaders,
+          });
+          const payload = await full.json().catch(() => null);
+          if (full.ok && payload?.generation_id) {
+            setQuiz(payload);
+            setGenerationId(payload.generation_id);
+            setParentGenerationId(payload.parent_generation_id || null);
+          }
+        } else if (statusData.status === 'failed') {
+          clearInterval(timer);
+          setRegeneratingId(null);
+          setLoadError(statusData.error || 'Regeneration failed');
+        }
+      } catch {
+        // polling retry
+      }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [regeneratingId, authHeaders, sessionToken]);
 
   function handleResolve(resolution, revertPayload) {
     if (resolution === 'revert' && revertPayload) {

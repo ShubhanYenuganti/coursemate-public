@@ -270,7 +270,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
       ));
       setHistoryGenerations(normalizedGenerations);
       normalizedGenerations.forEach((g) => {
-        if (g.status === 'generating') startPolling(g.generation_id);
+        if (g.status === 'queued' || g.status === 'generating') startPolling(g.generation_id);
       });
     } catch {}
     finally { setHistoryLoading(false); }
@@ -330,10 +330,10 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   // Fire generate (from draft or confirm) and begin polling.
   const triggerGeneration = useCallback((genId, parentId = null, provider = null, modelId = null) => {
     startPolling(genId);
-    // Optimistically flip the row to 'generating' in the local list so the UI
+    // Optimistically flip the row to 'queued' in the local list so the UI
     // updates instantly without waiting for the loadHistory round-trip.
     setHistoryGenerations((prev) =>
-      prev.map((g) => g.generation_id === genId ? { ...g, status: 'generating' } : g)
+      prev.map((g) => g.generation_id === genId ? { ...g, status: 'queued' } : g)
     );
     const body = { action: 'generate', generation_id: genId, parent_generation_id: parentId };
     if (provider) body.provider = provider;
@@ -344,16 +344,20 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
       body: JSON.stringify(body),
     })
       .then(async (res) => {
-        if (res.ok) {
-          const data = await res.json().catch(() => null);
-          if (data?.generation_id) {
-            stopPolling(genId);
-            setHistoryGenerations((prev) =>
-              prev.map((g) => g.generation_id === genId ? { ...g, status: 'ready' } : g)
-            );
-          }
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          stopPolling(genId);
+          setGenerateError(data?.error || `Failed to start generation (HTTP ${res.status})`);
+          loadHistory();
+          return;
         }
-        // If the response failed, polling will catch 'failed' status.
+        const nextStatus = data?.status || 'queued';
+        if (nextStatus === 'ready') {
+          stopPolling(genId);
+        }
+        setHistoryGenerations((prev) =>
+          prev.map((g) => g.generation_id === genId ? { ...g, status: nextStatus } : g)
+        );
       })
       .catch(() => { /* connection dropped — polling will detect completion */ });
   }, [sessionToken, startPolling, stopPolling]);
@@ -730,7 +734,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
             <div className="space-y-2">
               {historyGenerations.map((g) => {
                 const isPolling = generatingIds.has(g.generation_id);
-                const status = isPolling ? 'generating' : (g.status || 'ready');
+                const status = isPolling && g.status === 'queued' ? 'queued' : (isPolling ? 'generating' : (g.status || 'ready'));
                 const badgeClass =
                   status === 'ready'
                     ? 'border-green-200 bg-green-50 text-green-700'
@@ -738,6 +742,8 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
                       ? 'border-red-200 bg-red-50 text-red-600'
                       : status === 'draft'
                         ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : status === 'queued'
+                          ? 'border-purple-200 bg-purple-50 text-purple-700'
                         : 'border-indigo-200 bg-indigo-50 text-indigo-700';
 
                 const tokenLow = g.estimated_total_tokens_low;
@@ -762,7 +768,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
                       </div>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-medium ${badgeClass}`}>
-                          {status === 'generating' && (
+                          {(status === 'generating' || status === 'queued') && (
                             <svg className="animate-spin h-2.5 w-2.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
@@ -789,6 +795,8 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
                       <div className="flex items-center gap-2">
                         {status === 'generating' ? (
                           <p className="text-[10px] text-indigo-600 italic">Processing…</p>
+                        ) : status === 'queued' ? (
+                          <p className="text-[10px] text-purple-600 italic">Queued…</p>
                         ) : status === 'draft' ? (
                           <button
                             type="button"
