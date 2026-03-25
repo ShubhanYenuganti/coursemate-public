@@ -388,5 +388,109 @@ def init_db():
         cursor.execute("DROP TABLE IF EXISTS messages;")
         cursor.execute("DROP TABLE IF EXISTS material_chunks;")
 
+        # Quiz generation tables
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS quiz_generations (
+                id SERIAL PRIMARY KEY,
+                course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+                generated_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                title TEXT,
+                topic TEXT,
+                tf_count INTEGER NOT NULL DEFAULT 0,
+                sa_count INTEGER NOT NULL DEFAULT 0,
+                la_count INTEGER NOT NULL DEFAULT 0,
+                mcq_count INTEGER NOT NULL DEFAULT 0,
+                mcq_options INTEGER NOT NULL DEFAULT 4,
+                provider VARCHAR(20),
+                model_id VARCHAR(100),
+                status VARCHAR(20) NOT NULL DEFAULT 'generating'
+                    CHECK (status IN ('draft', 'generating', 'ready', 'failed')),
+                error TEXT,
+                parent_generation_id INTEGER REFERENCES quiz_generations(id) ON DELETE SET NULL,
+                artifact_material_id INTEGER REFERENCES materials(id) ON DELETE SET NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS quiz_questions (
+                id SERIAL PRIMARY KEY,
+                generation_id INTEGER NOT NULL REFERENCES quiz_generations(id) ON DELETE CASCADE,
+                question_index INTEGER NOT NULL,
+                question_type VARCHAR(10) NOT NULL CHECK (question_type IN ('mcq', 'tf', 'sa', 'la')),
+                question_text TEXT NOT NULL,
+                correct_answer_text TEXT,
+                explanation TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS quiz_question_options (
+                id SERIAL PRIMARY KEY,
+                question_id INTEGER NOT NULL REFERENCES quiz_questions(id) ON DELETE CASCADE,
+                option_index INTEGER NOT NULL,
+                option_text TEXT NOT NULL,
+                is_correct BOOLEAN NOT NULL DEFAULT FALSE
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_quiz_gen_course ON quiz_generations(course_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_quiz_questions_gen ON quiz_questions(generation_id, question_index);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_quiz_options_question ON quiz_question_options(question_id);")
+
+        # Phase 2 additions: draft status + token estimate snapshots + quiz attempts
+        cursor.execute("""
+            -- Extend status check constraint to include 'draft' even when the table was created earlier.
+            ALTER TABLE quiz_generations
+                DROP CONSTRAINT IF EXISTS quiz_generations_status_check;
+
+            ALTER TABLE quiz_generations
+                ADD CONSTRAINT quiz_generations_status_check
+                CHECK (status IN ('draft', 'generating', 'ready', 'failed'));
+
+            -- Estimate snapshots (nullable so older generations remain valid)
+            ALTER TABLE quiz_generations
+                ADD COLUMN IF NOT EXISTS estimated_prompt_tokens_low INTEGER;
+            ALTER TABLE quiz_generations
+                ADD COLUMN IF NOT EXISTS estimated_prompt_tokens_high INTEGER;
+            ALTER TABLE quiz_generations
+                ADD COLUMN IF NOT EXISTS estimated_total_tokens_low INTEGER;
+            ALTER TABLE quiz_generations
+                ADD COLUMN IF NOT EXISTS estimated_total_tokens_high INTEGER;
+
+            ALTER TABLE quiz_generations
+                ADD COLUMN IF NOT EXISTS selected_material_ids JSONB;
+
+            ALTER TABLE quiz_generations
+                ADD COLUMN IF NOT EXISTS prompt_text TEXT;
+
+            ALTER TABLE quiz_generations
+                ADD COLUMN IF NOT EXISTS generation_settings JSONB;
+
+            -- Quiz attempts tables
+            CREATE TABLE IF NOT EXISTS quiz_attempts (
+                id SERIAL PRIMARY KEY,
+                generation_id INTEGER NOT NULL REFERENCES quiz_generations(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                submitted_at TIMESTAMP,
+                score_percent DECIMAL(5,2),
+                auto_graded_count INTEGER NOT NULL DEFAULT 0,
+                manual_review_count INTEGER NOT NULL DEFAULT 0,
+                result_summary JSONB NOT NULL DEFAULT '{}'
+            );
+
+            CREATE TABLE IF NOT EXISTS quiz_attempt_answers (
+                id SERIAL PRIMARY KEY,
+                attempt_id INTEGER NOT NULL REFERENCES quiz_attempts(id) ON DELETE CASCADE,
+                question_id INTEGER NOT NULL REFERENCES quiz_questions(id) ON DELETE CASCADE,
+                response_text TEXT,
+                is_correct BOOLEAN,
+                grader_feedback TEXT,
+                skipped BOOLEAN NOT NULL DEFAULT FALSE,
+                UNIQUE(attempt_id, question_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_quiz_attempts_gen_user_submitted
+                ON quiz_attempts(generation_id, user_id, submitted_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_quiz_attempt_answers_attempt_q
+                ON quiz_attempt_answers(attempt_id, question_id);
+        """)
+
         cursor.close()
         print("Database initialized successfully")

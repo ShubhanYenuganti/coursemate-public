@@ -1,18 +1,75 @@
 import { useState, useEffect } from "react";
-import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from "react-router-dom";
 import SignInPage from "./SignInPage.jsx";
 import Dashboard from "./Dashboard.jsx";
 import CoursePage from "./CoursePage.jsx";
 import ProfilePage from "./ProfilePage.jsx";
+import QuizViewerRoute from "./QuizViewerRoute.jsx";
 import "./App.css";
 
 function CourseRoute({ userData, sessionToken, csrfToken, onSignOut, onUserUpdate }) {
   const { state } = useLocation();
+  const { id } = useParams();
   const navigate = useNavigate();
+  const [course, setCourse] = useState(state?.course || null);
+  const [loadingCourse, setLoadingCourse] = useState(!state?.course);
+
   function handleCourseUpdate(updated) {
+    setCourse(updated);
     navigate(".", { replace: true, state: { ...state, course: updated } });
   }
-  return <CoursePage course={state?.course} userData={userData} sessionToken={sessionToken} csrfToken={csrfToken} onSignOut={onSignOut} onUserUpdate={onUserUpdate} onCourseUpdate={handleCourseUpdate} />;
+
+  useEffect(() => {
+    if (!sessionToken) return;
+    if (state?.course) {
+      setCourse(state.course);
+      setLoadingCourse(false);
+      return;
+    }
+    if (!id) return;
+
+    let cancelled = false;
+    setLoadingCourse(true);
+    fetch("/api/course", {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    })
+      .then((res) => res.json().catch(() => ({})))
+      .then((data) => {
+        const found = (data.courses || []).find((c) => String(c.id) === String(id));
+        if (!found) throw new Error("Course not found");
+        if (!cancelled) setCourse(found);
+      })
+      .catch(() => {
+        if (!cancelled) navigate("/dashboard", { replace: true });
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCourse(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, sessionToken, state, navigate]);
+
+  if (loadingCourse || !course) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-10 h-10 border-4 border-gray-200 border-t-indigo-500 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <CoursePage
+      course={course}
+      userData={userData}
+      sessionToken={sessionToken}
+      csrfToken={csrfToken}
+      onSignOut={onSignOut}
+      onUserUpdate={onUserUpdate}
+      onCourseUpdate={handleCourseUpdate}
+    />
+  );
 }
 
 export default function App() {
@@ -133,6 +190,16 @@ export default function App() {
         element={
           userData ? (
             <Dashboard userData={userData} sessionToken={sessionToken} csrfToken={csrfToken} onSignOut={handleSignOut} onUserUpdate={setUserData} />
+          ) : (
+            <Navigate to="/" replace />
+          )
+        }
+      />
+      <Route
+        path="/course/:id/quiz/:generationId"
+        element={
+          userData ? (
+            <QuizViewerRoute sessionToken={sessionToken} />
           ) : (
             <Navigate to="/" replace />
           )

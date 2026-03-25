@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import QuizViewer from './QuizViewer';
+import GenerationConfirmModal from './components/GenerationConfirmModal.jsx';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,14 @@ function SparkleIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
       <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" />
+    </svg>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="6 9 12 15 18 9" />
     </svg>
   );
 }
@@ -96,6 +105,49 @@ function Stepper({ value, onChange, min = 0, max = 99 }) {
   );
 }
 
+const PROVIDER_MODELS = {
+  claude: [
+    { label: 'Claude Opus 4.6', id: 'claude-opus-4-6' },
+    { label: 'Claude Sonnet 4.6', id: 'claude-sonnet-4-6' },
+    { label: 'Claude Haiku 4.5', id: 'claude-haiku-4-5-20251001' },
+    { label: 'Claude Sonnet 4.5', id: 'claude-sonnet-4-5-20250929' },
+    { label: 'Claude Sonnet 4', id: 'claude-sonnet-4-20250514' },
+    { label: 'Claude Opus 4', id: 'claude-opus-4-20250514' },
+  ],
+  gemini: [
+    { label: 'Gemini 3.1 Pro', id: 'gemini-3.1-pro-preview' },
+    { label: 'Gemini 3 Flash', id: 'gemini-3-flash-preview' },
+    { label: 'Gemini 2.5 Pro', id: 'gemini-2.5-pro' },
+    { label: 'Gemini 2.5 Flash', id: 'gemini-2.5-flash' },
+    { label: 'Gemini 2.5 Flash-Lite', id: 'gemini-2.5-flash-lite' },
+    { label: 'Deep Research', id: 'deep-research-pro-preview-12-2025' },
+    { label: 'Gemini 2.0 Flash', id: 'gemini-2.0-flash' },
+    { label: 'Gemini 2.0 Flash-Lite', id: 'gemini-2.0-flash-lite' },
+  ],
+  openai: [
+    { label: 'GPT-5.2', id: 'gpt-5.2' },
+    { label: 'GPT-5.1', id: 'gpt-5.1' },
+    { label: 'GPT-5 Mini', id: 'gpt-5-mini' },
+    { label: 'GPT-5 Nano', id: 'gpt-5-nano' },
+    { label: 'GPT-4.1', id: 'gpt-4.1' },
+    { label: 'GPT-4.1 mini', id: 'gpt-4.1-mini' },
+    { label: 'GPT-4.1 nano', id: 'gpt-4.1-nano' },
+    { label: 'GPT-4o', id: 'gpt-4o' },
+    { label: 'GPT-4o mini', id: 'gpt-4o-mini' },
+    { label: 'o3', id: 'o3' },
+    { label: 'o3-mini', id: 'o3-mini' },
+    { label: 'o3-pro', id: 'o3-pro' },
+    { label: 'o4-mini', id: 'o4-mini' },
+    { label: 'o1', id: 'o1' },
+    { label: 'o1-pro', id: 'o1-pro' },
+    { label: 'o3 Deep Research', id: 'o3-deep-research' },
+    { label: 'o4-mini Deep Research', id: 'o4-mini-deep-research' },
+    { label: 'GPT-OSS 120B', id: 'gpt-oss-120b' },
+  ],
+};
+
+const MODEL_LABELS = { gemini: 'Gemini', openai: 'GPT', claude: 'Claude' };
+
 // ─── Quiz component ───────────────────────────────────────────────────────────
 
 export default function Quiz({ course, sessionToken, onAddSource }) {
@@ -111,15 +163,32 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   const [laCount, setLaCount] = useState(2);
   const [mcqCount, setMcqCount] = useState(10);
   const [mcqOptions, setMcqOptions] = useState(4);
+  const [availableProviders, setAvailableProviders] = useState([]);
+  const [selectedProvider, setSelectedProvider] = useState(
+    () => localStorage.getItem('quiz_selected_provider') || 'openai'
+  );
+  const [selectedModelId, setSelectedModelId] = useState(
+    () => localStorage.getItem('quiz_selected_model_id') || 'gpt-4o-mini'
+  );
+  const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
+  const providerDropdownRef = useRef(null);
 
   const [generating, setGenerating] = useState(false);
+  const [estimating, setEstimating] = useState(false);
   const [generateError, setGenerateError] = useState('');
   const [quizData, setQuizData] = useState(null);
+  const [generationId, setGenerationId] = useState(null);
+  const [parentGenerationId, setParentGenerationId] = useState(null);
+
+  const [confirmModalData, setConfirmModalData] = useState(null);
+
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyGenerations, setHistoryGenerations] = useState([]);
 
   useEffect(() => {
     if (!course?.id || !sessionToken) return;
     setMaterialsLoading(true);
-    fetch(`/api/materials?course_id=${course.id}`, {
+    fetch(`/api/material?course_id=${course.id}`, {
       headers: { Authorization: `Bearer ${sessionToken}` },
     })
       .then((r) => r.json())
@@ -127,6 +196,82 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
       .catch(() => {})
       .finally(() => setMaterialsLoading(false));
   }, [course?.id, sessionToken]);
+
+  useEffect(() => {
+    if (!sessionToken) return;
+    fetch('/api/user_api_keys', {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        const available = Object.entries(data || {})
+          .filter(([, has]) => has)
+          .map(([provider]) => provider);
+        setAvailableProviders(available);
+
+        const savedProvider = localStorage.getItem('quiz_selected_provider');
+        const provider = available.includes(savedProvider) ? savedProvider : (available[0] || 'openai');
+        const savedModelId = localStorage.getItem('quiz_selected_model_id');
+        const modelList = PROVIDER_MODELS[provider] || [];
+        const modelId = modelList.find((m) => m.id === savedModelId)?.id || modelList[0]?.id || null;
+
+        setSelectedProvider(provider);
+        setSelectedModelId(modelId);
+      })
+      .catch(() => {});
+  }, [sessionToken]);
+
+  useEffect(() => {
+    if (!providerDropdownOpen) return;
+    function onOutsideClick(e) {
+      if (providerDropdownRef.current && !providerDropdownRef.current.contains(e.target)) {
+        setProviderDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onOutsideClick);
+    return () => document.removeEventListener('mousedown', onOutsideClick);
+  }, [providerDropdownOpen]);
+
+  // Load generation history for the current course.
+  useEffect(() => {
+    if (!course?.id || !sessionToken) return;
+    setHistoryLoading(true);
+    fetch(`/api/quiz?action=list_generations&course_id=${course.id}`, {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    })
+      .then((r) => r.json())
+      .then((data) => setHistoryGenerations(Array.isArray(data?.generations) ? data.generations : []))
+      .catch(() => {})
+      .finally(() => setHistoryLoading(false));
+  }, [course?.id, sessionToken]);
+
+  function reopenFromHistory(gen) {
+    if (!gen) return;
+    setTopic(gen.topic || '');
+    setTfCount(gen.tf_count || 0);
+    setSaCount(gen.sa_count || 0);
+    setLaCount(gen.la_count || 0);
+    setMcqCount(gen.mcq_count || 0);
+    setMcqOptions(gen.mcq_options || 4);
+
+    const mids = Array.isArray(gen.selected_material_ids) ? gen.selected_material_ids : null;
+    if (mids && mids.length > 0) {
+      setSelectAll(false);
+      setSelectedSources(new Set(mids));
+    } else {
+      setSelectAll(true);
+      setSelectedSources(new Set());
+    }
+
+    if (gen.provider) {
+      setSelectedProvider(gen.provider);
+      localStorage.setItem('quiz_selected_provider', gen.provider);
+    }
+    if (gen.model_id) {
+      setSelectedModelId(gen.model_id);
+      localStorage.setItem('quiz_selected_model_id', gen.model_id);
+    }
+  }
 
   function isSourceSelected(id) {
     return selectAll || selectedSources.has(id);
@@ -144,38 +289,103 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   const selectedCount = selectAll ? materials.length : selectedSources.size;
   const totalQuestions = tfCount + saCount + laCount + mcqCount;
 
-  async function handleGenerate() {
-    if (generating) return;
+  async function handleGenerate(parentId = null, overrides = null) {
+    if (generating || estimating) return;
     setGenerateError('');
-    setGenerating(true);
+    setEstimating(true);
     try {
-      const contextIds = selectAll
-        ? materials.map((m) => m.id)
-        : Array.from(selectedSources);
-      const res = await fetch('/api/generate', {
+      const contextIds = Array.isArray(overrides?.material_ids)
+        ? overrides.material_ids
+        : (selectAll ? materials.map((m) => m.id) : Array.from(selectedSources));
+
+      const topicToUse = overrides?.topic ?? topic;
+      const tfCountToUse = overrides?.tf_count ?? tfCount;
+      const saCountToUse = overrides?.sa_count ?? saCount;
+      const laCountToUse = overrides?.la_count ?? laCount;
+      const mcqCountToUse = overrides?.mcq_count ?? mcqCount;
+      const mcqOptionsToUse = overrides?.mcq_options ?? mcqOptions;
+      const providerToUse = overrides?.provider ?? selectedProvider;
+      const modelIdToUse = overrides?.model_id ?? selectedModelId;
+
+      const res = await fetch('/api/quiz', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          resource: 'quiz',
+          action: 'estimate',
           course_id: course?.id,
-          topic,
-          tf_count: tfCount,
-          sa_count: saCount,
-          la_count: laCount,
-          mcq_count: mcqCount,
-          mcq_options: mcqOptions,
+          topic: topicToUse,
+          tf_count: tfCountToUse,
+          sa_count: saCountToUse,
+          la_count: laCountToUse,
+          mcq_count: mcqCountToUse,
+          mcq_options: mcqOptionsToUse,
           material_ids: contextIds,
+          provider: providerToUse,
+          model_id: modelIdToUse,
         }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        setGenerateError(err.error || 'Generation failed. Please try again.');
+        setGenerateError(err.error || 'Estimate failed. Please try again.');
       } else {
         const data = await res.json().catch(() => null);
-        if (data) setQuizData(data);
+        if (data && data.generation_id) {
+          setConfirmModalData({
+            ...data,
+            provider: providerToUse,
+            model_id: modelIdToUse,
+            topic: topicToUse,
+            tf_count: tfCountToUse,
+            sa_count: saCountToUse,
+            la_count: laCountToUse,
+            mcq_count: mcqCountToUse,
+            mcq_options: mcqOptionsToUse,
+            parent_generation_id: parentId,
+          });
+        } else {
+          setGenerateError('Estimate returned no generation_id.');
+        }
+      }
+    } catch {
+      setGenerateError('Something went wrong. Please try again.');
+    } finally {
+      setEstimating(false);
+    }
+  }
+
+  async function confirmGenerate() {
+    if (!confirmModalData || generating) return;
+    setGenerateError('');
+    setGenerating(true);
+    try {
+      const res = await fetch('/api/quiz', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'generate',
+          generation_id: confirmModalData.generation_id,
+          parent_generation_id: confirmModalData.parent_generation_id,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setGenerateError(err.error || 'Generation failed. Please try again.');
+        return;
+      }
+
+      const data = await res.json().catch(() => null);
+      if (data) {
+        setGenerationId(data.generation_id || null);
+        setParentGenerationId(data.parent_generation_id || null);
+        setQuizData(data);
+        setConfirmModalData(null);
       }
     } catch {
       setGenerateError('Something went wrong. Please try again.');
@@ -184,13 +394,38 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
     }
   }
 
+  function cancelConfirm() {
+    setConfirmModalData(null);
+  }
+
   if (quizData) {
     return (
-      <QuizViewer
-        quiz={quizData}
-        onClose={() => setQuizData(null)}
-        onRegenerate={() => { setQuizData(null); handleGenerate(); }}
-      />
+      <>
+        <QuizViewer
+          quiz={quizData}
+          generationId={generationId}
+          parentGenerationId={parentGenerationId}
+          sessionToken={sessionToken}
+          onClose={() => {
+            setQuizData(null);
+            setGenerationId(null);
+            setParentGenerationId(null);
+          }}
+          onRegenerate={() => handleGenerate(generationId)}
+          onResolve={(resolution, revertPayload) => {
+            if (resolution === 'revert' && revertPayload) {
+              setQuizData(revertPayload);
+              setGenerationId(revertPayload.generation_id || null);
+              setParentGenerationId(revertPayload.parent_generation_id || null);
+            } else {
+              setParentGenerationId(null);
+            }
+          }}
+        />
+        {confirmModalData && (
+          <GenerationConfirmModal data={confirmModalData} onConfirm={confirmGenerate} onCancel={cancelConfirm} />
+        )}
+      </>
     );
   }
 
@@ -303,6 +538,54 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
           </div>
         </div>
 
+        {availableProviders.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-2">AI Model</label>
+            <div className="relative inline-block" ref={providerDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setProviderDropdownOpen((open) => !open)}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs text-gray-700 hover:border-indigo-400 transition-colors"
+              >
+                <span className="font-medium">{MODEL_LABELS[selectedProvider] || selectedProvider}</span>
+                <span className="text-gray-400">·</span>
+                <span>{(PROVIDER_MODELS[selectedProvider] || []).find((m) => m.id === selectedModelId)?.label || selectedModelId}</span>
+                <ChevronDownIcon />
+              </button>
+
+              {providerDropdownOpen && (
+                <div className="absolute z-20 mt-1 left-0 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-[220px] max-h-[280px] overflow-y-auto">
+                  {availableProviders.map((provider) => (
+                    <div key={provider}>
+                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                        {MODEL_LABELS[provider] || provider}
+                      </p>
+                      {(PROVIDER_MODELS[provider] || []).map((model) => (
+                        <button
+                          key={model.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedProvider(provider);
+                            setSelectedModelId(model.id);
+                            localStorage.setItem('quiz_selected_provider', provider);
+                            localStorage.setItem('quiz_selected_model_id', model.id);
+                            setProviderDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-1.5 text-xs hover:bg-indigo-50 transition-colors ${
+                            model.id === selectedModelId ? 'text-indigo-600 font-medium' : 'text-gray-700'
+                          }`}
+                        >
+                          {model.label}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Summary */}
         {totalQuestions > 0 && (
           <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-indigo-50 border border-indigo-100">
@@ -314,6 +597,101 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
           </div>
         )}
 
+        {/* History */}
+        <div className="mt-3 bg-white rounded-xl border border-gray-200 p-3">
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <p className="text-xs font-semibold text-gray-900">History</p>
+            {historyLoading ? (
+              <p className="text-[10px] text-gray-400">Loading…</p>
+            ) : (
+              <p className="text-[10px] text-gray-400">{historyGenerations.length} saved</p>
+            )}
+          </div>
+
+          {historyLoading ? (
+            <p className="text-[10px] text-gray-400">Fetching your generations…</p>
+          ) : historyGenerations.length === 0 ? (
+            <p className="text-[10px] text-gray-400 italic">No quiz history yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {historyGenerations.map((g) => {
+                const status = g.status || 'ready';
+                const badgeClass =
+                  status === 'ready'
+                    ? 'border-green-200 bg-green-50 text-green-700'
+                    : status === 'failed'
+                      ? 'border-red-200 bg-red-50 text-red-600'
+                      : status === 'draft'
+                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : 'border-indigo-200 bg-indigo-50 text-indigo-700';
+
+                const tokenLow = g.estimated_total_tokens_low;
+                const tokenHigh = g.estimated_total_tokens_high;
+                const tokenText =
+                  typeof tokenLow === 'number' && typeof tokenHigh === 'number'
+                    ? `${tokenLow}-${tokenHigh}`
+                    : 'N/A';
+
+                const createdAt = g.created_at ? new Date(g.created_at).toLocaleString() : '';
+
+                return (
+                  <div key={g.generation_id} className="rounded-lg border border-gray-200 p-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-gray-900 truncate">
+                          {g.title || g.topic || 'Quiz'}
+                        </p>
+                        <p className="text-[10px] text-gray-500 mt-0.5 truncate">
+                          {g.provider || 'provider'} · {g.model_id || 'model'} · {createdAt}
+                        </p>
+                      </div>
+                      <span className={`inline-flex items-center px-2 py-1 rounded-full border text-[10px] font-medium ${badgeClass}`}>
+                        {status}
+                      </span>
+                    </div>
+
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                      <p className="text-[10px] text-gray-500">
+                        Tokens: <span className="font-medium text-gray-700">{tokenText}</span>
+                      </p>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => reopenFromHistory(g)}
+                          className="px-2 py-1 rounded-lg border border-gray-200 text-[10px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                        >
+                          Reopen
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleGenerate(null, {
+                              topic: g.topic || '',
+                              tf_count: g.tf_count || 0,
+                              sa_count: g.sa_count || 0,
+                              la_count: g.la_count || 0,
+                              mcq_count: g.mcq_count || 0,
+                              mcq_options: g.mcq_options || mcqOptions,
+                              material_ids: Array.isArray(g.selected_material_ids) ? g.selected_material_ids : undefined,
+                              provider: g.provider,
+                              model_id: g.model_id,
+                            })
+                          }
+                          disabled={generating || estimating}
+                          className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          Generate
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {/* Error */}
         {generateError && (
           <p className="text-xs text-red-600">{generateError}</p>
@@ -323,7 +701,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
         <button
           type="button"
           onClick={handleGenerate}
-          disabled={generating || totalQuestions === 0 || selectedCount === 0}
+          disabled={generating || estimating || totalQuestions === 0 || selectedCount === 0}
           className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
         >
           {generating ? (
@@ -333,6 +711,14 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
               </svg>
               Generating…
+            </>
+          ) : estimating ? (
+            <>
+              <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              Estimating…
             </>
           ) : (
             <>
@@ -347,6 +733,10 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
           AI responses are based on your selected course materials.{' '}
           <a href="#" className="text-indigo-500 hover:underline">Learn more</a>
         </p>
+
+        {confirmModalData && (
+          <GenerationConfirmModal data={confirmModalData} onConfirm={confirmGenerate} onCancel={cancelConfirm} />
+        )}
       </div>
 
     </div>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -337,8 +338,12 @@ function EmbedStatusBadge({ status }) {
 
 // ─── material grid card (existing materials) ──────────────────────────────────
 
-function MaterialCard({ material, onVisibilityChange, onDelete, isOwner }) {
+function MaterialCard({ material, courseId, onVisibilityChange, onDelete, isOwner }) {
   const [deleting, setDeleting] = useState(false);
+  const navigate = useNavigate();
+
+  const quizGenMatch = material?.file_url?.match(/^quiz:\/\/generation\/(\d+)$/);
+  const quizGenerationId = quizGenMatch ? quizGenMatch[1] : null;
 
   return (
     <div className="flex rounded-lg border border-gray-200 bg-white overflow-hidden hover:shadow-md transition-shadow group">
@@ -352,14 +357,24 @@ function MaterialCard({ material, onVisibilityChange, onDelete, isOwner }) {
 
       {/* Content */}
       <div className="flex-1 min-w-0 px-4 py-3 flex flex-col justify-center gap-0.5">
-        <a
-          href={material.download_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug"
-        >
-          {material.name}
-        </a>
+        {quizGenerationId ? (
+          <button
+            type="button"
+            onClick={() => navigate(`/course/${courseId}/quiz/${quizGenerationId}`)}
+            className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug text-left"
+          >
+            {material.name}
+          </button>
+        ) : (
+          <a
+            href={material.download_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug"
+          >
+            {material.name}
+          </a>
+        )}
         <div className="flex items-center gap-1.5 flex-wrap">
           <p className="text-xs text-gray-400">
             {getMeta(material.file_type).label}
@@ -767,6 +782,7 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
               <MaterialCard
                 key={m.id}
                 material={m}
+                courseId={courseId}
                 onVisibilityChange={handleMaterialVisibility}
                 onDelete={handleDelete}
                 isOwner={m.uploaded_by === userId}

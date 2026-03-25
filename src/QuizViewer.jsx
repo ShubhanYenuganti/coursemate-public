@@ -129,7 +129,7 @@ function TrueFalseContent({ selected, onSelect, submitted, correct }) {
   );
 }
 
-function ShortAnswerContent({ value, onChange, onSubmit, submitted }) {
+function ShortAnswerContent({ value, onChange, onSubmit, submitted, expectedAnswer }) {
   return (
     <div>
       <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Your answer</p>
@@ -153,11 +153,19 @@ function ShortAnswerContent({ value, onChange, onSubmit, submitted }) {
           </button>
         )}
       </div>
+      {submitted && (
+        <div className="mt-3 text-xs">
+          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Expected</p>
+          <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-gray-800 whitespace-pre-wrap">
+            {expectedAnswer || ''}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function LongAnswerContent({ value, onChange, onSubmit, submitted }) {
+function LongAnswerContent({ value, onChange, onSubmit, submitted, expectedAnswer }) {
   return (
     <div>
       <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Your answer</p>
@@ -179,6 +187,14 @@ function LongAnswerContent({ value, onChange, onSubmit, submitted }) {
           >
             Submit
           </button>
+        </div>
+      )}
+      {submitted && (
+        <div className="mt-3 text-xs">
+          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Expected</p>
+          <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-gray-800 whitespace-pre-wrap">
+            {expectedAnswer || ''}
+          </div>
         </div>
       )}
     </div>
@@ -229,6 +245,7 @@ function QuestionCard({ question, index, total, answer, onAnswer, submitted, onS
           onChange={onAnswer}
           onSubmit={onSubmit}
           submitted={submitted}
+          expectedAnswer={question.answer}
         />
       )}
       {(type === 'la' || type === 'long_answer') && (
@@ -237,6 +254,7 @@ function QuestionCard({ question, index, total, answer, onAnswer, submitted, onS
           onChange={onAnswer}
           onSubmit={onSubmit}
           submitted={submitted}
+          expectedAnswer={question.answer}
         />
       )}
 
@@ -257,13 +275,82 @@ function QuestionCard({ question, index, total, answer, onAnswer, submitted, onS
 
 // ─── QuizViewer ────────────────────────────────────────────────────────────────
 
-export default function QuizViewer({ quiz, onClose, onRegenerate }) {
+export default function QuizViewer({ quiz, generationId, parentGenerationId, sessionToken, onClose, onRegenerate, onResolve }) {
   const questions = quiz?.questions || (Array.isArray(quiz) ? quiz : []);
   const total = questions.length;
 
   const [answers, setAnswers] = useState({});
   const [submitted, setSubmitted] = useState({});
   const answeredCount = Object.keys(submitted).length;
+  const [saveStatus, setSaveStatus] = useState('idle');
+  const [resolving, setResolving] = useState(false);
+
+  const [attemptStatus, setAttemptStatus] = useState('idle'); // idle | submitting | submitted | error
+  const [attemptResult, setAttemptResult] = useState(null);
+  const [exportStatus, setExportStatus] = useState('idle'); // idle | exporting | error
+
+  async function handleSubmitAttempt() {
+    if (!generationId || attemptStatus === 'submitting') return;
+    setAttemptStatus('submitting');
+
+    try {
+      const answers_by_index = {};
+      for (const [k, v] of Object.entries(answers || {})) {
+        // Only include keys with a non-empty value; skipped questions are treated as absent.
+        if (v === undefined || v === null) continue;
+        const s = String(v);
+        if (!s.trim()) continue;
+        answers_by_index[k] = s;
+      }
+
+      const res = await fetch('/api/quiz', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'submit_attempt',
+          generation_id: generationId,
+          answers_by_index,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+      setAttemptResult(data);
+      setAttemptStatus('submitted');
+    } catch (e) {
+      setAttemptResult(null);
+      setAttemptStatus('error');
+    }
+  }
+
+  async function handleExportPdf() {
+    if (!generationId || exportStatus === 'exporting') return;
+    setExportStatus('exporting');
+
+    try {
+      const res = await fetch(`/api/quiz?action=export_pdf&generation_id=${generationId}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `quiz-${generationId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setExportStatus('idle');
+    } catch (e) {
+      setExportStatus('error');
+    }
+  }
 
   function setAnswer(index, value) {
     setAnswers((prev) => ({ ...prev, [index]: value }));
@@ -273,8 +360,93 @@ export default function QuizViewer({ quiz, onClose, onRegenerate }) {
     setSubmitted((prev) => ({ ...prev, [index]: true }));
   }
 
+  async function handleSave() {
+    if (!generationId || saveStatus === 'saving' || saveStatus === 'saved') return;
+    setSaveStatus('saving');
+    try {
+      const res = await fetch('/api/quiz', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'save_artifact', generation_id: generationId }),
+      });
+      if (res.ok) {
+        setSaveStatus('saved');
+      } else {
+        setSaveStatus('error');
+      }
+    } catch {
+      setSaveStatus('error');
+    }
+  }
+
+  async function handleResolve(resolution) {
+    if (!parentGenerationId || !generationId || resolving) return;
+    setResolving(true);
+    try {
+      const res = await fetch('/api/quiz', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'resolve_regeneration',
+          generation_id: generationId,
+          parent_generation_id: parentGenerationId,
+          resolution,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        onResolve?.(resolution, data.generation || null);
+      }
+    } catch {
+      // keep banner visible to allow retry
+    } finally {
+      setResolving(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-blue-50 flex flex-col">
+      {parentGenerationId && (
+        <div className="bg-amber-50 border-b border-amber-200 px-8 py-3">
+          <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
+            <p className="text-sm text-amber-800 font-medium">
+              New version generated. What would you like to do with the previous version?
+            </p>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => handleResolve('save_both')}
+                disabled={resolving}
+                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+              >
+                Save Both
+              </button>
+              <button
+                type="button"
+                onClick={() => handleResolve('replace')}
+                disabled={resolving}
+                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+              >
+                Replace Previous
+              </button>
+              <button
+                type="button"
+                onClick={() => handleResolve('revert')}
+                disabled={resolving}
+                className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 transition-colors disabled:opacity-50"
+              >
+                Revert
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-gray-100 px-8 py-3">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
@@ -296,19 +468,51 @@ export default function QuizViewer({ quiz, onClose, onRegenerate }) {
               <RefreshIcon />
               Regenerate
             </button>
+
             <button
               type="button"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+              onClick={handleSubmitAttempt}
+              disabled={attemptStatus === 'submitting' || !generationId}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                attemptStatus === 'submitted'
+                  ? 'border border-green-200 bg-green-50 text-green-700 cursor-default'
+                  : attemptStatus === 'error'
+                    ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-50'
+                    : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              {attemptStatus === 'submitting' ? 'Grading…' : 'Submit Attempt'}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saveStatus === 'saving' || saveStatus === 'saved'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                saveStatus === 'saved'
+                  ? 'border-green-300 text-green-700 bg-green-50 cursor-default'
+                  : saveStatus === 'error'
+                    ? 'border-red-300 text-red-600 hover:bg-red-50'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+              }`}
             >
               <BookmarkIcon />
-              Save Quiz
+              {saveStatus === 'saving'
+                ? 'Saving...'
+                : saveStatus === 'saved'
+                  ? 'Saved ✓'
+                  : saveStatus === 'error'
+                    ? 'Retry Save'
+                    : 'Save Quiz'}
             </button>
             <button
               type="button"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+              onClick={handleExportPdf}
+              disabled={!generationId || exportStatus === 'exporting'}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <DownloadIcon />
-              Export Quiz
+              {exportStatus === 'exporting' ? 'Exporting…' : 'Export Quiz'}
               <ChevronDownIcon />
             </button>
             <div className="w-px h-5 bg-gray-200 mx-1" />
@@ -332,6 +536,18 @@ export default function QuizViewer({ quiz, onClose, onRegenerate }) {
       {/* Question cards */}
       <main className="flex-1 py-8 px-4">
         <div className="max-w-2xl mx-auto flex flex-col gap-6">
+          {attemptResult && (
+            <div className="mb-2 rounded-xl border border-gray-200 bg-white px-4 py-3">
+              <div className="text-xs font-semibold text-gray-900">
+                Score: {typeof attemptResult.score_percent === 'number' ? `${attemptResult.score_percent.toFixed(0)}%` : 'N/A'}
+              </div>
+              {attemptResult.manual_review_required && (
+                <div className="mt-2 text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  Manual review required for SA/LA responses.
+                </div>
+              )}
+            </div>
+          )}
           {questions.length === 0 && (
             <p className="text-center text-sm text-gray-400 py-12">No questions generated.</p>
           )}
