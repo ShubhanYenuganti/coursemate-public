@@ -619,6 +619,8 @@ class handler(BaseHTTPRequestHandler):
         gen_id = None
         api_key = None
         material_context = None
+        draft_should_enqueue = False
+        draft_status_response = None
 
         with get_db() as conn:
             cursor = conn.cursor()
@@ -707,21 +709,11 @@ class handler(BaseHTTPRequestHandler):
 
                 gen_id = draft_generation_id
                 cursor.close()
-
-                if should_enqueue:
-                    try:
-                        _enqueue_quiz_generation_job(gen_id, user_id)
-                    except Exception as exc:
-                        with get_db() as conn2:
-                            _mark_generation_failed(conn2, gen_id, f'Failed to enqueue generation job: {exc}')
-                        send_json(self, 500, {'error': 'Failed to queue generation'})
-                        return
-
-                send_json(self, 202, {
+                draft_should_enqueue = should_enqueue
+                draft_status_response = {
                     'generation_id': gen_id,
                     'status': current_status,
-                })
-                return
+                }
 
             # --- Legacy flow: create a new generation row directly ---
             else:
@@ -809,6 +801,20 @@ class handler(BaseHTTPRequestHandler):
 
             # Fetch material context
             material_context = _fetch_material_context(conn, material_ids)
+
+        # Draft flow returns after transaction commit to avoid race:
+        # message consumption before status='queued' is committed.
+        if draft_status_response is not None:
+            if draft_should_enqueue:
+                try:
+                    _enqueue_quiz_generation_job(gen_id, user_id)
+                except Exception as exc:
+                    with get_db() as conn2:
+                        _mark_generation_failed(conn2, gen_id, f'Failed to enqueue generation job: {exc}')
+                    send_json(self, 500, {'error': 'Failed to queue generation'})
+                    return
+            send_json(self, 202, draft_status_response)
+            return
 
         # Build prompt and call LLM (outside DB transaction -- can be slow)
         system, user_prompt = _build_quiz_prompt(
