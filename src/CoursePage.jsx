@@ -4,6 +4,7 @@ import CreateCourseModal from './CreateCourseModal.jsx';
 import SharingAccessModal from './SharingAccessModal.jsx';
 import MaterialsPage from './MaterialsPage.jsx';
 import ChatTab from './ChatTab.jsx';
+import Generations from './Generations.jsx';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -228,13 +229,18 @@ export default function CoursePage({ course, userData, sessionToken, onSignOut, 
 
         {activeTab === 'chat' && (
           <div className="max-w-5xl mx-auto">
-            <ChatTab course={course} userData={userData} sessionToken={sessionToken} />
+            <ChatTab course={course} userData={userData} sessionToken={sessionToken} onAddSource={() => handleTabChange('materials')} />
           </div>
         )}
 
         {activeTab === 'generate' && (
-          <div className="max-w-3xl mx-auto flex items-center justify-center py-24 text-gray-400 text-sm">
-            Generate Materials — coming soon
+          <div className="max-w-5xl mx-auto">
+            <Generations
+              course={course}
+              userData={userData}
+              sessionToken={sessionToken}
+              onAddSource={() => handleTabChange('materials')}
+            />
           </div>
         )}
       </main>

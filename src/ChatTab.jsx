@@ -219,23 +219,18 @@ function FileTypeBadge({ name }) {
   );
 }
 
-function MaterialCheckbox({ checked, onToggle }) {
+function MaterialToggle({ checked, onToggle }) {
   return (
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onToggle(); }}
-      className={`flex-shrink-0 w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${
-        checked
-          ? 'bg-indigo-500 border-indigo-500'
-          : 'border-gray-300 hover:border-indigo-400'
+      className={`flex-shrink-0 relative inline-flex h-4 w-7 items-center rounded-full transition-colors focus:outline-none ${
+        checked ? 'bg-indigo-500' : 'bg-gray-200'
       }`}
     >
-      {checked && (
-        <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24"
-          fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-      )}
+      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow-sm transition-transform ${
+        checked ? 'translate-x-3.5' : 'translate-x-0.5'
+      }`} />
     </button>
   );
 }
@@ -957,7 +952,7 @@ function StreamingHistoryBubble({ history, materials }) {
 
 // ─── main component ───────────────────────────────────────────────────────────
 
-export default function ChatTab({ course, userData, sessionToken }) {
+export default function ChatTab({ course, userData, sessionToken, onAddSource }) {
   const [activeConv, setActiveConv] = useState(null);
   const [chats, setChats] = useState([]);
   const [chatsLoading, setChatsLoading] = useState(false);
@@ -978,7 +973,6 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const [materials, setMaterials] = useState([]);
   const [selectedMaterials, setSelectedMaterials] = useState(new Set());
   const [selectAllMaterials, setSelectAllMaterials] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(224);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState('');
   const [titleSaving, setTitleSaving] = useState(false);
@@ -992,8 +986,6 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const modelListDropdownRef = useRef(null);
   const titleInputRef = useRef(null);
   const bannerTimerRef = useRef(null);
-  const containerRef = useRef(null);
-  const isDraggingRef = useRef(false);
   const sendingRef = useRef(false);
 
   useEffect(() => {
@@ -1145,28 +1137,6 @@ export default function ChatTab({ course, userData, sessionToken }) {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-  }
-
-  function handleDragStart(e) {
-    e.preventDefault();
-    isDraggingRef.current = true;
-
-    function onMouseMove(ev) {
-      if (!isDraggingRef.current || !containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const maxWidth = rect.width * 0.35;
-      const newWidth = Math.min(maxWidth, Math.max(160, ev.clientX - rect.left));
-      setSidebarWidth(newWidth);
-    }
-
-    function onMouseUp() {
-      isDraggingRef.current = false;
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    }
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
   }
 
   function handleNewChat() {
@@ -1792,7 +1762,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
   const { today, lastWeek, older } = groupChatsByDate(chats);
 
   return (
-    <div ref={containerRef} className="relative flex rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm" style={{ height: '68vh', minHeight: '520px' }}>
+    <div className="relative flex rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm" style={{ height: '68vh', minHeight: '520px' }}>
 
       {/* Switched-to banner — centred over the full modal */}
       {switchBanner && (
@@ -1802,7 +1772,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
       )}
 
       {/* ── Sidebar ── */}
-      <div className="flex-shrink-0 bg-gray-50/80 flex flex-col overflow-hidden" style={{ width: sidebarWidth }}>
+      <div className="w-[280px] flex-shrink-0 bg-gray-50/80 flex flex-col overflow-hidden">
         {/* Logo / title */}
         <div className="px-4 pt-5 pb-3">
           <div className="flex items-center gap-2 mb-4">
@@ -1933,27 +1903,15 @@ export default function ChatTab({ course, userData, sessionToken }) {
             {/* Header row */}
             <div className="px-3 py-1 flex items-center justify-between">
               <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Your Materials</span>
-              <button
-                type="button"
-                onClick={handleSelectAllMaterials}
-                title={selectAllMaterials ? 'Deselect all' : 'Select all'}
-                className={`flex-shrink-0 w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${
-                  selectAllMaterials
-                    ? 'bg-indigo-500 border-indigo-500'
-                    : 'border-gray-300 hover:border-indigo-400'
-                }`}
-              >
-                {selectAllMaterials && (
-                  <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24"
-                    fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                )}
-              </button>
+              {materials.length > 0 && (
+                <span className="text-[10px] text-gray-400 tabular-nums">
+                  {selectAllMaterials ? materials.length : selectedMaterials.size}/{materials.length}
+                </span>
+              )}
             </div>
 
             {/* Materials list */}
-            <div className="flex-1 overflow-y-auto pb-3">
+            <div className="flex-1 overflow-y-auto pb-2">
               {materials.length === 0 ? (
                 <p className="px-3 py-2 text-[10px] text-gray-400 italic">No materials uploaded yet.</p>
               ) : (
@@ -1969,7 +1927,7 @@ export default function ChatTab({ course, userData, sessionToken }) {
                         onClick={() => handleDownloadMaterial(m)}
                         title={m.name}
                       >{m.name}</span>
-                      <MaterialCheckbox
+                      <MaterialToggle
                         checked={isMaterialChecked(m.id)}
                         onToggle={() => handleToggleMaterial(m.id)}
                       />
@@ -1977,6 +1935,18 @@ export default function ChatTab({ course, userData, sessionToken }) {
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Add Source button */}
+            <div className="px-3 pb-3 flex-shrink-0">
+              <button
+                type="button"
+                onClick={onAddSource}
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-gray-300 text-xs text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+              >
+                <PlusIcon />
+                Add Source
+              </button>
             </div>
           </div>
 
@@ -1996,12 +1966,6 @@ export default function ChatTab({ course, userData, sessionToken }) {
           </div>
         )}
       </div>
-
-      {/* ── Drag handle ── */}
-      <div
-        onMouseDown={handleDragStart}
-        className="w-1 flex-shrink-0 cursor-col-resize bg-gray-100 hover:bg-indigo-300 active:bg-indigo-400 transition-colors"
-      />
 
       {/* ── Main chat ── */}
       <div className="flex-1 flex flex-col min-w-0 relative overflow-hidden">
