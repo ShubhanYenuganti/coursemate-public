@@ -137,6 +137,16 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
     });
   }
 
+  function toggleSelectAll() {
+    if (selectAll) {
+      setSelectAll(false);
+      setSelectedSources(new Set());
+    } else {
+      setSelectAll(true);
+      setSelectedSources(new Set());
+    }
+  }
+
   const selectedCount = selectAll ? materials.length : selectedSources.size;
   const activeDepth = DEPTH_OPTIONS.find((d) => d.id === depth);
 
@@ -198,7 +208,10 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
             <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Sources</span>
             <span className="text-[10px] text-gray-400 tabular-nums">{selectedCount}/{materials.length}</span>
           </div>
-          <p className="text-[10px] text-gray-400 leading-snug">Select sources to include in generation</p>
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] text-gray-400 leading-snug">Select sources to include in generation</p>
+            <SourceToggle checked={selectAll} onToggle={toggleSelectAll} />
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">

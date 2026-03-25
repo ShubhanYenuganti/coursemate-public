@@ -1904,9 +1904,12 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
             <div className="px-3 py-1 flex items-center justify-between">
               <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Your Materials</span>
               {materials.length > 0 && (
-                <span className="text-[10px] text-gray-400 tabular-nums">
-                  {selectAllMaterials ? materials.length : selectedMaterials.size}/{materials.length}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-gray-400 tabular-nums">
+                    {selectAllMaterials ? materials.length : selectedMaterials.size}/{materials.length}
+                  </span>
+                  <MaterialToggle checked={selectAllMaterials} onToggle={handleSelectAllMaterials} />
+                </div>
               )}
             </div>
 
