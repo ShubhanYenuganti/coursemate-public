@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -118,9 +118,36 @@ function ShuffleIcon() {
   );
 }
 
+function ToolbarItem({ icon, label, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex items-center gap-2 transition-all duration-150 rounded-xl px-1 py-1 focus:outline-none cursor-pointer"
+    >
+      <span className="max-w-0 overflow-hidden whitespace-nowrap text-sm font-medium transition-all duration-200 ease-out group-hover:max-w-xs text-gray-700">
+        {label}
+      </span>
+      <div className="w-10 h-10 flex items-center justify-center rounded-xl border shadow-sm text-lg transition-all duration-200 bg-white/80 border-gray-200 text-gray-600 group-hover:text-indigo-600 group-hover:border-indigo-300 group-hover:shadow-md">
+        {icon}
+      </div>
+    </button>
+  );
+}
+
 // ─── FlashcardViewer ───────────────────────────────────────────────────────────
 
-export default function FlashcardViewer({ data, course, onClose, onRegenerate }) {
+export default function FlashcardViewer({
+  data,
+  course,
+  sessionToken,
+  generationId,
+  parentGenerationId,
+  onClose,
+  onRegenerate,
+  onResolve,
+  onGoToTab,
+}) {
   const cards = data?.flashcards || data?.cards || (Array.isArray(data) ? data : []);
 
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -129,6 +156,13 @@ export default function FlashcardViewer({ data, course, onClose, onRegenerate })
   const [shuffled, setShuffled] = useState(false);
   const [seen, setSeen] = useState(new Set());
   const [showHint, setShowHint] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(data?.artifact_material_id ? 'saved' : 'idle');
+  const [exportStatus, setExportStatus] = useState('idle');
+  const [resolving, setResolving] = useState(false);
+
+  useEffect(() => {
+    setSaveStatus(data?.artifact_material_id ? 'saved' : 'idle');
+  }, [data?.artifact_material_id, data?.generation_id]);
 
   const displayCards = useMemo(() => {
     if (!shuffled) return cards;
@@ -176,8 +210,112 @@ export default function FlashcardViewer({ data, course, onClose, onRegenerate })
     setShowHint(false);
   }
 
+  async function handleSave() {
+    if (!generationId || saveStatus === 'saving' || saveStatus === 'saved') return;
+    setSaveStatus('saving');
+    try {
+      const res = await fetch('/api/flashcards', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'save_artifact', generation_id: generationId }),
+      });
+      if (res.ok) setSaveStatus('saved');
+      else setSaveStatus('error');
+    } catch {
+      setSaveStatus('error');
+    }
+  }
+
+  async function handleExportPdf() {
+    if (!generationId || exportStatus === 'exporting') return;
+    setExportStatus('exporting');
+    try {
+      const res = await fetch(`/api/flashcards?action=export_pdf&generation_id=${generationId}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `flashcards-${generationId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setExportStatus('idle');
+    } catch {
+      setExportStatus('error');
+    }
+  }
+
+  async function handleResolve(resolution) {
+    if (!parentGenerationId || !generationId || resolving) return;
+    setResolving(true);
+    try {
+      const res = await fetch('/api/flashcards', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'resolve_regeneration',
+          generation_id: generationId,
+          parent_generation_id: parentGenerationId,
+          resolution,
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (res.ok) onResolve?.(resolution, payload.generation || null);
+    } catch {
+      // keep banner visible for retry
+    } finally {
+      setResolving(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-teal-50 flex flex-col">
+      {parentGenerationId && (
+        <div className="bg-amber-50 border-b border-amber-200 px-8 py-3">
+          <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
+            <p className="text-sm text-amber-800 font-medium">
+              New version generated. What would you like to do with the previous version?
+            </p>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => handleResolve('save_both')}
+                disabled={resolving}
+                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+              >
+                Save Both
+              </button>
+              <button
+                type="button"
+                onClick={() => handleResolve('replace')}
+                disabled={resolving}
+                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+              >
+                Replace Previous
+              </button>
+              <button
+                type="button"
+                onClick={() => handleResolve('revert')}
+                disabled={resolving}
+                className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 transition-colors disabled:opacity-50"
+              >
+                Revert
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Header ── */}
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-gray-100 px-8 py-3">
@@ -194,7 +332,7 @@ export default function FlashcardViewer({ data, course, onClose, onRegenerate })
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onRegenerate}
+              onClick={() => onRegenerate?.(data)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-colors"
             >
               <RefreshIcon />
@@ -202,17 +340,27 @@ export default function FlashcardViewer({ data, course, onClose, onRegenerate })
             </button>
             <button
               type="button"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+              onClick={handleSave}
+              disabled={saveStatus === 'saving' || saveStatus === 'saved'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs transition-colors ${
+                saveStatus === 'saved'
+                  ? 'border-green-300 text-green-700 bg-green-50 cursor-default'
+                  : saveStatus === 'error'
+                    ? 'border-red-300 text-red-600 hover:bg-red-50'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+              }`}
             >
               <BookmarkIcon />
-              Save Flashcards
+              {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved ✓' : saveStatus === 'error' ? 'Retry Save' : 'Save Flashcards'}
             </button>
             <button
               type="button"
+              onClick={handleExportPdf}
+              disabled={!generationId || exportStatus === 'exporting'}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
             >
               <DownloadIcon />
-              Export Flashcards
+              {exportStatus === 'exporting' ? 'Exporting…' : 'Export Flashcards'}
               <ChevronDownIcon />
             </button>
             <div className="w-px h-5 bg-gray-200 mx-1" />
@@ -401,6 +549,16 @@ export default function FlashcardViewer({ data, course, onClose, onRegenerate })
 
         </div>
       </footer>
+
+      {onGoToTab && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-gray-200 shadow-lg z-20">
+          <ToolbarItem icon="📄" label="Materials" onClick={() => onGoToTab('materials')} />
+          <div className="w-px h-6 bg-gray-200" />
+          <ToolbarItem icon="💬" label="Chat" onClick={() => onGoToTab('chat')} />
+          <div className="w-px h-6 bg-gray-200" />
+          <ToolbarItem icon="💡" label="Generate" onClick={() => onGoToTab('generate')} />
+        </div>
+      )}
     </div>
   );
 }

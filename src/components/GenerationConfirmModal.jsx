@@ -9,10 +9,16 @@ export default function GenerationConfirmModal({
   availableProviders = [],
   providerModels = {},
   modelLabels = {},
+  mode = 'quiz',
 }) {
   const [selectedProvider, setSelectedProvider] = useState(data?.provider || '');
   const [selectedModelId, setSelectedModelId] = useState(data?.model_id || '');
   const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    setSelectedProvider(data?.provider || '');
+    setSelectedModelId(data?.model_id || '');
+  }, [data?.provider, data?.model_id]);
 
   useEffect(() => {
     function onKeyDown(e) {
@@ -49,12 +55,31 @@ export default function GenerationConfirmModal({
     selectedModelId ||
     data.model_id;
   const hasProviders = availableProviders.length > 0;
+  const isFlashcards = mode === 'flashcards';
+
+  const summaryText = isFlashcards
+    ? (
+      <>
+        You are generating: <span className="font-medium text-gray-900">{data.card_count || 0}</span> flashcards
+        {' '}at <span className="font-medium text-gray-900">{data.depth || 'moderate'}</span> depth
+      </>
+    )
+    : (
+      <>
+        You are generating: <span className="font-medium text-gray-900">{data.tf_count || 0}</span> T/F,{' '}
+        <span className="font-medium text-gray-900">{data.sa_count || 0}</span> short answers,{' '}
+        <span className="font-medium text-gray-900">{data.la_count || 0}</span> long answers,{' '}
+        <span className="font-medium text-gray-900">{data.mcq_count || 0}</span> MCQ
+      </>
+    );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-6">
       <div className="w-full max-w-lg rounded-2xl bg-white border border-gray-200 shadow-xl p-4 sm:p-5">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-gray-900">Confirm Quiz Generation</h3>
+          <h3 className="text-sm font-semibold text-gray-900">
+            {isFlashcards ? 'Confirm Flashcards Generation' : 'Confirm Quiz Generation'}
+          </h3>
           <button
             type="button"
             disabled={isLoading}
@@ -122,19 +147,15 @@ export default function GenerationConfirmModal({
             <p className="text-[11px] text-indigo-800 font-medium">{totalText}</p>
           </div>
 
-          <div className="text-xs text-gray-600">
-            You are generating: <span className="font-medium text-gray-900">{data.tf_count || 0}</span> T/F,{' '}
-            <span className="font-medium text-gray-900">{data.sa_count || 0}</span> short answers,{' '}
-            <span className="font-medium text-gray-900">{data.la_count || 0}</span> long answers,{' '}
-            <span className="font-medium text-gray-900">{data.mcq_count || 0}</span> MCQ
-          </div>
+          <div className="text-xs text-gray-600">{summaryText}</div>
         </div>
 
         <div className="mt-5 flex items-center justify-between gap-2">
           <button
             type="button"
+            disabled={isLoading}
             onClick={() => onCancel?.()}
-            className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Cancel
           </button>
@@ -163,4 +184,3 @@ export default function GenerationConfirmModal({
     </div>
   );
 }
-

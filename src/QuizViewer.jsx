@@ -561,7 +561,7 @@ export default function QuizViewer({ quiz, generationId, parentGenerationId, ses
               <>
                 <button
                   type="button"
-                  onClick={onRegenerate}
+                  onClick={() => onRegenerate?.(quiz)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-colors"
                 >
                   <RefreshIcon />

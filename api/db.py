@@ -492,5 +492,71 @@ def init_db():
                 ON quiz_attempt_answers(attempt_id, question_id);
         """)
 
+        # Flashcards generation tables
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS flashcard_generations (
+                id SERIAL PRIMARY KEY,
+                course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+                generated_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                title TEXT,
+                topic TEXT,
+                card_count INTEGER NOT NULL DEFAULT 20,
+                depth VARCHAR(20) NOT NULL DEFAULT 'moderate',
+                provider VARCHAR(20),
+                model_id VARCHAR(100),
+                status VARCHAR(20) NOT NULL DEFAULT 'draft'
+                    CHECK (status IN ('draft', 'queued', 'generating', 'ready', 'failed')),
+                error TEXT,
+                parent_generation_id INTEGER REFERENCES flashcard_generations(id) ON DELETE SET NULL,
+                artifact_material_id INTEGER REFERENCES materials(id) ON DELETE SET NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS flashcard_cards (
+                id SERIAL PRIMARY KEY,
+                generation_id INTEGER NOT NULL REFERENCES flashcard_generations(id) ON DELETE CASCADE,
+                card_index INTEGER NOT NULL,
+                front_text TEXT NOT NULL,
+                back_text TEXT NOT NULL,
+                hint_text TEXT,
+                metadata JSONB NOT NULL DEFAULT '{}'
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_flashcard_gen_course ON flashcard_generations(course_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_flashcard_gen_course_user_created ON flashcard_generations(course_id, generated_by, created_at DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_flashcard_gen_status_created_at ON flashcard_generations(status, created_at DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_flashcard_cards_gen_card_index ON flashcard_cards(generation_id, card_index);")
+
+        # Flashcards phase-2 additions: status lifecycle hardening + estimate/prompt snapshots.
+        cursor.execute("""
+            ALTER TABLE flashcard_generations
+                DROP CONSTRAINT IF EXISTS flashcard_generations_status_check;
+
+            ALTER TABLE flashcard_generations
+                ADD CONSTRAINT flashcard_generations_status_check
+                CHECK (status IN ('draft', 'queued', 'generating', 'ready', 'failed'));
+
+            ALTER TABLE flashcard_generations
+                ALTER COLUMN status SET DEFAULT 'draft';
+
+            ALTER TABLE flashcard_generations
+                ADD COLUMN IF NOT EXISTS estimated_prompt_tokens_low INTEGER;
+            ALTER TABLE flashcard_generations
+                ADD COLUMN IF NOT EXISTS estimated_prompt_tokens_high INTEGER;
+            ALTER TABLE flashcard_generations
+                ADD COLUMN IF NOT EXISTS estimated_total_tokens_low INTEGER;
+            ALTER TABLE flashcard_generations
+                ADD COLUMN IF NOT EXISTS estimated_total_tokens_high INTEGER;
+
+            ALTER TABLE flashcard_generations
+                ADD COLUMN IF NOT EXISTS selected_material_ids JSONB;
+
+            ALTER TABLE flashcard_generations
+                ADD COLUMN IF NOT EXISTS prompt_text TEXT;
+
+            ALTER TABLE flashcard_generations
+                ADD COLUMN IF NOT EXISTS generation_settings JSONB;
+        """)
+
         cursor.close()
         print("Database initialized successfully")

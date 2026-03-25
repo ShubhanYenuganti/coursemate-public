@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Quiz from './Quiz.jsx';
 import Flashcards from './Flashcards.jsx';
 import Reports from './Reports.jsx';
@@ -47,7 +47,24 @@ const TABS = [
 // ─── Generations ─────────────────────────────────────────────────────────────
 
 export default function Generations({ course, userData, sessionToken, onAddSource }) {
-  const [activeTab, setActiveTab] = useState('quiz');
+  const storageKey = useMemo(
+    () => `coursemate_generations_tab_${course?.id || 'global'}`,
+    [course?.id]
+  );
+
+  const [activeTab, setActiveTab] = useState(() => {
+    const saved = localStorage.getItem(storageKey);
+    return TABS.some((t) => t.id === saved) ? saved : 'quiz';
+  });
+
+  useEffect(() => {
+    const saved = localStorage.getItem(storageKey);
+    setActiveTab(TABS.some((t) => t.id === saved) ? saved : 'quiz');
+  }, [storageKey]);
+
+  useEffect(() => {
+    localStorage.setItem(storageKey, activeTab);
+  }, [activeTab, storageKey]);
 
   return (
     <div className="flex flex-col gap-4">
