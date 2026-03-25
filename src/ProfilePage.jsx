@@ -64,7 +64,7 @@ function ApiKeysSection({ sessionToken }) {
 
   async function fetchKeys() {
     try {
-      const res = await fetch("/api/user_api_keys", {
+      const res = await fetch("/api/user?resource=api_keys", {
         headers: { Authorization: `Bearer ${sessionToken}` },
       });
       if (res.ok) {
@@ -104,13 +104,13 @@ function ApiKeysSection({ sessionToken }) {
     setAddStatus("saving");
     setAddError("");
     try {
-      const res = await fetch("/api/user_api_keys", {
+      const res = await fetch("/api/user", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${sessionToken}`,
         },
-        body: JSON.stringify({ provider: addProvider, api_key: addValue.trim() }),
+        body: JSON.stringify({ resource: "api_keys", provider: addProvider, api_key: addValue.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -141,13 +141,13 @@ function ApiKeysSection({ sessionToken }) {
     setEditStatus("saving");
     setEditError("");
     try {
-      const res = await fetch("/api/user_api_keys", {
+      const res = await fetch("/api/user", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${sessionToken}`,
         },
-        body: JSON.stringify({ provider: editingProvider, api_key: editValue.trim() }),
+        body: JSON.stringify({ resource: "api_keys", provider: editingProvider, api_key: editValue.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -161,7 +161,7 @@ function ApiKeysSection({ sessionToken }) {
   async function handleDelete(provider) {
     setDeletingProvider(provider);
     try {
-      const res = await fetch("/api/user_api_keys", {
+      const res = await fetch("/api/user?resource=api_keys", {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
@@ -351,14 +351,14 @@ export default function ProfilePage({ userData, sessionToken, csrfToken, onSignO
     setUsernameStatus("saving");
     setUsernameError("");
     try {
-      const res = await fetch("/api/profile", {
+      const res = await fetch("/api/user", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${sessionToken}`,
           "X-CSRF-Token": csrfToken,
         },
-        body: JSON.stringify({ username: trimmed }),
+        body: JSON.stringify({ resource: "profile", username: trimmed }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -377,7 +377,7 @@ export default function ProfilePage({ userData, sessionToken, csrfToken, onSignO
     setDeleteStatus("deleting");
     setDeleteError("");
     try {
-      const res = await fetch("/api/profile", {
+      const res = await fetch("/api/user?resource=profile", {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${sessionToken}`,

@@ -78,7 +78,7 @@ export default function FlashcardViewerRoute({ sessionToken }) {
 
   useEffect(() => {
     if (!sessionToken) return;
-    fetch('/api/user_api_keys', { headers: authHeaders })
+    fetch('/api/user?resource=api_keys', { headers: authHeaders })
       .then((r) => r.json())
       .then((data) => {
         const providers = Object.entries(data || {})

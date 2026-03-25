@@ -116,7 +116,7 @@ export default function QuizViewerRoute({ sessionToken }) {
 
   useEffect(() => {
     if (!sessionToken) return;
-    fetch('/api/user_api_keys', {
+    fetch('/api/user?resource=api_keys', {
       headers: authHeaders,
     })
       .then((r) => r.json())

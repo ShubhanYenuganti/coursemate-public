@@ -88,7 +88,7 @@ export default function App() {
       setRestoring(false);
       return;
     }
-    fetch("/api/validate_session", {
+    fetch("/api/auth", {
       headers: { Authorization: `Bearer ${stored}` },
     })
       .then((res) => {
@@ -113,7 +113,7 @@ export default function App() {
     setError(null);
 
     try {
-      const res = await fetch("/api/oauth", {
+      const res = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ credential: response.credential }),
@@ -143,8 +143,8 @@ export default function App() {
   const handleSignOut = async () => {
     if (sessionToken) {
       try {
-        await fetch("/api/logout", {
-          method: "POST",
+        await fetch("/api/auth", {
+          method: "DELETE",
           headers: { Authorization: `Bearer ${sessionToken}` },
         });
       } catch (e) {

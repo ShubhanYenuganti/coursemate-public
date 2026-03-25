@@ -177,7 +177,7 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
 
   useEffect(() => {
     if (!sessionToken) return;
-    fetch('/api/user_api_keys', {
+    fetch('/api/user?resource=api_keys', {
       headers: { Authorization: `Bearer ${sessionToken}` },
     })
       .then((r) => r.json())
