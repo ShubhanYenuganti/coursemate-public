@@ -343,7 +343,8 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        setGenerateError(data?.error || `Failed to start generation (HTTP ${res.status})`);
+        const detail = data?.detail ? ` (${data.detail})` : '';
+        setGenerateError((data?.error || `Failed to start generation (HTTP ${res.status})`) + detail);
         loadHistory();
         return false;
       }

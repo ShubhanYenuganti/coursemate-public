@@ -175,6 +175,9 @@ export default function QuizViewerRoute({ sessionToken }) {
     if (res.ok && data?.generation_id) {
       setRegeneratingId(data.generation_id);
       setGenerationId(data.generation_id);
+    } else if (!res.ok) {
+      const detail = data?.detail ? ` (${data.detail})` : '';
+      setLoadError((data?.error || `Failed to start regeneration (HTTP ${res.status})`) + detail);
     }
   }
 

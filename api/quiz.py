@@ -814,7 +814,10 @@ class handler(BaseHTTPRequestHandler):
                 except Exception as exc:
                     with get_db() as conn2:
                         _mark_generation_failed(conn2, gen_id, f'Failed to enqueue generation job: {exc}')
-                    send_json(self, 500, {'error': 'Failed to queue generation'})
+                    send_json(self, 500, {
+                        'error': 'Failed to queue generation',
+                        'detail': str(exc),
+                    })
                     return
             send_json(self, 202, draft_status_response)
             return
