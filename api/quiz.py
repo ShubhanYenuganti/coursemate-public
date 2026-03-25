@@ -471,6 +471,8 @@ class handler(BaseHTTPRequestHandler):
 
         if action == 'get_generation':
             self._get_generation(params, user)
+        elif action == 'get_generation_status':
+            self._get_generation_status(params, user)
         elif action == 'list_generations':
             self._list_generations(params, user)
         elif action == 'export_pdf':
@@ -990,6 +992,33 @@ class handler(BaseHTTPRequestHandler):
                 'per_question': grade.get('per_question', []),
             },
         )
+
+    # --- get_generation_status -------------------------------------------------
+
+    def _get_generation_status(self, params: dict, user: dict):
+        """Lightweight poll endpoint — returns only {generation_id, status, error}."""
+        gen_id_raw = params.get('generation_id', [None])[0]
+        if not gen_id_raw or not str(gen_id_raw).isdigit():
+            send_json(self, 400, {'error': 'generation_id required'})
+            return
+        gen_id = int(gen_id_raw)
+        user_id = user['id']
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, status, error FROM quiz_generations WHERE id=%s AND generated_by=%s",
+                (gen_id, user_id),
+            )
+            row = cursor.fetchone()
+            cursor.close()
+        if not row:
+            send_json(self, 404, {'error': 'Generation not found'})
+            return
+        send_json(self, 200, {
+            'generation_id': row['id'],
+            'status': row['status'],
+            'error': row.get('error'),
+        })
 
     # --- get_generation --------------------------------------------------------
 

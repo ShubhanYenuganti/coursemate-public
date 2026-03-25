@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-export default function GenerationConfirmModal({ data, onConfirm, onCancel }) {
+export default function GenerationConfirmModal({ data, onConfirm, onCancel, onSaveDraft }) {
   useEffect(() => {
     function onKeyDown(e) {
       if (e.key === 'Escape') {
@@ -62,7 +62,7 @@ export default function GenerationConfirmModal({ data, onConfirm, onCancel }) {
           </div>
         </div>
 
-        <div className="mt-5 flex items-center justify-end gap-2">
+        <div className="mt-5 flex items-center justify-between gap-2">
           <button
             type="button"
             onClick={() => onCancel?.()}
@@ -70,13 +70,24 @@ export default function GenerationConfirmModal({ data, onConfirm, onCancel }) {
           >
             Cancel
           </button>
-          <button
-            type="button"
-            onClick={() => onConfirm?.()}
-            className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors"
-          >
-            Confirm generate
-          </button>
+          <div className="flex items-center gap-2">
+            {onSaveDraft && (
+              <button
+                type="button"
+                onClick={() => onSaveDraft?.()}
+                className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Save as Draft
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onConfirm?.()}
+              className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors"
+            >
+              Confirm generate
+            </button>
+          </div>
         </div>
       </div>
     </div>

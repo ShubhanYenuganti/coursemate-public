@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import QuizViewer from './QuizViewer';
 import GenerationConfirmModal from './components/GenerationConfirmModal.jsx';
 
@@ -173,7 +173,6 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
   const providerDropdownRef = useRef(null);
 
-  const [generating, setGenerating] = useState(false);
   const [estimating, setEstimating] = useState(false);
   const [generateError, setGenerateError] = useState('');
   const [quizData, setQuizData] = useState(null);
@@ -184,6 +183,10 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
 
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyGenerations, setHistoryGenerations] = useState([]);
+
+  // Polling — track which generation IDs are currently being polled.
+  const [generatingIds, setGeneratingIds] = useState(new Set());
+  const pollTimersRef = useRef({});
 
   useEffect(() => {
     if (!course?.id || !sessionToken) return;
@@ -233,17 +236,96 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   }, [providerDropdownOpen]);
 
   // Load generation history for the current course.
-  useEffect(() => {
+  async function loadHistory() {
     if (!course?.id || !sessionToken) return;
     setHistoryLoading(true);
-    fetch(`/api/quiz?action=list_generations&course_id=${course.id}`, {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+    try {
+      const r = await fetch(`/api/quiz?action=list_generations&course_id=${course.id}`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      const data = await r.json();
+      setHistoryGenerations(Array.isArray(data?.generations) ? data.generations : []);
+    } catch {}
+    finally { setHistoryLoading(false); }
+  }
+
+  useEffect(() => { loadHistory(); }, [course?.id, sessionToken]);
+
+  // Clear all polls when the course changes or component unmounts.
+  useEffect(() => {
+    return () => {
+      Object.values(pollTimersRef.current).forEach(clearInterval);
+      pollTimersRef.current = {};
+    };
+  }, [course?.id]);
+
+  const stopPolling = useCallback((genId) => {
+    if (pollTimersRef.current[genId]) {
+      clearInterval(pollTimersRef.current[genId]);
+      delete pollTimersRef.current[genId];
+    }
+    setGeneratingIds((prev) => { const n = new Set(prev); n.delete(genId); return n; });
+  }, []);
+
+  const startPolling = useCallback((genId) => {
+    if (pollTimersRef.current[genId]) return; // already polling
+    setGeneratingIds((prev) => new Set([...prev, genId]));
+
+    pollTimersRef.current[genId] = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/quiz?action=get_generation_status&generation_id=${genId}`, {
+          headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+        if (!r.ok) return;
+        const data = await r.json().catch(() => null);
+        if (!data) return;
+
+        if (data.status === 'ready') {
+          stopPolling(genId);
+          const genR = await fetch(`/api/quiz?action=get_generation&generation_id=${genId}`, {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+          });
+          const genData = await genR.json().catch(() => null);
+          if (genData?.generation_id) {
+            setGenerationId(genData.generation_id);
+            setParentGenerationId(genData.parent_generation_id || null);
+            setQuizData(genData);
+          }
+          loadHistory();
+        } else if (data.status === 'failed') {
+          stopPolling(genId);
+          setGenerateError(data.error ? `Generation failed: ${data.error}` : 'Generation failed.');
+          loadHistory();
+        }
+      } catch {
+        // Network hiccup — keep polling.
+      }
+    }, 5000);
+  }, [sessionToken, stopPolling]);
+
+  // Fire generate (from draft or confirm) and begin polling.
+  const triggerGeneration = useCallback((genId, parentId = null) => {
+    startPolling(genId);
+    fetch('/api/quiz', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'generate', generation_id: genId, parent_generation_id: parentId }),
     })
-      .then((r) => r.json())
-      .then((data) => setHistoryGenerations(Array.isArray(data?.generations) ? data.generations : []))
-      .catch(() => {})
-      .finally(() => setHistoryLoading(false));
-  }, [course?.id, sessionToken]);
+      .then(async (res) => {
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          if (data?.generation_id) {
+            stopPolling(genId);
+            setGenerationId(data.generation_id);
+            setParentGenerationId(data.parent_generation_id || null);
+            setQuizData(data);
+          }
+        }
+        // If the response failed, polling will catch 'failed' status.
+      })
+      .catch(() => { /* connection dropped — polling will detect completion */ });
+    loadHistory();
+  }, [sessionToken, startPolling, stopPolling]);
 
   function reopenFromHistory(gen) {
     if (!gen) return;
@@ -290,7 +372,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   const totalQuestions = tfCount + saCount + laCount + mcqCount;
 
   async function handleGenerate(parentId = null, overrides = null) {
-    if (generating || estimating) return;
+    if (estimating) return;
     setGenerateError('');
     setEstimating(true);
     try {
@@ -356,42 +438,18 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
     }
   }
 
-  async function confirmGenerate() {
-    if (!confirmModalData || generating) return;
+  function confirmGenerate() {
+    if (!confirmModalData) return;
+    const { generation_id: genId, parent_generation_id: parentId } = confirmModalData;
+    setConfirmModalData(null);
     setGenerateError('');
-    setGenerating(true);
-    try {
-      const res = await fetch('/api/quiz', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${sessionToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'generate',
-          generation_id: confirmModalData.generation_id,
-          parent_generation_id: confirmModalData.parent_generation_id,
-        }),
-      });
+    triggerGeneration(genId, parentId);
+  }
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setGenerateError(err.error || 'Generation failed. Please try again.');
-        return;
-      }
-
-      const data = await res.json().catch(() => null);
-      if (data) {
-        setGenerationId(data.generation_id || null);
-        setParentGenerationId(data.parent_generation_id || null);
-        setQuizData(data);
-        setConfirmModalData(null);
-      }
-    } catch {
-      setGenerateError('Something went wrong. Please try again.');
-    } finally {
-      setGenerating(false);
-    }
+  function saveDraft() {
+    // The estimate step already persisted the draft row — just close modal + refresh.
+    setConfirmModalData(null);
+    loadHistory();
   }
 
   function cancelConfirm() {
@@ -423,7 +481,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
           }}
         />
         {confirmModalData && (
-          <GenerationConfirmModal data={confirmModalData} onConfirm={confirmGenerate} onCancel={cancelConfirm} />
+          <GenerationConfirmModal data={confirmModalData} onConfirm={confirmGenerate} onCancel={cancelConfirm} onSaveDraft={saveDraft} />
         )}
       </>
     );
@@ -600,7 +658,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
         {/* History */}
         <div className="mt-3 bg-white rounded-xl border border-gray-200 p-3">
           <div className="flex items-center justify-between gap-3 mb-2">
-            <p className="text-xs font-semibold text-gray-900">History</p>
+            <p className="text-xs font-semibold text-gray-900">Generated & Drafted Quizzes</p>
             {historyLoading ? (
               <p className="text-[10px] text-gray-400">Loading…</p>
             ) : (
@@ -615,7 +673,8 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
           ) : (
             <div className="space-y-2">
               {historyGenerations.map((g) => {
-                const status = g.status || 'ready';
+                const isPolling = generatingIds.has(g.generation_id);
+                const status = isPolling ? 'generating' : (g.status || 'ready');
                 const badgeClass =
                   status === 'ready'
                     ? 'border-green-200 bg-green-50 text-green-700'
@@ -645,7 +704,13 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
                           {g.provider || 'provider'} · {g.model_id || 'model'} · {createdAt}
                         </p>
                       </div>
-                      <span className={`inline-flex items-center px-2 py-1 rounded-full border text-[10px] font-medium ${badgeClass}`}>
+                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-medium ${badgeClass}`}>
+                        {status === 'generating' && (
+                          <svg className="animate-spin h-2.5 w-2.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                          </svg>
+                        )}
                         {status}
                       </span>
                     </div>
@@ -656,33 +721,50 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
                       </p>
 
                       <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => reopenFromHistory(g)}
-                          className="px-2 py-1 rounded-lg border border-gray-200 text-[10px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-                        >
-                          Reopen
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleGenerate(null, {
-                              topic: g.topic || '',
-                              tf_count: g.tf_count || 0,
-                              sa_count: g.sa_count || 0,
-                              la_count: g.la_count || 0,
-                              mcq_count: g.mcq_count || 0,
-                              mcq_options: g.mcq_options || mcqOptions,
-                              material_ids: Array.isArray(g.selected_material_ids) ? g.selected_material_ids : undefined,
-                              provider: g.provider,
-                              model_id: g.model_id,
-                            })
-                          }
-                          disabled={generating || estimating}
-                          className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        >
-                          Generate
-                        </button>
+                        {status === 'generating' ? (
+                          <p className="text-[10px] text-indigo-600 italic">Processing…</p>
+                        ) : status === 'draft' ? (
+                          <button
+                            type="button"
+                            onClick={() => triggerGeneration(g.generation_id)}
+                            disabled={estimating}
+                            className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            Generate
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => reopenFromHistory(g)}
+                              className="px-2 py-1 rounded-lg border border-gray-200 text-[10px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                            >
+                              Reopen
+                            </button>
+                            {status === 'ready' && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleGenerate(null, {
+                                    topic: g.topic || '',
+                                    tf_count: g.tf_count || 0,
+                                    sa_count: g.sa_count || 0,
+                                    la_count: g.la_count || 0,
+                                    mcq_count: g.mcq_count || 0,
+                                    mcq_options: g.mcq_options || mcqOptions,
+                                    material_ids: Array.isArray(g.selected_material_ids) ? g.selected_material_ids : undefined,
+                                    provider: g.provider,
+                                    model_id: g.model_id,
+                                  })
+                                }
+                                disabled={estimating}
+                                className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                Regenerate
+                              </button>
+                            )}
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -701,18 +783,10 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
         <button
           type="button"
           onClick={handleGenerate}
-          disabled={generating || estimating || totalQuestions === 0 || selectedCount === 0}
+          disabled={estimating || totalQuestions === 0 || selectedCount === 0}
           className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
         >
-          {generating ? (
-            <>
-              <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-              </svg>
-              Generating…
-            </>
-          ) : estimating ? (
+          {estimating ? (
             <>
               <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -735,7 +809,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
         </p>
 
         {confirmModalData && (
-          <GenerationConfirmModal data={confirmModalData} onConfirm={confirmGenerate} onCancel={cancelConfirm} />
+          <GenerationConfirmModal data={confirmModalData} onConfirm={confirmGenerate} onCancel={cancelConfirm} onSaveDraft={saveDraft} />
         )}
       </div>
 
