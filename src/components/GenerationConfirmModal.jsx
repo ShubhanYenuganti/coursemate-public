@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
 
+const REPORT_TEMPLATE_LABELS = {
+  'study-guide': 'Study Guide',
+  briefing: 'Briefing',
+  summary: 'Summary',
+  custom: 'Custom Report',
+};
+
 export default function GenerationConfirmModal({
   data,
   onConfirm,
@@ -56,12 +63,19 @@ export default function GenerationConfirmModal({
     data.model_id;
   const hasProviders = availableProviders.length > 0;
   const isFlashcards = mode === 'flashcards';
+  const isReports = mode === 'reports';
 
   const summaryText = isFlashcards
     ? (
       <>
         You are generating: <span className="font-medium text-gray-900">{data.card_count || 0}</span> flashcards
         {' '}at <span className="font-medium text-gray-900">{data.depth || 'moderate'}</span> depth
+      </>
+    )
+    : isReports
+    ? (
+      <>
+        You are generating a <span className="font-medium text-gray-900">{REPORT_TEMPLATE_LABELS[data.template_id] || data.template_id || 'Study Guide'}</span> report
       </>
     )
     : (
@@ -78,7 +92,7 @@ export default function GenerationConfirmModal({
       <div className="w-full max-w-lg rounded-2xl bg-white border border-gray-200 shadow-xl p-4 sm:p-5">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold text-gray-900">
-            {isFlashcards ? 'Confirm Flashcards Generation' : 'Confirm Quiz Generation'}
+            {isFlashcards ? 'Confirm Flashcards Generation' : isReports ? 'Confirm Report Generation' : 'Confirm Quiz Generation'}
           </h3>
           <button
             type="button"
