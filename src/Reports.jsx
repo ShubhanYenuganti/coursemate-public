@@ -728,9 +728,11 @@ export default function Reports({ course, sessionToken, onAddSource }) {
 
                 const templateLabel = TEMPLATES.find((t) => t.id === g.template_id)?.label
                   || (g.template_id ? g.template_id : 'Report');
-                const rowTitle = g.template_id === 'custom' && g.custom_prompt
-                  ? g.custom_prompt.slice(0, 60) + (g.custom_prompt.length > 60 ? '…' : '')
-                  : templateLabel;
+                const rowTitle = g.title
+                  ? g.title
+                  : g.template_id === 'custom' && g.custom_prompt
+                    ? g.custom_prompt.slice(0, 60) + (g.custom_prompt.length > 60 ? '…' : '')
+                    : templateLabel;
 
                 const tokenLow = g.estimated_total_tokens_low;
                 const tokenHigh = g.estimated_total_tokens_high;

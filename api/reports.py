@@ -448,14 +448,22 @@ class handler(BaseHTTPRequestHandler):
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT id, template_id, custom_prompt, status, error,
-                       provider, model_id, artifact_material_id,
-                       parent_generation_id, created_at,
-                       estimated_total_tokens_low, estimated_total_tokens_high,
-                       generation_settings
-                FROM report_generations
-                WHERE course_id=%s AND generated_by=%s
-                ORDER BY created_at DESC
+                SELECT rg.id, rg.template_id, rg.custom_prompt, rg.status, rg.error,
+                       rg.provider, rg.model_id, rg.artifact_material_id,
+                       rg.parent_generation_id, rg.created_at,
+                       rg.estimated_total_tokens_low, rg.estimated_total_tokens_high,
+                       rg.generation_settings,
+                       rv.title AS version_title
+                FROM report_generations rg
+                LEFT JOIN LATERAL (
+                    SELECT title
+                    FROM report_versions
+                    WHERE generation_id = rg.id
+                    ORDER BY version_number DESC
+                    LIMIT 1
+                ) rv ON true
+                WHERE rg.course_id=%s AND rg.generated_by=%s
+                ORDER BY rg.created_at DESC
                 LIMIT 50
                 """,
                 (course_id, user["id"]),
@@ -481,6 +489,7 @@ class handler(BaseHTTPRequestHandler):
                     "estimated_total_tokens_low": row.get("estimated_total_tokens_low"),
                     "estimated_total_tokens_high": row.get("estimated_total_tokens_high"),
                     "generation_settings": row.get("generation_settings") or {},
+                    "title": row.get("version_title"),
                 }
             )
 
