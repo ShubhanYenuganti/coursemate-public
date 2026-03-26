@@ -316,7 +316,7 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
       }
 
       const nextStatus = data?.status || 'queued';
-      setHistoryGenerations((prev) => prev.map((g) => g.generation_id === genId ? { ...g, status: nextStatus } : g));
+      setHistoryGenerations((prev) => prev.map((g) => g.generation_id === genId ? { ...g, status: nextStatus, ...(provider && { provider }), ...(modelId && { model_id: modelId }) } : g));
       if (nextStatus === 'queued' || nextStatus === 'generating') {
         if (!pollTimersRef.current[genId]) {
           setGeneratingIds((prev) => new Set([...prev, genId]));

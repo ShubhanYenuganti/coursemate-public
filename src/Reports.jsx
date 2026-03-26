@@ -459,9 +459,9 @@ export default function Reports({ course, sessionToken, onAddSource }) {
       const genId = estimateData.generation_id;
       const nextStatus = data.status || 'queued';
 
-      // Update history row immediately
+      // Update history row immediately (include provider/model in case user changed them in the modal)
       setHistoryGenerations((prev) =>
-        prev.map((g) => g.generation_id === genId ? { ...g, status: nextStatus } : g)
+        prev.map((g) => g.generation_id === genId ? { ...g, status: nextStatus, provider: providerToUse, model_id: modelIdToUse } : g)
       );
 
       // Start per-generation poll

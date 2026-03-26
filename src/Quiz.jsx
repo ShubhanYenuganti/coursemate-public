@@ -351,7 +351,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
       }
       const nextStatus = data?.status || 'queued';
       setHistoryGenerations((prev) =>
-        prev.map((g) => g.generation_id === genId ? { ...g, status: nextStatus } : g)
+        prev.map((g) => g.generation_id === genId ? { ...g, status: nextStatus, ...(provider && { provider }), ...(modelId && { model_id: modelId }) } : g)
       );
       if (nextStatus === 'queued' || nextStatus === 'generating') {
         startPolling(genId);
