@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -57,6 +57,69 @@ function CopyIcon() {
   );
 }
 
+const SAFE_HTML_TAGS = new Set([
+  'a', 'abbr', 'b', 'blockquote', 'br', 'code', 'div', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'hr', 'i', 'img', 'li', 'ol', 'p', 'pre', 'section', 'span', 'strong', 'sub', 'sup', 'table',
+  'tbody', 'td', 'th', 'thead', 'tr', 'u', 'ul',
+]);
+
+const SAFE_HTML_ATTRS = new Set([
+  'alt', 'aria-label', 'aria-hidden', 'class', 'colspan', 'href', 'rel', 'role', 'rowspan', 'scope',
+  'src', 'target', 'title',
+]);
+
+function sanitizeHtml(html) {
+  if (!html) return '';
+  if (typeof document === 'undefined') return '';
+
+  const template = document.createElement('template');
+  template.innerHTML = html;
+
+  const sanitizeNode = (root) => {
+    for (const child of Array.from(root.querySelectorAll('*'))) {
+      if (!child.isConnected) continue;
+
+      const tagName = child.tagName.toLowerCase();
+      if (!SAFE_HTML_TAGS.has(tagName)) {
+        child.replaceWith(...Array.from(child.childNodes));
+        continue;
+      }
+
+      for (const attr of Array.from(child.attributes)) {
+        const attrName = attr.name.toLowerCase();
+        const attrValue = attr.value || '';
+        const isEventHandler = attrName.startsWith('on');
+        const isStyleAttr = attrName === 'style';
+        const isAllowed = SAFE_HTML_ATTRS.has(attrName) || attrName.startsWith('data-');
+        if (isEventHandler || isStyleAttr || !isAllowed) {
+          child.removeAttribute(attr.name);
+          continue;
+        }
+        if (attrName === 'href' || attrName === 'src') {
+          const trimmed = attrValue.trim();
+          const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed);
+          const scheme = hasScheme ? trimmed.split(':', 1)[0].toLowerCase() : '';
+          const isSafeUrl =
+            (!hasScheme && (trimmed.startsWith('/') || trimmed.startsWith('./') || trimmed.startsWith('../') || trimmed.startsWith('#'))) ||
+            scheme === 'http' ||
+            scheme === 'https' ||
+            scheme === 'mailto' ||
+            scheme === 'tel';
+          if (!isSafeUrl) {
+            child.removeAttribute(attr.name);
+          }
+        }
+        if (tagName === 'a' && attrName === 'target' && attrValue === '_blank') {
+          child.setAttribute('rel', 'noopener noreferrer');
+        }
+      }
+    }
+  };
+
+  sanitizeNode(template.content);
+  return template.innerHTML;
+}
+
 // ─── File type badge (same palette as rest of app) ─────────────────────────────
 
 const FILE_TYPE_MAP = {
@@ -80,17 +143,19 @@ function FileTypeBadge({ name }) {
 
 // Renders structured sections array OR falls back to raw HTML / markdown string.
 function DocumentBody({ report, zoom }) {
+  const html = report.html || report.content_html;
+  const sanitizedHtml = useMemo(() => sanitizeHtml(html), [html]);
+
   // Prefer structured sections, then html, then markdown/content string
   if (report.sections && Array.isArray(report.sections)) {
     return <StructuredDocument report={report} zoom={zoom} />;
   }
-  const html = report.html || report.content_html;
   if (html) {
     return (
       <div
         className="prose prose-sm max-w-none"
         style={{ fontSize: `${zoom}%` }}
-        dangerouslySetInnerHTML={{ __html: html }}
+        dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
       />
     );
   }
@@ -281,25 +346,143 @@ function MarkdownDocument({ text, zoom }) {
 
 // ─── ReportsViewer ─────────────────────────────────────────────────────────────
 
-export default function ReportsViewer({ report, course, sourceMaterials = [], templateLabel = 'Study Guide', onClose, onRegenerate }) {
+export default function ReportsViewer({
+  report,
+  course,
+  sessionToken,
+  sourceMaterials = [],
+  templateLabel = 'Study Guide',
+  generationError = '',
+  onClose,
+  onRegenerate,
+  onSaveComplete,
+}) {
   const [zoom, setZoom] = useState(100);
   const [copied, setCopied] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(report?.artifact_material_id ? 'saved' : 'idle');
+  const [saveError, setSaveError] = useState('');
+  const [exportStatus, setExportStatus] = useState('idle');
 
   const courseName = course?.name || course?.title || 'Report';
   const title = report?.title || courseName;
+  const generationId = report?.generation_id || null;
+  const selectedSourceIds = useMemo(
+    () => new Set(Array.isArray(report?.selected_material_ids) ? report.selected_material_ids.map(String) : []),
+    [report?.selected_material_ids],
+  );
 
   // Page count hint from the report
   const pageCount = report?.page_count || report?.pages || null;
 
-  // Sources: prefer passed materials, fall back to report.sources
-  const sources = sourceMaterials.length > 0 ? sourceMaterials : (report?.sources || []);
+  // Sources: prefer report-selected materials, then explicit report sources, then fallback list.
+  const sources = useMemo(() => {
+    if (selectedSourceIds.size > 0 && sourceMaterials.length > 0) {
+      const resolved = sourceMaterials.filter((src) => selectedSourceIds.has(String(src.id)));
+      if (resolved.length > 0) return resolved;
+    }
+    if (Array.isArray(report?.sources) && report.sources.length > 0) {
+      return report.sources;
+    }
+    return sourceMaterials;
+  }, [report?.sources, selectedSourceIds, sourceMaterials]);
+  const saveButtonClasses = [
+    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors',
+    saveStatus === 'saved'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      : 'border-gray-200 text-gray-600 hover:bg-gray-50',
+    saveStatus === 'saving' || !generationId ? 'opacity-70 cursor-not-allowed' : '',
+  ].join(' ');
+  const exportButtonClasses = [
+    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium transition-colors',
+    exportStatus === 'exporting' || !generationId ? 'opacity-70 cursor-not-allowed' : 'hover:bg-indigo-700',
+  ].join(' ');
+
+  useEffect(() => {
+    setSaveStatus(report?.artifact_material_id ? 'saved' : 'idle');
+    setSaveError('');
+    setExportStatus('idle');
+  }, [report?.artifact_material_id, report?.generation_id]);
 
   function handleCopy() {
     const text = report?.markdown || report?.content || report?.text || report?.report || title;
-    navigator.clipboard.writeText(text).then(() => {
+    const clipboard = navigator?.clipboard;
+    if (!clipboard?.writeText) return;
+    clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      setCopied(false);
     });
+  }
+
+  async function handleSave() {
+    if (!generationId || saveStatus === 'saving' || saveStatus === 'saved') return;
+    if (!sessionToken) {
+      setSaveError('Missing session token');
+      setSaveStatus('error');
+      return;
+    }
+
+    setSaveStatus('saving');
+    setSaveError('');
+    try {
+      const res = await fetch('/api/reports', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'save_artifact', generation_id: generationId }),
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const savedMaterialId = data?.artifact_material_id ?? data?.material_id ?? null;
+        if (savedMaterialId) {
+          onSaveComplete?.({
+            generation_id: generationId,
+            artifact_material_id: savedMaterialId,
+          });
+        }
+        setSaveStatus('saved');
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setSaveError(data.error || `HTTP ${res.status}`);
+        setSaveStatus('error');
+      }
+    } catch (error) {
+      setSaveError(error?.message || 'Save failed');
+      setSaveStatus('error');
+    }
+  }
+
+  async function handleExport() {
+    if (!generationId || exportStatus === 'exporting') return;
+    if (!sessionToken) {
+      setExportStatus('error');
+      return;
+    }
+
+    setExportStatus('exporting');
+    try {
+      const res = await fetch(`/api/reports?action=export_pdf&generation_id=${generationId}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(title || 'report').replace(/\s+/g, '_').toLowerCase()}-${generationId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setExportStatus('idle');
+    } catch {
+      setExportStatus('error');
+    }
   }
 
   return (
@@ -313,12 +496,17 @@ export default function ReportsViewer({ report, course, sourceMaterials = [], te
             <span className="px-2.5 py-0.5 rounded-full border border-indigo-200 text-xs font-medium text-indigo-600 bg-white">
               {templateLabel}
             </span>
+            {generationError ? (
+              <span className="px-2 py-0.5 rounded-md border border-red-200 bg-red-50 text-[11px] text-red-700">
+                {generationError}
+              </span>
+            ) : null}
           </div>
 
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onRegenerate}
+              onClick={() => onRegenerate?.({ parent_generation_id: report?.generation_id })}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-colors"
             >
               <RefreshIcon />
@@ -326,17 +514,22 @@ export default function ReportsViewer({ report, course, sourceMaterials = [], te
             </button>
             <button
               type="button"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+              onClick={handleSave}
+              disabled={!generationId || saveStatus === 'saving' || saveStatus === 'saved'}
+              className={saveButtonClasses}
+              title={saveStatus === 'error' ? saveError : undefined}
             >
               <BookmarkIcon />
-              Save Report
+              {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved ✓' : saveStatus === 'error' ? 'Retry Save' : 'Save Report'}
             </button>
             <button
               type="button"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-colors"
+              onClick={handleExport}
+              disabled={!generationId || exportStatus === 'exporting'}
+              className={exportButtonClasses}
             >
               <DownloadIcon />
-              Export as PDF
+              {exportStatus === 'exporting' ? 'Exporting…' : exportStatus === 'error' ? 'Retry Export' : 'Export as PDF'}
             </button>
             <div className="w-px h-5 bg-gray-200 mx-1" />
             <button
@@ -424,7 +617,7 @@ export default function ReportsViewer({ report, course, sourceMaterials = [], te
               className="mx-auto bg-white rounded-xl border border-gray-100 shadow-sm px-14 py-12"
               style={{ maxWidth: `${Math.round(640 * zoom / 100)}px` }}
             >
-              <DocumentBody report={report || {}} zoom={100} />
+              <DocumentBody report={report || {}} zoom={zoom} />
             </div>
           </div>
         </div>

@@ -426,7 +426,11 @@ export default function Reports({ course, sessionToken, onAddSource }) {
   }
 
   function toggleSource(id) {
-    setSelectAll(false);
+    if (selectAll) {
+      setSelectAll(false);
+      setSelectedSources(new Set(materials.map((m) => m.id).filter((mid) => mid !== id)));
+      return;
+    }
     setSelectedSources((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
@@ -446,8 +450,8 @@ export default function Reports({ course, sessionToken, onAddSource }) {
 
   const selectedCount = selectAll ? materials.length : selectedSources.size;
 
-  async function handleEstimate() {
-    if (isEstimating) return;
+  async function handleEstimate({ parent_generation_id: parentGenerationId } = {}) {
+    if (isEstimating) return false;
     setGenerationError('');
     setIsEstimating(true);
     try {
@@ -467,6 +471,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
           course_id: course?.id,
           template_id: template,
           custom_prompt: isCustom ? customPrompt.trim() : undefined,
+          parent_generation_id: parentGenerationId,
           material_ids: materialIds,
           provider: providerToUse,
           model_id: modelIdToUse,
@@ -483,8 +488,10 @@ export default function Reports({ course, sessionToken, onAddSource }) {
       });
       setShowConfirmModal(true);
       loadHistory();
+      return true;
     } catch (error) {
       setGenerationError(error?.message || 'Estimate failed. Please try again.');
+      return false;
     } finally {
       setIsEstimating(false);
     }
@@ -539,18 +546,32 @@ export default function Reports({ course, sessionToken, onAddSource }) {
     setEstimateData(null);
   }
 
+  function handleReportSaveComplete({ generation_id: savedGenerationId, artifact_material_id: artifactMaterialId } = {}) {
+    if (!savedGenerationId || !artifactMaterialId) return;
+    setReportData((prev) => {
+      if (!prev || String(prev.generation_id) !== String(savedGenerationId)) return prev;
+      return { ...prev, artifact_material_id: artifactMaterialId };
+    });
+    loadHistory();
+  }
+
   if (reportData) {
     const reportTemplate = TEMPLATES.find((t) => t.id === reportData.template_id) || activeTemplate;
     return (
       <ReportsViewer
         report={reportData}
         course={course}
+        sessionToken={sessionToken}
         sourceMaterials={materials}
         templateLabel={reportTemplate?.label || 'Report'}
+        generationError={generationError}
         onClose={() => setReportData(null)}
-        onRegenerate={() => {
-          setReportData(null);
-          handleEstimate();
+        onSaveComplete={handleReportSaveComplete}
+        onRegenerate={async (payload) => {
+          const estimated = await handleEstimate(payload);
+          if (estimated) {
+            setReportData(null);
+          }
         }}
       />
     );
