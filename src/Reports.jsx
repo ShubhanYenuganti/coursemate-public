@@ -21,6 +21,14 @@ function SparkleIcon() {
   );
 }
 
+function ChevronDownIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
 function TrashIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
@@ -208,6 +216,8 @@ export default function Reports({ course, sessionToken, onAddSource }) {
   const [selectedModelId, setSelectedModelId] = useState(
     () => localStorage.getItem('reports_selected_model_id') || 'gpt-4o-mini'
   );
+  const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
+  const providerDropdownRef = useRef(null);
 
   const [reportData, setReportData] = useState(null);
   const [parentGenerationId, setParentGenerationId] = useState(null);
@@ -232,6 +242,17 @@ export default function Reports({ course, sessionToken, onAddSource }) {
   useEffect(() => {
     generatingIdsRef.current = generatingIds;
   }, [generatingIds]);
+
+  useEffect(() => {
+    if (!providerDropdownOpen) return;
+    function onOutsideClick(e) {
+      if (providerDropdownRef.current && !providerDropdownRef.current.contains(e.target)) {
+        setProviderDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onOutsideClick);
+    return () => document.removeEventListener('mousedown', onOutsideClick);
+  }, [providerDropdownOpen]);
 
   // ── selected sources persistence ───────────────────────────────────────────
 
@@ -744,6 +765,53 @@ export default function Reports({ course, sessionToken, onAddSource }) {
             <p className="text-indigo-500 mt-0.5">AI will analyze your selected sources and produce a well-structured document.</p>
           </div>
         </div>
+
+        {availableProviders.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-2">AI Model</label>
+            <div className="relative inline-block" ref={providerDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setProviderDropdownOpen((open) => !open)}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs text-gray-700 hover:border-indigo-400 transition-colors"
+              >
+                <span className="font-medium">{MODEL_LABELS[selectedProvider] || selectedProvider}</span>
+                <span className="text-gray-400">·</span>
+                <span>{(PROVIDER_MODELS[selectedProvider] || []).find((m) => m.id === selectedModelId)?.label || selectedModelId}</span>
+                <ChevronDownIcon />
+              </button>
+              {providerDropdownOpen && (
+                <div className="absolute z-20 mt-1 left-0 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-[220px] max-h-[280px] overflow-y-auto">
+                  {availableProviders.map((provider) => (
+                    <div key={provider}>
+                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                        {MODEL_LABELS[provider] || provider}
+                      </p>
+                      {(PROVIDER_MODELS[provider] || []).map((model) => (
+                        <button
+                          key={model.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedProvider(provider);
+                            setSelectedModelId(model.id);
+                            localStorage.setItem('reports_selected_provider', provider);
+                            localStorage.setItem('reports_selected_model_id', model.id);
+                            setProviderDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-1.5 text-xs hover:bg-indigo-50 transition-colors ${
+                            model.id === selectedModelId ? 'text-indigo-600 font-medium' : 'text-gray-700'
+                          }`}
+                        >
+                          {model.label}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* History */}
         <div className="bg-white rounded-xl border border-gray-200 p-3">

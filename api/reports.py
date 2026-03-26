@@ -884,6 +884,15 @@ class handler(BaseHTTPRequestHandler):
                 send_json(self, 404, {"error": "Generation not found"})
                 return
 
+            if resolution == "save_both":
+                cursor.execute(
+                    "UPDATE report_generations SET parent_generation_id=NULL WHERE id=%s",
+                    (generation_id,),
+                )
+                cursor.close()
+                send_json(self, 200, {"resolution": "save_both"})
+                return
+
             if resolution == "revert" and parent_generation_id is not None:
                 if current_generation.get("parent_generation_id") != parent_generation_id:
                     cursor.close()

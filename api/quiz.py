@@ -1547,6 +1547,10 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             if resolution == 'save_both':
+                cursor.execute(
+                    "UPDATE quiz_generations SET parent_generation_id=NULL WHERE id=%s",
+                    (gen_id,)
+                )
                 cursor.close()
                 send_json(self, 200, {'resolution': 'save_both'})
                 return
