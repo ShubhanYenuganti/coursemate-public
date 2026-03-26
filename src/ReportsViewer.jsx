@@ -147,8 +147,10 @@ function DocumentBody({ report, zoom }) {
   const sanitizedHtml = useMemo(() => sanitizeHtml(html), [html]);
 
   // Prefer structured sections, then html, then markdown/content string
-  if (report.sections && Array.isArray(report.sections)) {
-    return <StructuredDocument report={report} zoom={zoom} />;
+  const sections = report.sections || report.sections_json;
+  if (sections && Array.isArray(sections)) {
+    const normalizedReport = sections === report.sections ? report : { ...report, sections };
+    return <StructuredDocument report={normalizedReport} zoom={zoom} />;
   }
   if (html) {
     return (
