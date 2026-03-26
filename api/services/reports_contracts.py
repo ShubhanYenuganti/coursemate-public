@@ -1,113 +1,82 @@
-"""Prompt contracts and normalization for reports generation."""
+"""
+Report template contracts — system+user prompt builders and output normalizer.
+
+Each template produces a `sections[]` payload compatible with ReportsViewer's DocBlock.
+"""
 from __future__ import annotations
 
 import json
-from typing import Iterable
 
 VALID_TEMPLATES = ("study-guide", "briefing", "summary", "custom")
 MAX_SECTIONS = 8
-_VALID_SECTION_TYPES = {
-    "heading",
-    "section",
-    "subheading",
-    "subsection",
-    "paragraph",
-    "bullet_list",
-    "list",
-    "callout",
-    "equation",
-    "display_equation",
-    "page_break",
-}
+VALID_BLOCK_TYPES = frozenset({
+    "heading", "subheading", "paragraph", "bullet_list",
+    "callout", "equation", "page_break",
+})
 
-_OUTPUT_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["title", "sections"],
-    "properties": {
-        "title": {"type": "string"},
-        "subtitle": {"type": "string"},
-        "date": {"type": "string"},
-        "sections": {
-            "type": "array",
-            "maxItems": MAX_SECTIONS,
-            "items": {
-                "type": "object",
-                "additionalProperties": True,
-                "required": ["type"],
-                "properties": {
-                    "type": {
-                        "type": "string",
-                        "enum": sorted(_VALID_SECTION_TYPES),
-                    },
-                    "content": {"type": "string"},
-                    "items": {"type": "array", "items": {"type": "string"}},
-                    "lines": {"type": "array", "items": {"type": "string"}},
-                    "page": {"type": "string"},
-                },
-            },
-        },
-    },
-}
+_COMMON_RULES = (
+    "Return valid JSON only. No markdown fences, no preamble. "
+    "Output must be json.loads() parseable.\n"
+    "Rules:\n"
+    "- Base all content strictly on provided course materials\n"
+    "- Be concise and factual; no padding\n"
+    "- Max 8 sections total\n"
+    "- Keep page_count at the specified value\n"
+)
 
-_TEMPLATE_GUIDANCE = {
-    "study-guide": (
-        "Create a structured study guide with clear headings, concise explanations, "
-        "and bullet points for key facts, definitions, and examples."
-    ),
-    "briefing": (
-        "Create an executive briefing optimized for rapid comprehension. Prioritize "
-        "high-signal synthesis, risks, takeaways, and short sections."
-    ),
-    "summary": (
-        "Create a concise summary of the selected material. Focus on the main ideas, "
-        "supporting points, and the most important conclusions."
-    ),
-    "custom": (
-        "Follow the user's custom reporting objective while still returning the exact "
-        "JSON shape described by the schema."
-    ),
-}
+_STUDY_GUIDE_SYSTEM = (
+    "You are an academic study guide generator. " + _COMMON_RULES +
+    "Output format:\n"
+    '{"title":"...","subtitle":"...","page_count":2,"sections":[\n'
+    '  {"type":"heading","content":"Overview"},\n'
+    '  {"type":"heading","content":"Key Concepts"},\n'
+    '  {"type":"bullet_list","items":["concept 1","concept 2","concept 3"]},\n'
+    '  {"type":"heading","content":"Core Topics"},\n'
+    '  {"type":"bullet_list","items":["point 1","point 2","point 3"]},\n'
+    '  {"type":"heading","content":"Examples"},\n'
+    '  {"type":"bullet_list","items":["example 1","example 2","example 3"]},\n'
+    '  {"type":"callout","content":"3-5 key takeaways as a single paragraph"}\n'
+    "]}"
+)
 
+_BRIEFING_SYSTEM = (
+    "You are an executive briefing writer. " + _COMMON_RULES +
+    "Output format:\n"
+    '{"title":"...","subtitle":"Executive Summary","page_count":1,"sections":[\n'
+    '  {"type":"heading","content":"Background"},\n'
+    '  {"type":"paragraph","content":"3-4 sentence situation overview"},\n'
+    '  {"type":"heading","content":"Key Points"},\n'
+    '  {"type":"bullet_list","items":["point — one sentence each, 5-7 items"]},\n'
+    '  {"type":"heading","content":"Critical Terms"},\n'
+    '  {"type":"bullet_list","items":["Term — brief definition"]},\n'
+    '  {"type":"heading","content":"Implications"},\n'
+    '  {"type":"paragraph","content":"What this means and why it matters"},\n'
+    '  {"type":"callout","content":"Bottom line in one sentence"}\n'
+    "]}"
+)
 
-def _schema_text(synthesized_schema: str | None) -> str:
-    if synthesized_schema:
-        return synthesized_schema.strip()
-    return json.dumps(_OUTPUT_SCHEMA, indent=2, sort_keys=True)
+_SUMMARY_SYSTEM = (
+    "You are a document summarizer. " + _COMMON_RULES +
+    "Output format:\n"
+    '{"title":"Summary — <source topic>","subtitle":"","page_count":2,"sections":[\n'
+    '  {"type":"heading","content":"Overview"},\n'
+    '  {"type":"paragraph","content":"2-sentence scope description"},\n'
+    '  {"type":"heading","content":"<LLM-generated topic name 1>"},\n'
+    '  {"type":"paragraph","content":"3-4 sentence summary of this topic"},\n'
+    '  {"type":"heading","content":"<LLM-generated topic name 2>"},\n'
+    '  {"type":"paragraph","content":"3-4 sentence summary"},\n'
+    '  {"type":"heading","content":"Key Takeaways"},\n'
+    '  {"type":"bullet_list","items":["takeaway 1","takeaway 2","takeaway 3","takeaway 4"]}\n'
+    "]}"
+)
 
-
-def _coerce_text(value: object) -> str:
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
-def _string_list(values: Iterable[object]) -> list[str]:
-    result: list[str] = []
-    for value in values:
-        text = _coerce_text(value)
-        if text:
-            result.append(text)
-    return result
-
-
-def _infer_type(section: dict) -> str:
-    raw_type = _coerce_text(section.get("type")).lower().replace("-", "_")
-    if raw_type in _VALID_SECTION_TYPES:
-        return raw_type
-    if section.get("items"):
-        return "bullet_list"
-    if section.get("lines"):
-        return "equation"
-    page = _coerce_text(section.get("page"))
-    if page:
-        return "page_break"
-    content = _coerce_text(section.get("content") or section.get("text"))
-    if len(content) <= 90 and content and content == content.upper():
-        return "heading"
-    if len(content) <= 90 and content:
-        return "paragraph"
-    return "paragraph"
+_CUSTOM_FILL_SYSTEM = (
+    "You are a document content generator. " + _COMMON_RULES +
+    "You are given a JSON schema with 'instructions' fields. "
+    "Replace every 'instructions' value with actual content generated from the course materials. "
+    "Preserve all other fields (type, name, page_count) exactly. "
+    "Output the completed schema JSON."
+)
 
 
 def build_report_prompt(
@@ -115,94 +84,92 @@ def build_report_prompt(
     template_id: str,
     material_context: str,
     custom_prompt: str | None,
-    synthesized_schema: str | None,
+    synthesized_schema: dict | None,
 ) -> tuple[str, str]:
-    template_key = template_id if template_id in VALID_TEMPLATES else "summary"
-    if template_key == "custom" and not _coerce_text(synthesized_schema):
-        raise ValueError("template_id='custom' requires synthesized_schema")
-    schema_text = _schema_text(synthesized_schema)
-    system = (
-        "You generate structured course reports. Return valid JSON only. "
-        "Do not wrap the output in markdown or prose. Use no more than "
-        f"{MAX_SECTIONS} sections.\n\n"
-        "Output schema:\n"
-        f"{schema_text}\n\n"
-        "Requirements:\n"
-        "- Include a concise title.\n"
-        "- Use section types supported by the schema only.\n"
-        "- Prefer bullet_list for enumerations and paragraph for exposition.\n"
-        "- Keep claims grounded in the provided material context."
-    )
+    del custom_prompt
+    context_block = f"Course materials:\n{material_context or 'No materials provided.'}"
 
-    guidance = _TEMPLATE_GUIDANCE[template_key]
-    custom_line = (
-        f"Custom instructions:\n{custom_prompt.strip()}\n\n"
-        if template_key == "custom" and _coerce_text(custom_prompt)
-        else ""
-    )
-    user = (
-        f"Template: {template_key}\n"
-        f"Goal: {guidance}\n\n"
-        f"{custom_line}"
-        "Material context:\n"
-        f"{_coerce_text(material_context)}"
-    )
-    return system, user
+    if template_id == "study-guide":
+        return _STUDY_GUIDE_SYSTEM, context_block
+
+    if template_id == "briefing":
+        return _BRIEFING_SYSTEM, context_block
+
+    if template_id == "summary":
+        return _SUMMARY_SYSTEM, context_block
+
+    if template_id == "custom":
+        if not synthesized_schema:
+            raise ValueError("custom template requires synthesized_schema (from Call 1)")
+        schema_str = json.dumps(synthesized_schema, ensure_ascii=False)
+        user = f"Schema to fill:\n{schema_str}\n\n{context_block}"
+        return _CUSTOM_FILL_SYSTEM, user
+
+    raise ValueError(f"Unknown template_id: {template_id!r}")
 
 
-def normalize_report_sections(raw: dict | None) -> dict:
+def _safe_page_count(value: object) -> int:
+    try:
+        if isinstance(value, bool):
+            return 2
+        parsed = int(value)
+        return parsed if parsed > 0 else 2
+    except (TypeError, ValueError):
+        return 2
+
+
+def normalize_report_sections(raw: dict) -> dict:
+    """Normalize LLM output to a ReportsViewer-compatible payload."""
     raw = raw or {}
-    normalized = {
-        "title": _coerce_text(raw.get("title")) or "Untitled Report",
-        "subtitle": _coerce_text(raw.get("subtitle")),
-        "date": _coerce_text(raw.get("date") or raw.get("generated_at")),
-        "sections": [],
-    }
+    title = str(raw.get("title") or "Report").strip() or "Report"
+    subtitle = str(raw.get("subtitle") or "").strip()
+    page_count = _safe_page_count(raw.get("page_count") or 2)
 
-    sections = raw.get("sections")
-    if not isinstance(sections, list):
-        sections = []
+    raw_sections = raw.get("sections") or []
+    if not isinstance(raw_sections, list):
+        raw_sections = []
 
-    for raw_section in sections:
-        if not isinstance(raw_section, dict):
+    normalized = []
+    for block in raw_sections:
+        if not isinstance(block, dict):
             continue
-        section_type = _infer_type(raw_section)
-        content = _coerce_text(raw_section.get("content") or raw_section.get("text"))
-        items = _string_list(raw_section.get("items") or [])
-        lines = _string_list(raw_section.get("lines") or [])
-        page = _coerce_text(raw_section.get("page"))
+        btype = str(block.get("type") or "").lower().strip()
+        if btype not in VALID_BLOCK_TYPES:
+            if isinstance(block.get("items"), list):
+                btype = "bullet_list"
+            else:
+                btype = "paragraph"
 
-        section: dict[str, object] = {"type": section_type}
-        if section_type in {"bullet_list", "list"}:
-            if items:
-                section["items"] = items
-            elif content:
-                section["items"] = [content]
-            else:
-                continue
-        elif section_type in {"equation", "display_equation"}:
-            if lines:
-                section["lines"] = lines
-            elif content:
-                section["lines"] = [content]
-            else:
-                continue
-        elif section_type == "page_break":
-            if page:
-                section["page"] = page
-            elif content:
-                section["page"] = content
+        content = str(block.get("content") or block.get("text") or "").strip()
+        lines = block.get("lines")
+        if isinstance(lines, list):
+            lines = [str(line).strip() for line in lines if str(line).strip()]
         else:
-            if not content:
-                if items:
-                    section = {"type": "bullet_list", "items": items}
-                else:
-                    continue
-            else:
-                section["content"] = content
+            lines = None
+        items = block.get("items")
+        if isinstance(items, list):
+            items = [str(i) for i in items if str(i).strip()]
+        else:
+            items = None
 
-        normalized["sections"].append(section)
-        if len(normalized["sections"]) >= MAX_SECTIONS:
+        if not content and not items and not lines and btype != "page_break":
+            continue
+
+        entry: dict = {"type": btype}
+        if content:
+            entry["content"] = content
+        if lines is not None:
+            entry["lines"] = lines
+        if items is not None:
+            entry["items"] = items
+
+        normalized.append(entry)
+        if len(normalized) >= MAX_SECTIONS:
             break
 
-    return normalized
+    return {
+        "title": title,
+        "subtitle": subtitle,
+        "page_count": page_count,
+        "sections": normalized,
+    }
