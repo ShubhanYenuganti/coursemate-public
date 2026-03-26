@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 _OUTPUT_BUDGETS = {
-    "study-guide": (1_500, 2_500),
-    "briefing": (800, 1_200),
-    "summary": (1_200, 2_000),
-    "custom": (1_000, 2_500),
+    "study-guide": (3_000, 5_500),
+    "briefing":    (1_000, 1_800),
+    "summary":     (2_500, 4_500),
+    "custom":      (2_000, 5_000),
 }
 
 

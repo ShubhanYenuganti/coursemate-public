@@ -47,8 +47,8 @@ except ImportError:
 _REPORTS_QUEUE_URL = os.environ.get("REPORTS_GENERATION_QUEUE_URL")
 _AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 
-_MATERIAL_CHUNK_LIMIT = 80
-_CONTEXT_CHAR_BUDGET = 24_000
+_MATERIAL_CHUNK_LIMIT = 300
+_CONTEXT_CHAR_BUDGET = 80_000
 _MAX_REQUEST_BODY_BYTES = 1_000_000
 
 
@@ -77,34 +77,84 @@ def _fetch_material_context(conn, material_ids: list[int]) -> str:
         return "No course materials selected."
 
     cursor = conn.cursor()
+
+    # Pass 1: documents.raw_content — clean pre-chunking text, no visual-chunk artifacts
     cursor.execute(
         """
-        SELECT c.content
-        FROM chunks c
-        JOIN documents d ON c.document_id = d.id
+        SELECT d.raw_content, d.id
+        FROM documents d
         WHERE d.material_id = ANY(%s::int[])
-        ORDER BY d.material_id, c.chunk_index
-        LIMIT %s
+          AND d.raw_content IS NOT NULL
+          AND d.raw_content != ''
+        ORDER BY d.material_id
         """,
-        (material_ids, _MATERIAL_CHUNK_LIMIT),
+        (material_ids,),
     )
-    rows = cursor.fetchall()
-    cursor.close()
-
-    if not rows:
-        return "No indexed content found for the selected materials."
+    doc_rows = cursor.fetchall()
 
     parts = []
     total = 0
-    for row in rows:
-        content = row.get("content") or ""
-        if total + len(content) > _CONTEXT_CHAR_BUDGET:
+    covered_doc_ids = []
+
+    for row in doc_rows:
+        text = (row.get("raw_content") or "").strip()
+        if not text:
+            continue
+        covered_doc_ids.append(str(row["id"]))
+        if total + len(text) > _CONTEXT_CHAR_BUDGET:
             remaining = _CONTEXT_CHAR_BUDGET - total
-            if remaining > 200:
-                parts.append(content[:remaining])
+            if remaining > 500:
+                parts.append(text[:remaining])
+            total = _CONTEXT_CHAR_BUDGET
             break
-        parts.append(content)
-        total += len(content)
+        parts.append(text)
+        total += len(text)
+
+    # Pass 2: text chunks for documents without raw_content
+    if total < _CONTEXT_CHAR_BUDGET:
+        if covered_doc_ids:
+            cursor.execute(
+                """
+                SELECT c.content
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id
+                WHERE d.material_id = ANY(%s::int[])
+                  AND c.retrieval_type != 'visual'
+                  AND c.document_id != ALL(%s::uuid[])
+                ORDER BY d.material_id, c.chunk_index
+                LIMIT %s
+                """,
+                (material_ids, covered_doc_ids, _MATERIAL_CHUNK_LIMIT),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT c.content
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id
+                WHERE d.material_id = ANY(%s::int[])
+                  AND c.retrieval_type != 'visual'
+                ORDER BY d.material_id, c.chunk_index
+                LIMIT %s
+                """,
+                (material_ids, _MATERIAL_CHUNK_LIMIT),
+            )
+        for row in cursor.fetchall():
+            content = (row.get("content") or "").strip()
+            if not content:
+                continue
+            if total + len(content) > _CONTEXT_CHAR_BUDGET:
+                remaining = _CONTEXT_CHAR_BUDGET - total
+                if remaining > 200:
+                    parts.append(content[:remaining])
+                break
+            parts.append(content)
+            total += len(content)
+
+    cursor.close()
+
+    if not parts:
+        return "No indexed content found for the selected materials."
 
     return "\n\n---\n\n".join(parts)
 

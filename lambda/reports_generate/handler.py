@@ -21,12 +21,12 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from db import get_db
 
-TIMEOUT_SECONDS = 90
-MATERIAL_CHUNK_LIMIT = 80
-CONTEXT_CHAR_BUDGET = 24_000
+TIMEOUT_SECONDS = 180
+MATERIAL_CHUNK_LIMIT = 300
+CONTEXT_CHAR_BUDGET = 80_000
 TOPIC_SUMMARY_BUDGET = 2_000
-MAX_SECTIONS = 8
-MAX_PAGE_COUNT = 2
+MAX_SECTIONS = 16
+MAX_PAGE_COUNT = 4
 REPORTS_LOCK_NAMESPACE = 4101
 
 VALID_BLOCK_TYPES = frozenset(
@@ -46,28 +46,37 @@ _COMMON_RULES = (
     "Output must be json.loads() parseable.\n"
     "Rules:\n"
     "- Base all content strictly on provided course materials\n"
-    "- Be concise and factual; no padding\n"
-    "- Max 8 sections total\n"
+    "- Be thorough and detailed; cover all major topics in the provided material\n"
+    "- Max 16 sections total\n"
     "- Keep page_count at the specified value\n"
+    "- Each section should be substantive — paragraphs 3-5 sentences, bullet lists 4-8 items\n"
+    "- IMPORTANT: If the provided materials contain substantial information, you MUST fill all "
+    "page_count pages completely. Do not produce a short or thin report when rich source material "
+    "is available. Aim for depth: expand each concept, define terms precisely, include examples, "
+    "and cover every significant topic present in the materials.\n"
 )
 
 _STUDY_GUIDE_SYSTEM = (
     "You are an academic study guide generator. "
     + _COMMON_RULES
     + 'Output format:\n'
-    + '{"title":"...","subtitle":"...","page_count":2,"sections":['
+    + '{"title":"...","subtitle":"...","page_count":3,"sections":['
     + '{"type":"heading","content":"Overview"},'
-    + '{"type":"paragraph","content":"2-3 sentence overview"},'
+    + '{"type":"paragraph","content":"3-5 sentence overview of the full topic"},'
     + '{"type":"heading","content":"Key Concepts"},'
     + '{"type":"subheading","content":"<Concept Name>"},'
-    + '{"type":"paragraph","content":"<Definition>"},'
+    + '{"type":"paragraph","content":"<Full definition with context, 3-4 sentences>"},'
+    + '{"type":"subheading","content":"<Concept Name 2>"},'
+    + '{"type":"paragraph","content":"<Full definition>"},'
     + '{"type":"heading","content":"Core Topics"},'
     + '{"type":"subheading","content":"<Topic Name>"},'
-    + '{"type":"bullet_list","items":["point 1","point 2"]},'
-    + '{"type":"heading","content":"Examples"},'
-    + '{"type":"bullet_list","items":["example 1","example 2"]},'
+    + '{"type":"bullet_list","items":["detailed point 1","detailed point 2","detailed point 3","point 4"]},'
+    + '{"type":"subheading","content":"<Topic Name 2>"},'
+    + '{"type":"bullet_list","items":["point 1","point 2","point 3"]},'
+    + '{"type":"heading","content":"Examples & Applications"},'
+    + '{"type":"bullet_list","items":["concrete example 1","concrete example 2","concrete example 3"]},'
     + '{"type":"heading","content":"Summary"},'
-    + '{"type":"callout","content":"3-5 key takeaways"}]}'
+    + '{"type":"callout","content":"5-7 key takeaways as a comprehensive paragraph"}]}'
 )
 
 _BRIEFING_SYSTEM = (
@@ -90,15 +99,19 @@ _SUMMARY_SYSTEM = (
     "You are a document summarizer. "
     + _COMMON_RULES
     + 'Output format:\n'
-    + '{"title":"Summary — <topic>","subtitle":"","page_count":2,"sections":['
+    + '{"title":"Summary — <topic>","subtitle":"","page_count":3,"sections":['
     + '{"type":"heading","content":"Overview"},'
-    + '{"type":"paragraph","content":"2-sentence scope"},'
-    + '{"type":"heading","content":"<Topic 1>"},'
-    + '{"type":"paragraph","content":"3-4 sentence summary"},'
-    + '{"type":"heading","content":"<Topic 2>"},'
-    + '{"type":"paragraph","content":"3-4 sentence summary"},'
+    + '{"type":"paragraph","content":"3-4 sentence scope description"},'
+    + '{"type":"heading","content":"<LLM-generated topic name 1>"},'
+    + '{"type":"paragraph","content":"4-5 sentence summary of this topic"},'
+    + '{"type":"heading","content":"<LLM-generated topic name 2>"},'
+    + '{"type":"paragraph","content":"4-5 sentence summary"},'
+    + '{"type":"heading","content":"<LLM-generated topic name 3>"},'
+    + '{"type":"paragraph","content":"4-5 sentence summary"},'
+    + '{"type":"heading","content":"<LLM-generated topic name 4>"},'
+    + '{"type":"paragraph","content":"4-5 sentence summary"},'
     + '{"type":"heading","content":"Key Takeaways"},'
-    + '{"type":"bullet_list","items":["takeaway 1","takeaway 2","takeaway 3"]}]}'
+    + '{"type":"bullet_list","items":["takeaway 1","takeaway 2","takeaway 3","takeaway 4","takeaway 5"]}]}'
 )
 
 _SCHEMA_SYNTHESIS_SYSTEM = (
@@ -106,10 +119,10 @@ _SCHEMA_SYNTHESIS_SYSTEM = (
     "Given the user's report request and a short sample of available material topics, "
     "output a JSON schema skeleton only. Do not fill in actual content. "
     "Return valid JSON only. No markdown fences. "
-    'Format: {"title":"...","subtitle":"...","page_count":1,"sections":['
+    'Format: {"title":"...","subtitle":"...","page_count":2,"sections":['
     '{"type":"heading|subheading|paragraph|bullet_list|callout","name":"Section Name","instructions":"what to generate here"}]}\n'
     "Rules:\n"
-    "- Max 6 sections. Max page_count 2.\n"
+    "- Max 12 sections. Max page_count 3.\n"
     "- Each section has 'type', 'name', and 'instructions' only — no actual content."
 )
 
@@ -143,34 +156,84 @@ def _fetch_material_context(conn, material_ids: list, char_budget: int = CONTEXT
         return "No course materials selected."
 
     cursor = conn.cursor()
+
+    # Pass 1: documents.raw_content — clean pre-chunking text, no visual-chunk artifacts
     cursor.execute(
         """
-        SELECT c.content
-        FROM chunks c
-        JOIN documents d ON c.document_id = d.id
+        SELECT d.raw_content, d.id
+        FROM documents d
         WHERE d.material_id = ANY(%s::int[])
-        ORDER BY d.material_id, c.chunk_index
-        LIMIT %s
+          AND d.raw_content IS NOT NULL
+          AND d.raw_content != ''
+        ORDER BY d.material_id
         """,
-        (material_ids, MATERIAL_CHUNK_LIMIT),
+        (material_ids,),
     )
-    rows = cursor.fetchall()
-    cursor.close()
-
-    if not rows:
-        return "No indexed content found for the selected materials."
+    doc_rows = cursor.fetchall()
 
     parts = []
     total = 0
-    for row in rows:
-        content = row.get("content") or ""
-        if total + len(content) > char_budget:
+    covered_doc_ids = []
+
+    for row in doc_rows:
+        text = (row.get("raw_content") or "").strip()
+        if not text:
+            continue
+        covered_doc_ids.append(str(row["id"]))
+        if total + len(text) > char_budget:
             remaining = char_budget - total
-            if remaining > 200:
-                parts.append(content[:remaining])
+            if remaining > 500:
+                parts.append(text[:remaining])
+            total = char_budget
             break
-        parts.append(content)
-        total += len(content)
+        parts.append(text)
+        total += len(text)
+
+    # Pass 2: text chunks for any documents that had no raw_content
+    if total < char_budget:
+        if covered_doc_ids:
+            cursor.execute(
+                """
+                SELECT c.content
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id
+                WHERE d.material_id = ANY(%s::int[])
+                  AND c.retrieval_type != 'visual'
+                  AND c.document_id != ALL(%s::uuid[])
+                ORDER BY d.material_id, c.chunk_index
+                LIMIT %s
+                """,
+                (material_ids, covered_doc_ids, MATERIAL_CHUNK_LIMIT),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT c.content
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id
+                WHERE d.material_id = ANY(%s::int[])
+                  AND c.retrieval_type != 'visual'
+                ORDER BY d.material_id, c.chunk_index
+                LIMIT %s
+                """,
+                (material_ids, MATERIAL_CHUNK_LIMIT),
+            )
+        for row in cursor.fetchall():
+            content = (row.get("content") or "").strip()
+            if not content:
+                continue
+            if total + len(content) > char_budget:
+                remaining = char_budget - total
+                if remaining > 200:
+                    parts.append(content[:remaining])
+                break
+            parts.append(content)
+            total += len(content)
+
+    cursor.close()
+
+    if not parts:
+        return "No indexed content found for the selected materials."
 
     return "\n\n---\n\n".join(parts)
 
