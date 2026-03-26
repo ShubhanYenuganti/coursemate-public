@@ -8,10 +8,11 @@ from __future__ import annotations
 import json
 
 VALID_TEMPLATES = ("study-guide", "briefing", "summary", "custom")
-MAX_SECTIONS = 16
+MAX_SECTIONS = 200
 VALID_BLOCK_TYPES = frozenset({
     "heading", "subheading", "paragraph", "bullet_list",
-    "callout", "equation", "page_break",
+    "callout", "equation", "display_equation", "table", "page_break",
+    "list", "section", "subsection",
 })
 
 _COMMON_RULES = (
