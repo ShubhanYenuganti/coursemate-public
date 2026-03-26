@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -139,6 +141,30 @@ function FileTypeBadge({ name }) {
   );
 }
 
+// ─── Inline math renderer ───────────────────────────────────────────────────────
+
+// Splits text on $...$ delimiters and renders math spans with KaTeX.
+// Returns a plain string when there is no math, or a React node array when math is present.
+function renderInlineMath(text) {
+  if (!text || !text.includes('$')) return text;
+  // Capturing group preserves the delimiter in the split result array.
+  const parts = text.split(/(\$[^\n$]+?\$)/);
+  if (parts.length === 1) return text;
+  return parts.map((part, i) => {
+    if (part.startsWith('$') && part.endsWith('$') && part.length > 2) {
+      const math = part.slice(1, -1);
+      try {
+        const html = katex.renderToString(math, { throwOnError: false, displayMode: false });
+        // eslint-disable-next-line react/no-danger
+        return <span key={i} dangerouslySetInnerHTML={{ __html: html }} />;
+      } catch {
+        return part;
+      }
+    }
+    return part;
+  });
+}
+
 // ─── Document content renderer ─────────────────────────────────────────────────
 
 // Renders structured sections array OR falls back to raw HTML / markdown string.
@@ -208,17 +234,56 @@ function DocBlock({ block }) {
   if (type === 'callout') {
     return (
       <div className="my-4 pl-4 pr-4 py-3 bg-indigo-50 border-l-4 border-indigo-300 rounded-r-lg">
-        <p className="text-sm text-indigo-700 italic leading-relaxed">{content}</p>
+        <p className="text-sm text-indigo-700 italic leading-relaxed">{renderInlineMath(content)}</p>
       </div>
     );
   }
   if (type === 'equation' || type === 'display_equation') {
-    const lines = Array.isArray(block.lines) ? block.lines : [content];
+    const lines = Array.isArray(block.lines) ? block.lines : (content ? [content] : []);
     return (
-      <div className="my-4 py-4 bg-gray-50 border border-gray-200 rounded-lg text-center">
-        {lines.map((line, i) => (
-          <p key={i} className="font-mono text-sm text-gray-700">{line}</p>
-        ))}
+      <div className="my-4 py-4 bg-gray-50 border border-gray-200 rounded-lg overflow-x-auto text-center">
+        {lines.map((line, i) => {
+          try {
+            const html = katex.renderToString(line, { throwOnError: false, displayMode: true });
+            // eslint-disable-next-line react/no-danger
+            return <div key={i} className="py-1" dangerouslySetInnerHTML={{ __html: html }} />;
+          } catch {
+            return <p key={i} className="font-mono text-sm text-gray-700">{line}</p>;
+          }
+        })}
+      </div>
+    );
+  }
+  if (type === 'table') {
+    const headers = Array.isArray(block.headers) ? block.headers : [];
+    const rows = Array.isArray(block.rows) ? block.rows : [];
+    if (headers.length === 0 && rows.length === 0) return null;
+    return (
+      <div className="overflow-x-auto my-4">
+        <table className="w-full text-xs border-collapse">
+          {headers.length > 0 && (
+            <thead className="bg-gray-100 text-gray-700">
+              <tr className="border-b border-gray-200">
+                {headers.map((h, i) => (
+                  <th key={i} className="px-3 py-1.5 text-left font-semibold border border-gray-200">
+                    {renderInlineMath(h)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+          )}
+          <tbody>
+            {rows.map((row, ri) => (
+              <tr key={ri} className="border-b border-gray-200">
+                {(Array.isArray(row) ? row : []).map((cell, ci) => (
+                  <td key={ci} className="px-3 py-1.5 border border-gray-200">
+                    {renderInlineMath(String(cell))}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     );
   }
@@ -227,7 +292,7 @@ function DocBlock({ block }) {
     return (
       <ul className="my-3 space-y-1.5 pl-5 list-disc">
         {items.map((item, i) => (
-          <li key={i} className="text-sm text-gray-700 leading-relaxed">{item}</li>
+          <li key={i} className="text-sm text-gray-700 leading-relaxed">{renderInlineMath(item)}</li>
         ))}
       </ul>
     );
@@ -244,7 +309,7 @@ function DocBlock({ block }) {
   }
   // default: paragraph
   return (
-    <p className="text-sm text-gray-700 leading-relaxed my-3">{content}</p>
+    <p className="text-sm text-gray-700 leading-relaxed my-3">{renderInlineMath(content)}</p>
   );
 }
 

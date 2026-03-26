@@ -39,6 +39,34 @@ def _s3_key_from_url(file_url: str) -> str:
     return urlparse(file_url).path.lstrip('/')
 
 
+# Maps generated-artifact URL prefixes to their generation table names.
+_GENERATION_URL_TABLES = {
+    'report://generation/':     'report_generations',
+    'quiz://generation/':       'quiz_generations',
+    'flashcards://generation/': 'flashcard_generations',
+}
+
+
+def _delete_generation_for_material(file_url: str) -> bool:
+    """
+    If file_url is a generated-artifact URL (e.g. 'report://generation/42'),
+    delete the corresponding row from the generation table and return True.
+    Returns False for regular S3 uploads.
+    """
+    for prefix, table in _GENERATION_URL_TABLES.items():
+        if file_url.startswith(prefix):
+            gen_id_str = file_url[len(prefix):]
+            if not gen_id_str.isdigit():
+                return True  # Malformed URL — skip S3 delete, nothing to clean up
+            gen_id = int(gen_id_str)
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"DELETE FROM {table} WHERE id = %s", (gen_id,))
+                cursor.close()
+            return True
+    return False
+
+
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         handle_options(self)
@@ -146,11 +174,15 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 403, {"error": "You do not have permission to delete this material"})
             return
 
-        try:
-            delete_file(_s3_key_from_url(material['file_url']))
-        except Exception as e:
-            send_json(self, 500, {"error": "Failed to delete file from S3", "detail": str(e)})
-            return
+        file_url = material['file_url'] or ''
+        is_generated = _delete_generation_for_material(file_url)
+
+        if not is_generated:
+            try:
+                delete_file(_s3_key_from_url(file_url))
+            except Exception as e:
+                send_json(self, 500, {"error": "Failed to delete file from S3", "detail": str(e)})
+                return
 
         Course.remove_material(course_id, material_id)
         Material.delete(material_id)

@@ -38,7 +38,24 @@ VALID_BLOCK_TYPES = frozenset(
         "callout",
         "equation",
         "page_break",
+        "table",
     }
+)
+
+_LATEX_TABLE_RULES = (
+    "- Math: whenever a mathematical expression, formula, or equation appears — whether "
+    "explicitly written in the source material or merely implied (e.g. a verbal description "
+    "of a well-known relationship) — write it out in LaTeX. Inline expressions use $...$ "
+    "(e.g. the area is $A = \\pi r^2$). For standalone display equations that deserve their "
+    "own visual prominence, use an `equation` block with a `lines` array containing the "
+    'LaTeX source (e.g. {"type":"equation","lines":["E = mc^2"]}). '
+    "Prefer display equations liberally: if a section describes a concept that has a canonical "
+    "formula, ALWAYS include that formula as an `equation` block even if the source text only "
+    "describes it in words. Do NOT embed $$...$$ inside paragraph, bullet_list, or callout "
+    "content strings — use the dedicated `equation` block instead.\n"
+    "- Tables: when comparing multiple items, showing structured data, or listing properties "
+    "side-by-side, use a `table` block with `headers` (array of column label strings) and "
+    "`rows` (array of arrays, one inner array per row). Keep cell text concise.\n"
 )
 
 _COMMON_RULES = (
@@ -54,7 +71,7 @@ _COMMON_RULES = (
     "page_count pages completely. Do not produce a short or thin report when rich source material "
     "is available. Aim for depth: expand each concept, define terms precisely, include examples, "
     "and cover every significant topic present in the materials.\n"
-)
+) + _LATEX_TABLE_RULES
 
 _STUDY_GUIDE_SYSTEM = (
     "You are an academic study guide generator. "
@@ -75,6 +92,8 @@ _STUDY_GUIDE_SYSTEM = (
     + '{"type":"bullet_list","items":["point 1","point 2","point 3"]},'
     + '{"type":"heading","content":"Examples & Applications"},'
     + '{"type":"bullet_list","items":["concrete example 1","concrete example 2","concrete example 3"]},'
+    + '{"type":"equation","lines":["<LaTeX formula string, e.g. F = ma>"]},'
+    + '{"type":"table","headers":["Term","Definition"],"rows":[["<term 1>","<definition>"],["<term 2>","<definition>"]]},'
     + '{"type":"heading","content":"Summary"},'
     + '{"type":"callout","content":"5-7 key takeaways as a comprehensive paragraph"}]}'
 )
@@ -92,6 +111,7 @@ _BRIEFING_SYSTEM = (
     + '{"type":"bullet_list","items":["Term — definition"]},'
     + '{"type":"heading","content":"Implications"},'
     + '{"type":"paragraph","content":"What this means"},'
+    + '{"type":"table","headers":["Factor","Detail"],"rows":[["<factor>","<detail>"]]},'
     + '{"type":"callout","content":"Bottom line in one sentence"}]}'
 )
 
@@ -111,7 +131,8 @@ _SUMMARY_SYSTEM = (
     + '{"type":"heading","content":"<LLM-generated topic name 4>"},'
     + '{"type":"paragraph","content":"4-5 sentence summary"},'
     + '{"type":"heading","content":"Key Takeaways"},'
-    + '{"type":"bullet_list","items":["takeaway 1","takeaway 2","takeaway 3","takeaway 4","takeaway 5"]}]}'
+    + '{"type":"bullet_list","items":["takeaway 1","takeaway 2","takeaway 3","takeaway 4","takeaway 5"]},'
+    + '{"type":"table","headers":["Topic","Key Point"],"rows":[["<topic>","<key point>"]]}]}'
 )
 
 _SCHEMA_SYNTHESIS_SYSTEM = (
@@ -120,10 +141,12 @@ _SCHEMA_SYNTHESIS_SYSTEM = (
     "output a JSON schema skeleton only. Do not fill in actual content. "
     "Return valid JSON only. No markdown fences. "
     'Format: {"title":"...","subtitle":"...","page_count":2,"sections":['
-    '{"type":"heading|subheading|paragraph|bullet_list|callout","name":"Section Name","instructions":"what to generate here"}]}\n'
+    '{"type":"heading|subheading|paragraph|bullet_list|callout|equation|table","name":"Section Name","instructions":"what to generate here"}]}\n'
     "Rules:\n"
     "- Max 12 sections. Max page_count 3.\n"
-    "- Each section has 'type', 'name', and 'instructions' only — no actual content."
+    "- Each section has 'type', 'name', and 'instructions' only — no actual content.\n"
+    "- Use type=equation for any canonical formula the topic area is known for.\n"
+    "- Use type=table when the section will compare or list structured data."
 )
 
 _CONTENT_FILL_SYSTEM = (
@@ -133,6 +156,8 @@ _CONTENT_FILL_SYSTEM = (
     "Replace every 'instructions' value with actual content generated from the course materials. "
     "Preserve all other fields (type, name, page_count, title, subtitle) exactly. "
     "For type=bullet_list, output 'items': [...] instead of 'content'. "
+    "For type=equation, output 'lines': ['<LaTeX string>'] instead of 'content'. "
+    "For type=table, output 'headers': [...] and 'rows': [[...], ...] instead of 'content'. "
     "Output the completed schema JSON."
 )
 
@@ -302,6 +327,7 @@ def _call_openai_json(api_key, model_id, system, user) -> dict:
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json={
             "model": model_id,
+            "max_completion_tokens": 8192,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -330,7 +356,7 @@ def _call_claude_json(api_key, model_id, system, user) -> dict:
         },
         json={
             "model": model_id,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "system": system,
             "messages": [{"role": "user", "content": user}],
         },
@@ -354,6 +380,7 @@ def _call_gemini_json(api_key, model_id, system, user) -> dict:
         json={
             "system_instruction": {"parts": [{"text": system}]},
             "contents": [{"parts": [{"text": user}]}],
+            "generationConfig": {"maxOutputTokens": 8192},
         },
         timeout=TIMEOUT_SECONDS,
     )
@@ -444,6 +471,16 @@ def _release_generation_lock(cursor, generation_id: int):
     cursor.fetchone()
 
 
+def _sanitize_latex_in_content(text: str) -> str:
+    """Strip all $ from lines with an odd $ count to prevent broken KaTeX rendering."""
+    if not text or "$" not in text:
+        return text
+    return "\n".join(
+        line.replace("$", "") if line.count("$") % 2 != 0 else line
+        for line in text.split("\n")
+    )
+
+
 def _normalize_output(raw: dict) -> dict:
     title = str(raw.get("title") or "Report").strip() or "Report"
     subtitle = str(raw.get("subtitle") or "").strip()
@@ -462,13 +499,22 @@ def _normalize_output(raw: dict) -> dict:
         if btype not in VALID_BLOCK_TYPES:
             btype = "bullet_list" if isinstance(block.get("items"), list) else "paragraph"
 
-        content = str(block.get("content") or block.get("instructions") or block.get("text") or "").strip()
+        content = _sanitize_latex_in_content(
+            str(block.get("content") or block.get("instructions") or block.get("text") or "").strip()
+        )
         items = block.get("items")
-        items = [str(item) for item in items if str(item).strip()] if isinstance(items, list) else None
+        items = [_sanitize_latex_in_content(str(item)) for item in items if str(item).strip()] if isinstance(items, list) else None
         lines = block.get("lines")
         lines = [str(line).strip() for line in lines if str(line).strip()] if isinstance(lines, list) else None
+        headers = block.get("headers")
+        headers = [str(h).strip() for h in headers if str(h).strip()] if isinstance(headers, list) else None
+        rows = block.get("rows")
+        if isinstance(rows, list):
+            rows = [[str(cell).strip() for cell in row] for row in rows if isinstance(row, list)]
+        else:
+            rows = None
 
-        if not content and not items and not lines and btype != "page_break":
+        if not content and not items and not lines and not headers and btype != "page_break":
             continue
 
         entry = {"type": btype}
@@ -478,6 +524,10 @@ def _normalize_output(raw: dict) -> dict:
             entry["items"] = items
         if lines is not None:
             entry["lines"] = lines
+        if headers is not None:
+            entry["headers"] = headers
+        if rows is not None:
+            entry["rows"] = rows
 
         normalized.append(entry)
         if len(normalized) >= MAX_SECTIONS:
