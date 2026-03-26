@@ -39,6 +39,27 @@ CourseMate is built as:
 - **Data layer**: Neon-hosted PostgreSQL (via `psycopg3` + connection pooling) with `pgvector`.
 - **Workers**: AWS Lambda functions + SQS queues for long-running generation tasks.
 
+### Authentication Layout (HttpOnly Cookie + CSRF)
+
+CourseMate uses **server-side sessions** backed by a database session table, with the session token stored in an **HttpOnly cookie** named `cm_session`.
+
+Key properties:
+
+- **Session cookie is HttpOnly**: the browser never exposes `cm_session` to JavaScript (`document.cookie` / Web Storage), and all `/api/*` requests rely on cookie forwarding (`fetch(..., { credentials: 'include' })`).
+- **CSRF token is the only auth primitive exposed to the frontend**: the backend issues a CSRF token via `/api/auth`, and the frontend stores it in memory (React state). State-changing requests include `X-CSRF-Token`.
+- **Cookie-only auth on the backend**: request identity is derived from the `cm_session` cookie; the frontend no longer uses any `Authorization: Bearer ...` flow.
+
+Frontend restore + login flows:
+
+1. **App restore (page load)**: `GET /api/auth` validates the existing `cm_session` cookie and returns `{ user, csrf_token }`. The frontend stores `csrf_token` in React state and routes the user based on whether a valid session exists.
+2. **Login (Google OAuth)**: `POST /api/auth` verifies the Google credential/ID token, creates/updates the user, creates a server-side session, and sets a fresh `cm_session` cookie. The response also returns `{ user, csrf_token }`.
+3. **Logout**: `DELETE /api/auth` revokes the server-side session and clears the cookie.
+
+CSRF usage:
+
+- The backend ties CSRF verification to the validated session token.
+- The frontend must include `X-CSRF-Token` for **state-changing** requests (e.g. profile updates).
+
 ### High-level request flow (chat + RAG)
 
 1. **Chat requests** hit `api/chat.py` (supports both non-streaming and streaming responses via SSE).
@@ -107,11 +128,14 @@ Planned next improvements, focused on user experience and sharing:
 
 | Method   | Endpoint                                       | Auth             | Description                                                                   |
 | -------- | ---------------------------------------------- | ---------------- | ----------------------------------------------------------------------------- |
-| POST     | `/api/oauth`                                   | None             | Login — verify Google JWT, create user + session                              |
-| POST     | `/api/logout`                                  | Bearer token     | Logout — revoke server-side session                                           |
-| POST     | `/api/update_address`                          | Bearer + CSRF    | Update authenticated user's address                                           |
-| GET/POST | `/api/chat`                                    | Bearer (session) | Streaming chat + message management (includes retrieval + provider synthesis) |
-| GET/POST | `/api/quiz`, `/api/flashcards`, `/api/reports` | Bearer (session) | Async estimate/generate/poll flows backed by SQS + Lambda workers             |
+| GET      | `/api/auth`                                   | `cm_session` cookie | Validate existing session and return `{ user, csrf_token }`                |
+| POST     | `/api/auth`                                   | None             | Login — verify Google credential, create session + return `{ user, csrf_token }` |
+| DELETE   | `/api/auth`                                   | `cm_session` cookie | Logout — revoke session and clear cookie                                      |
+| GET/POST | `/api/course`                                 | `cm_session` cookie | Course creation/list/detail APIs                                           |
+| GET/POST | `/api/chat`                                    | `cm_session` cookie | Streaming chat + retrieval + provider synthesis                            |
+| GET/POST | `/api/material`                                | `cm_session` cookie | Material ingestion, indexing pipeline hooks, listing/polling             |
+| GET/POST | `/api/quiz`, `/api/flashcards`, `/api/reports` | `cm_session` cookie | Async estimate/generate/poll flows backed by SQS + Lambda workers       |
+| GET/POST | `/api/user`                                   | `cm_session` cookie | Profile + API key management (CSRF required for state changes)               |
 
 
 ## Security Features
@@ -121,7 +145,7 @@ Planned next improvements, focused on user experience and sharing:
 - **Rate limiting** — per-IP rate limiting on all endpoints
 - **Restricted CORS** — configurable allowed origin (not wildcard)
 - **Input validation** — sanitization of user inputs with length limits
-- **No token leakage** — session tokens stored in React state (not localStorage), filtered from JSON viewer
+- **No token leakage** — session token stored in an **HttpOnly** cookie (`cm_session`); only `csrf_token` is exposed to the frontend
 - **Secure headers** — HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy
 - **Connection pooling** — psycopg connection pool for database efficiency
 - **Authenticated endpoints** — user identity derived from session, not request body
