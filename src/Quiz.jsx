@@ -622,10 +622,14 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
           }}
           onResolve={(resolution, revertPayload) => {
             if (resolution === 'revert' && revertPayload) {
+              setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== generationId));
               setQuizData(revertPayload);
               setGenerationId(revertPayload.generation_id || null);
               setParentGenerationId(revertPayload.parent_generation_id || null);
             } else {
+              if (resolution === 'replace') {
+                setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== parentGenerationId));
+              }
               setParentGenerationId(null);
             }
           }}

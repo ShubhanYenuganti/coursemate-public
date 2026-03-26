@@ -423,12 +423,14 @@ export default function ReportsViewer({
   onClose,
   onRegenerate,
   onSaveComplete,
+  onResolve,
 }) {
   const [zoom, setZoom] = useState(100);
   const [copied, setCopied] = useState(false);
   const [saveStatus, setSaveStatus] = useState(report?.artifact_material_id ? 'saved' : 'idle');
   const [saveError, setSaveError] = useState('');
   const [exportStatus, setExportStatus] = useState('idle');
+  const [resolving, setResolving] = useState(false);
 
   const courseName = course?.name || course?.title || 'Report';
   const title = report?.title || courseName;
@@ -552,8 +554,68 @@ export default function ReportsViewer({
     }
   }
 
+  async function handleResolve(resolution) {
+    if (!generationId || !report?.parent_generation_id || resolving) return;
+    setResolving(true);
+    try {
+      const res = await fetch('/api/reports', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'resolve_regeneration',
+          generation_id: generationId,
+          parent_generation_id: report.parent_generation_id,
+          resolution,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) onResolve?.(resolution, data);
+    } catch {
+      // keep banner visible to allow retry
+    } finally {
+      setResolving(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-indigo-50 to-blue-50 flex flex-col">
+
+      {/* ── Resolve banner ── */}
+      {report?.parent_generation_id && (
+        <div className="bg-amber-50 border-b border-amber-200 px-6 py-3">
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
+            <p className="text-sm text-amber-800 font-medium">
+              New version generated. What would you like to do with the previous version?
+            </p>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => handleResolve('save_both')}
+                disabled={resolving}
+                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+              >
+                Save Both
+              </button>
+              <button
+                type="button"
+                onClick={() => handleResolve('replace')}
+                disabled={resolving}
+                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+              >
+                Replace Previous
+              </button>
+              <button
+                type="button"
+                onClick={() => handleResolve('revert')}
+                disabled={resolving}
+                className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 transition-colors disabled:opacity-50"
+              >
+                Revert
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Header ── */}
       <header className="sticky top-0 z-10 bg-white border-b border-gray-100 px-6 py-3">

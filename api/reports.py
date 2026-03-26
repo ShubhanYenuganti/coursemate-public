@@ -898,6 +898,13 @@ class handler(BaseHTTPRequestHandler):
                 if artifact_material_id:
                     cursor.execute("DELETE FROM materials WHERE id=%s", (artifact_material_id,))
                     _remove_material_from_course(cursor, generation_course_id, artifact_material_id)
+                cursor.close()
+                parent_payload = _load_generation_from_db(conn, parent_generation_id)
+                if not parent_payload:
+                    send_json(self, 404, {"error": "Parent generation not found after revert"})
+                    return
+                send_json(self, 200, {"resolution": "revert", "generation": parent_payload})
+                return
             elif resolution == "replace" and parent_generation_id is not None:
                 if current_generation.get("parent_generation_id") != parent_generation_id:
                     cursor.close()
@@ -918,12 +925,12 @@ class handler(BaseHTTPRequestHandler):
                     cursor.execute("DELETE FROM materials WHERE id=%s", (parent_artifact_material_id,))
                     _remove_material_from_course(cursor, parent_course_id, parent_artifact_material_id)
                 cursor.execute(
-                    """
-                    UPDATE report_generations
-                    SET artifact_material_id=NULL
-                    WHERE id=%s AND generated_by=%s
-                    """,
+                    "DELETE FROM report_generations WHERE id=%s AND generated_by=%s",
                     (parent_generation_id, user["id"]),
+                )
+                cursor.execute(
+                    "UPDATE report_generations SET parent_generation_id=NULL WHERE id=%s",
+                    (generation_id,),
                 )
             elif resolution in ("replace", "revert"):
                 cursor.close()

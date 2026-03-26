@@ -210,6 +210,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
   );
 
   const [reportData, setReportData] = useState(null);
+  const [parentGenerationId, setParentGenerationId] = useState(null);
   const [generateError, setGenerateError] = useState('');
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [estimateData, setEstimateData] = useState(null);
@@ -413,7 +414,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
 
   // ── estimate → confirm → generate ─────────────────────────────────────────
 
-  async function handleEstimate({ parent_generation_id: parentGenerationId } = {}) {
+  async function handleEstimate() {
     if (isEstimating) return false;
     setGenerateError('');
     setIsEstimating(true);
@@ -591,11 +592,35 @@ export default function Reports({ course, sessionToken, onAddSource }) {
         sourceMaterials={materials}
         templateLabel={reportTemplate?.label || 'Report'}
         generationError={generateError}
-        onClose={() => setReportData(null)}
+        onClose={() => { setReportData(null); setParentGenerationId(null); }}
         onSaveComplete={handleReportSaveComplete}
-        onRegenerate={async (payload) => {
-          const estimated = await handleEstimate(payload);
-          if (estimated) setReportData(null);
+        onRegenerate={() => {
+          // Restore template + sources from the current report so the form is pre-filled
+          const savedMaterialIds = reportData?.selected_material_ids || [];
+          setTemplate(reportData?.template_id || template);
+          if (reportData?.custom_prompt) setCustomPrompt(reportData.custom_prompt);
+          if (savedMaterialIds.length > 0 && savedMaterialIds.length < materials.length) {
+            setSelectAll(false);
+            setSelectedSources(new Set(savedMaterialIds));
+          } else {
+            setSelectAll(true);
+            setSelectedSources(new Set());
+          }
+          setParentGenerationId(reportData?.generation_id || null);
+          setReportData(null);
+        }}
+        onResolve={(resolution, data) => {
+          if (resolution === 'revert' && data?.generation) {
+            const childId = reportData?.generation_id;
+            setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== childId));
+            setReportData(data.generation);
+          } else {
+            if (resolution === 'replace') {
+              const parentId = reportData?.parent_generation_id;
+              setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== parentId));
+            }
+            setReportData((prev) => prev ? { ...prev, parent_generation_id: null } : prev);
+          }
         }}
       />
     );
