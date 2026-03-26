@@ -163,6 +163,16 @@ def _looks_like_math(value: str) -> bool:
     return _LIKELY_MATH_PATTERN.search(text) is not None
 
 
+def _fix_unclosed_latex_delimiters(text: str) -> str:
+    """Strip all $ from lines with an odd $ count to prevent broken KaTeX rendering."""
+    if not text or "$" not in text:
+        return text
+    return "\n".join(
+        line.replace("$", "") if line.count("$") % 2 != 0 else line
+        for line in text.split("\n")
+    )
+
+
 def _normalize_llm_markdown(text: str) -> str:
     """
     Apply deterministic formatting fixes for common model mistakes:
@@ -203,6 +213,9 @@ def _normalize_llm_markdown(text: str) -> str:
 
     # Collapse sentence fragments split around converted inline code.
     normalized = re.sub(r"([A-Za-z0-9)\]])\n`([^`\n]+)`\n([A-Za-z(])", r"\1 `\2` \3", normalized)
+
+    # Strip lines with unclosed LaTeX $ delimiters to prevent broken KaTeX rendering.
+    normalized = _fix_unclosed_latex_delimiters(normalized)
 
     return normalized
 

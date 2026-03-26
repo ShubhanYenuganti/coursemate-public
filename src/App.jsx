@@ -6,6 +6,7 @@ import CoursePage from "./CoursePage.jsx";
 import ProfilePage from "./ProfilePage.jsx";
 import QuizViewerRoute from "./QuizViewerRoute.jsx";
 import FlashcardViewerRoute from "./FlashcardViewerRoute.jsx";
+import ReportViewerRoute from "./ReportViewerRoute.jsx";
 import "./App.css";
 
 function CourseRoute({ userData, sessionToken, csrfToken, onSignOut, onUserUpdate }) {
@@ -211,6 +212,16 @@ export default function App() {
         element={
           userData ? (
             <FlashcardViewerRoute sessionToken={sessionToken} />
+          ) : (
+            <Navigate to="/" replace />
+          )
+        }
+      />
+      <Route
+        path="/course/:id/reports/:generationId"
+        element={
+          userData ? (
+            <ReportViewerRoute sessionToken={sessionToken} />
           ) : (
             <Navigate to="/" replace />
           )

@@ -558,5 +558,112 @@ def init_db():
                 ADD COLUMN IF NOT EXISTS generation_settings JSONB;
         """)
 
+        # Reports generation tables
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS report_generations (
+                id SERIAL PRIMARY KEY,
+                course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+                generated_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                template_id VARCHAR(30) NOT NULL DEFAULT 'study-guide',
+                custom_prompt TEXT,
+                provider VARCHAR(20),
+                model_id VARCHAR(100),
+                status VARCHAR(20) NOT NULL DEFAULT 'draft'
+                    CHECK (status IN ('draft', 'queued', 'generating', 'ready', 'failed')),
+                error TEXT,
+                parent_generation_id INTEGER REFERENCES report_generations(id) ON DELETE SET NULL,
+                artifact_material_id INTEGER REFERENCES materials(id) ON DELETE SET NULL,
+                selected_material_ids JSONB,
+                generation_settings JSONB,
+                prompt_text TEXT,
+                estimated_prompt_tokens_low INTEGER,
+                estimated_prompt_tokens_high INTEGER,
+                estimated_total_tokens_low INTEGER,
+                estimated_total_tokens_high INTEGER,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS report_versions (
+                id SERIAL PRIMARY KEY,
+                generation_id INTEGER NOT NULL REFERENCES report_generations(id) ON DELETE CASCADE,
+                version_number INTEGER NOT NULL DEFAULT 1,
+                title TEXT,
+                subtitle TEXT,
+                page_count INTEGER NOT NULL DEFAULT 2,
+                sections_json JSONB NOT NULL DEFAULT '[]',
+                template_snapshot JSONB,
+                source_snapshot JSONB,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cursor.execute("""
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS template_id VARCHAR(30) NOT NULL DEFAULT 'study-guide';
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS custom_prompt TEXT;
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS provider VARCHAR(20);
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS model_id VARCHAR(100);
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'draft';
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS error TEXT;
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS parent_generation_id INTEGER REFERENCES report_generations(id) ON DELETE SET NULL;
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS artifact_material_id INTEGER REFERENCES materials(id) ON DELETE SET NULL;
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS selected_material_ids JSONB;
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS generation_settings JSONB;
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS prompt_text TEXT;
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS estimated_prompt_tokens_low INTEGER;
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS estimated_prompt_tokens_high INTEGER;
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS estimated_total_tokens_low INTEGER;
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS estimated_total_tokens_high INTEGER;
+            ALTER TABLE report_generations
+                ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+            ALTER TABLE report_generations
+                ALTER COLUMN status SET DEFAULT 'draft';
+        """)
+        cursor.execute("""
+            ALTER TABLE report_versions
+                ADD COLUMN IF NOT EXISTS generation_id INTEGER NOT NULL REFERENCES report_generations(id) ON DELETE CASCADE;
+            ALTER TABLE report_versions
+                ADD COLUMN IF NOT EXISTS version_number INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE report_versions
+                ADD COLUMN IF NOT EXISTS title TEXT;
+            ALTER TABLE report_versions
+                ADD COLUMN IF NOT EXISTS subtitle TEXT;
+            ALTER TABLE report_versions
+                ADD COLUMN IF NOT EXISTS page_count INTEGER NOT NULL DEFAULT 2;
+            ALTER TABLE report_versions
+                ADD COLUMN IF NOT EXISTS sections_json JSONB NOT NULL DEFAULT '[]';
+            ALTER TABLE report_versions
+                ADD COLUMN IF NOT EXISTS template_snapshot JSONB;
+            ALTER TABLE report_versions
+                ADD COLUMN IF NOT EXISTS source_snapshot JSONB;
+            ALTER TABLE report_versions
+                ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+        """)
+        cursor.execute("""
+            ALTER TABLE report_generations
+                DROP CONSTRAINT IF EXISTS report_generations_status_check;
+
+            ALTER TABLE report_generations
+                ADD CONSTRAINT report_generations_status_check
+                CHECK (status IN ('draft', 'queued', 'generating', 'ready', 'failed'));
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_report_gen_course ON report_generations(course_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_report_gen_course_user ON report_generations(course_id, generated_by, created_at DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_report_gen_status ON report_generations(status, created_at DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_report_versions_gen ON report_versions(generation_id);")
+
         cursor.close()
         print("Database initialized successfully")

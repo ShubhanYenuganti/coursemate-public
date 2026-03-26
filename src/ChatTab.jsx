@@ -515,7 +515,7 @@ function MessageBubble({
     return (
       <ReactMarkdown
         remarkPlugins={[remarkMath, remarkGfm]}
-        rehypePlugins={[rehypeKatex]}
+        rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}
         components={{
           p: ({ children }) => (
             <p className="mt-1 first:mt-0">
