@@ -298,7 +298,7 @@ function QuestionCard({ question, index, total, answer, onAnswer, revealed, onRe
 
 // ─── QuizViewer ────────────────────────────────────────────────────────────────
 
-export default function QuizViewer({ quiz, generationId, parentGenerationId, sessionToken, onClose, onRegenerate, onResolve }) {
+export default function QuizViewer({ quiz, generationId, parentGenerationId, onClose, onRegenerate, onResolve }) {
   // Shuffle questions once per quiz load, preserving originalIndex for backend submission.
   const questions = useMemo(() => {
     const raw = quiz?.questions || (Array.isArray(quiz) ? quiz : []);
@@ -328,7 +328,7 @@ export default function QuizViewer({ quiz, generationId, parentGenerationId, ses
     setAttemptsLoading(true);
     try {
       const r = await fetch(`/api/quiz?action=list_attempts&generation_id=${generationId}`, {
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: 'include',
       });
       const data = await r.json().catch(() => ({}));
       setAttemptsList(Array.isArray(data?.attempts) ? data.attempts : []);
@@ -341,7 +341,7 @@ export default function QuizViewer({ quiz, generationId, parentGenerationId, ses
     setViewMode('attempt-detail');
     try {
       const r = await fetch(`/api/quiz?action=get_attempt&attempt_id=${attemptId}`, {
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: 'include',
       });
       const data = await r.json().catch(() => null);
       setSelectedAttempt(data);
@@ -377,9 +377,9 @@ export default function QuizViewer({ quiz, generationId, parentGenerationId, ses
       const res = await fetch('/api/quiz', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'submit_attempt',
           generation_id: generationId,
@@ -409,7 +409,7 @@ export default function QuizViewer({ quiz, generationId, parentGenerationId, ses
     try {
       const res = await fetch(`/api/quiz?action=export_pdf&generation_id=${generationId}`, {
         method: 'GET',
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: 'include',
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
@@ -442,9 +442,9 @@ export default function QuizViewer({ quiz, generationId, parentGenerationId, ses
       const res = await fetch('/api/quiz', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({ action: 'save_artifact', generation_id: generationId }),
       });
       if (res.ok) {
@@ -464,9 +464,9 @@ export default function QuizViewer({ quiz, generationId, parentGenerationId, ses
       const res = await fetch('/api/quiz', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'resolve_regeneration',
           generation_id: generationId,

@@ -57,7 +57,7 @@ function ToolbarItem({ icon, label, active, onClick }) {
 
 // ─── main component ───────────────────────────────────────────────────────────
 
-export default function CoursePage({ course, userData, sessionToken, onSignOut, onCourseUpdate }) {
+export default function CoursePage({ course, userData, onSignOut, onCourseUpdate }) {
   const navigate = useNavigate();
   const storageKey = `coursemate_active_tab_${course?.id}`;
   const [activeTab, setActiveTab] = useState(
@@ -85,8 +85,8 @@ export default function CoursePage({ course, userData, sessionToken, onSignOut, 
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionToken}`,
         },
+        credentials: 'include',
         body: JSON.stringify({ course_id: course.id, description: descValue }),
       });
       const data = await res.json();
@@ -139,7 +139,7 @@ export default function CoursePage({ course, userData, sessionToken, onSignOut, 
                 />
               </button>
             )}
-            <CreateCourseModal sessionToken={sessionToken} />
+            <CreateCourseModal />
             <button
               type="button"
               onClick={onSignOut}
@@ -221,7 +221,6 @@ export default function CoursePage({ course, userData, sessionToken, onSignOut, 
           <div className="max-w-5xl mx-auto">
             <MaterialsPage
               courseId={course?.id}
-              sessionToken={sessionToken}
               userId={userData?.db_id}
             />
           </div>
@@ -229,7 +228,7 @@ export default function CoursePage({ course, userData, sessionToken, onSignOut, 
 
         {activeTab === 'chat' && (
           <div className="max-w-5xl mx-auto">
-            <ChatTab course={course} userData={userData} sessionToken={sessionToken} onAddSource={() => handleTabChange('materials')} />
+            <ChatTab course={course} userData={userData} onAddSource={() => handleTabChange('materials')} />
           </div>
         )}
 
@@ -238,7 +237,6 @@ export default function CoursePage({ course, userData, sessionToken, onSignOut, 
             <Generations
               course={course}
               userData={userData}
-              sessionToken={sessionToken}
               onAddSource={() => handleTabChange('materials')}
             />
           </div>

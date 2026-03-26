@@ -140,7 +140,6 @@ function ToolbarItem({ icon, label, onClick }) {
 export default function FlashcardViewer({
   data,
   course,
-  sessionToken,
   generationId,
   parentGenerationId,
   onClose,
@@ -217,9 +216,9 @@ export default function FlashcardViewer({
       const res = await fetch('/api/flashcards', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({ action: 'save_artifact', generation_id: generationId }),
       });
       if (res.ok) setSaveStatus('saved');
@@ -235,7 +234,7 @@ export default function FlashcardViewer({
     try {
       const res = await fetch(`/api/flashcards?action=export_pdf&generation_id=${generationId}`, {
         method: 'GET',
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: 'include',
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
@@ -260,9 +259,9 @@ export default function FlashcardViewer({
       const res = await fetch('/api/flashcards', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'resolve_regeneration',
           generation_id: generationId,

@@ -13,7 +13,7 @@ function SignOutIcon() {
   );
 }
 
-export default function Dashboard({ userData, sessionToken, onSignOut }) {
+export default function Dashboard({ userData, onSignOut }) {
   const createModalRef = useRef(null);
   const navigate = useNavigate();
 
@@ -42,7 +42,7 @@ export default function Dashboard({ userData, sessionToken, onSignOut }) {
                 />
               </button>
             )}
-            <CreateCourseModal ref={createModalRef} sessionToken={sessionToken} />
+            <CreateCourseModal ref={createModalRef} />
             <button
               type="button"
               onClick={onSignOut}
@@ -58,10 +58,7 @@ export default function Dashboard({ userData, sessionToken, onSignOut }) {
 
       {/* Dashboard body */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <CardViewer
-          sessionToken={sessionToken}
-          onCreateNew={() => createModalRef.current?.open()}
-        />
+        <CardViewer onCreateNew={() => createModalRef.current?.open()} />
       </main>
     </div>
   );

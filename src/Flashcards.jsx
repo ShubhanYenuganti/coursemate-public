@@ -154,7 +154,7 @@ const PROVIDER_MODELS = {
 
 const MODEL_LABELS = { gemini: 'Gemini', openai: 'GPT', claude: 'Claude' };
 
-export default function Flashcards({ course, sessionToken, onAddSource }) {
+export default function Flashcards({ course, onAddSource }) {
   const [materials, setMaterials] = useState([]);
   const [selectedSources, setSelectedSources] = useState(new Set());
   const [selectAll, setSelectAll] = useState(true);
@@ -229,21 +229,20 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
   }, [selectAll, selectedSources, course?.id]);
 
   useEffect(() => {
-    if (!course?.id || !sessionToken) return;
+    if (!course?.id) return;
     setMaterialsLoading(true);
     fetch(`/api/material?course_id=${course.id}`, {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     })
       .then((r) => r.json())
       .then((data) => setMaterials(Array.isArray(data) ? data : (data.materials || [])))
       .catch(() => {})
       .finally(() => setMaterialsLoading(false));
-  }, [course?.id, sessionToken]);
+  }, [course?.id]);
 
   useEffect(() => {
-    if (!sessionToken) return;
     fetch('/api/user?resource=api_keys', {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     })
       .then((r) => r.json())
       .then((data) => {
@@ -262,7 +261,7 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
         setSelectedModelId(modelId);
       })
       .catch(() => {});
-  }, [sessionToken]);
+  }, []);
 
   const stopPolling = useCallback((genId) => {
     if (pollTimersRef.current[genId]) {
@@ -277,11 +276,11 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
   }, []);
 
   const loadHistory = useCallback(async () => {
-    if (!course?.id || !sessionToken) return;
+    if (!course?.id) return;
     setHistoryLoading(true);
     try {
       const r = await fetch(`/api/flashcards?action=list_generations&course_id=${course.id}`, {
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: 'include',
       });
       const data = await r.json();
       const generations = Array.isArray(data?.generations) ? data.generations : [];
@@ -302,7 +301,7 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
             pollTimersRef.current[g.generation_id] = setInterval(async () => {
               try {
                 const rr = await fetch(`/api/flashcards?action=get_generation_status&generation_id=${g.generation_id}`, {
-                  headers: { Authorization: `Bearer ${sessionToken}` },
+                  credentials: 'include',
                 });
                 if (!rr.ok) return;
                 const sd = await rr.json().catch(() => null);
@@ -327,7 +326,7 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
     finally {
       setHistoryLoading(false);
     }
-  }, [course?.id, sessionToken, stopPolling]);
+  }, [course?.id, stopPolling]);
 
   useEffect(() => {
     loadHistory();
@@ -348,7 +347,8 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
     try {
       const res = await fetch('/api/flashcards', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(body),
         keepalive: true,
       });
@@ -368,7 +368,7 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
           pollTimersRef.current[genId] = setInterval(async () => {
             try {
               const rr = await fetch(`/api/flashcards?action=get_generation_status&generation_id=${genId}`, {
-                headers: { Authorization: `Bearer ${sessionToken}` },
+                credentials: 'include',
               });
               if (!rr.ok) return;
               const sd = await rr.json().catch(() => null);
@@ -423,9 +423,9 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
       const res = await fetch('/api/flashcards', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'estimate',
           course_id: course?.id,
@@ -495,7 +495,7 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
     setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== genId));
     fetch(`/api/flashcards?generation_id=${genId}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     }).catch(() => {});
   }
 
@@ -504,14 +504,14 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
     setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== genId));
     await fetch(`/api/flashcards?generation_id=${genId}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     }).catch(() => {});
   }
 
   async function reopenFromHistory(gen) {
     if (!gen) return;
     const res = await fetch(`/api/flashcards?action=get_generation&generation_id=${gen.generation_id}`, {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     });
     const data = await res.json().catch(() => null);
     if (data?.generation_id) {
@@ -602,7 +602,6 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
         <FlashcardViewer
           data={flashcardData}
           course={course}
-          sessionToken={sessionToken}
           generationId={generationId}
           parentGenerationId={parentGenerationId}
           onClose={() => {

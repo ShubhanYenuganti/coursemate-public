@@ -9,7 +9,7 @@ import FlashcardViewerRoute from "./FlashcardViewerRoute.jsx";
 import ReportViewerRoute from "./ReportViewerRoute.jsx";
 import "./App.css";
 
-function CourseRoute({ userData, sessionToken, csrfToken, onSignOut, onUserUpdate }) {
+function CourseRoute({ userData, csrfToken, onSignOut, onUserUpdate }) {
   const { state } = useLocation();
   const { id } = useParams();
   const navigate = useNavigate();
@@ -22,7 +22,7 @@ function CourseRoute({ userData, sessionToken, csrfToken, onSignOut, onUserUpdat
   }
 
   useEffect(() => {
-    if (!sessionToken) return;
+    if (!userData) return;
     if (state?.course) {
       setCourse(state.course);
       setLoadingCourse(false);
@@ -33,7 +33,7 @@ function CourseRoute({ userData, sessionToken, csrfToken, onSignOut, onUserUpdat
     let cancelled = false;
     setLoadingCourse(true);
     fetch("/api/course", {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     })
       .then((res) => res.json().catch(() => ({})))
       .then((data) => {
@@ -51,7 +51,7 @@ function CourseRoute({ userData, sessionToken, csrfToken, onSignOut, onUserUpdat
     return () => {
       cancelled = true;
     };
-  }, [id, sessionToken, state, navigate]);
+  }, [id, userData, state, navigate]);
 
   if (loadingCourse || !course) {
     return (
@@ -65,7 +65,6 @@ function CourseRoute({ userData, sessionToken, csrfToken, onSignOut, onUserUpdat
     <CoursePage
       course={course}
       userData={userData}
-      sessionToken={sessionToken}
       csrfToken={csrfToken}
       onSignOut={onSignOut}
       onUserUpdate={onUserUpdate}
@@ -76,7 +75,6 @@ function CourseRoute({ userData, sessionToken, csrfToken, onSignOut, onUserUpdat
 
 export default function App() {
   const [userData, setUserData] = useState(null);
-  const [sessionToken, setSessionToken] = useState(null);
   const [csrfToken, setCsrfToken] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -84,25 +82,17 @@ export default function App() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const stored = localStorage.getItem("cm_session");
-    if (!stored) {
-      setRestoring(false);
-      return;
-    }
-    fetch("/api/auth", {
-      headers: { Authorization: `Bearer ${stored}` },
-    })
+    fetch("/api/auth", { credentials: 'include' })
       .then((res) => {
         if (!res.ok) throw new Error("invalid");
         return res.json();
       })
       .then((data) => {
-        if (data.session_token) setSessionToken(data.session_token);
         if (data.csrf_token) setCsrfToken(data.csrf_token);
         setUserData(data.user);
       })
       .catch(() => {
-        localStorage.removeItem("cm_session");
+        // Cookie is invalid or absent — nothing to clean up
       })
       .finally(() => {
         setRestoring(false);
@@ -117,6 +107,7 @@ export default function App() {
       const res = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: 'include',
         body: JSON.stringify({ credential: response.credential }),
       });
 
@@ -127,10 +118,6 @@ export default function App() {
 
       const data = await res.json();
 
-      if (data.session_token) {
-        setSessionToken(data.session_token);
-        localStorage.setItem("cm_session", data.session_token);
-      }
       if (data.csrf_token) setCsrfToken(data.csrf_token);
       setUserData(data.user ?? data);
       navigate("/dashboard");
@@ -142,20 +129,16 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
-    if (sessionToken) {
-      try {
-        await fetch("/api/auth", {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${sessionToken}` },
-        });
-      } catch (e) {
-        console.error("Logout API error:", e);
-      }
+    try {
+      await fetch("/api/auth", {
+        method: "DELETE",
+        credentials: 'include',
+      });
+    } catch (e) {
+      console.error("Logout API error:", e);
     }
 
-    localStorage.removeItem("cm_session");
     setUserData(null);
-    setSessionToken(null);
     setCsrfToken(null);
     setError(null);
     window.google?.accounts?.id?.disableAutoSelect();
@@ -191,7 +174,7 @@ export default function App() {
         path="/dashboard"
         element={
           userData ? (
-            <Dashboard userData={userData} sessionToken={sessionToken} csrfToken={csrfToken} onSignOut={handleSignOut} onUserUpdate={setUserData} />
+            <Dashboard userData={userData} csrfToken={csrfToken} onSignOut={handleSignOut} onUserUpdate={setUserData} />
           ) : (
             <Navigate to="/" replace />
           )
@@ -201,7 +184,7 @@ export default function App() {
         path="/course/:id/quiz/:generationId"
         element={
           userData ? (
-            <QuizViewerRoute sessionToken={sessionToken} />
+            <QuizViewerRoute />
           ) : (
             <Navigate to="/" replace />
           )
@@ -211,7 +194,7 @@ export default function App() {
         path="/course/:id/flashcards/:generationId"
         element={
           userData ? (
-            <FlashcardViewerRoute sessionToken={sessionToken} />
+            <FlashcardViewerRoute />
           ) : (
             <Navigate to="/" replace />
           )
@@ -221,7 +204,7 @@ export default function App() {
         path="/course/:id/reports/:generationId"
         element={
           userData ? (
-            <ReportViewerRoute sessionToken={sessionToken} />
+            <ReportViewerRoute />
           ) : (
             <Navigate to="/" replace />
           )
@@ -231,7 +214,7 @@ export default function App() {
         path="/course/:id"
         element={
           userData ? (
-            <CourseRoute userData={userData} sessionToken={sessionToken} csrfToken={csrfToken} onSignOut={handleSignOut} onUserUpdate={setUserData} />
+            <CourseRoute userData={userData} csrfToken={csrfToken} onSignOut={handleSignOut} onUserUpdate={setUserData} />
           ) : (
             <Navigate to="/" replace />
           )
@@ -241,7 +224,7 @@ export default function App() {
         path="/profile"
         element={
           userData ? (
-            <ProfilePage userData={userData} sessionToken={sessionToken} csrfToken={csrfToken} onSignOut={handleSignOut} onUserUpdate={setUserData} />
+            <ProfilePage userData={userData} csrfToken={csrfToken} onSignOut={handleSignOut} onUserUpdate={setUserData} />
           ) : (
             <Navigate to="/" replace />
           )

@@ -202,7 +202,7 @@ const MODEL_LABELS = { gemini: 'Gemini', openai: 'GPT', claude: 'Claude' };
 
 // ─── Reports component ────────────────────────────────────────────────────────
 
-export default function Reports({ course, sessionToken, onAddSource }) {
+export default function Reports({ course, onAddSource }) {
   const [materials, setMaterials] = useState([]);
   const [selectedSources, setSelectedSources] = useState(new Set());
   const [selectAll, setSelectAll] = useState(true);
@@ -236,7 +236,6 @@ export default function Reports({ course, sessionToken, onAddSource }) {
   const generatingIdsRef = useRef(new Set());
   const pollTimersRef = useRef({});
 
-  const authHeaders = { Authorization: `Bearer ${sessionToken}` };
   const activeTemplate = TEMPLATES.find((t) => t.id === template);
   const isCustom = activeTemplate?.customPrompt;
 
@@ -280,20 +279,19 @@ export default function Reports({ course, sessionToken, onAddSource }) {
   // ── materials ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!course?.id || !sessionToken) return;
+    if (!course?.id) return;
     setMaterialsLoading(true);
-    fetch(`/api/material?course_id=${course.id}`, { headers: authHeaders })
+    fetch(`/api/material?course_id=${course.id}`, { credentials: 'include' })
       .then((r) => r.json())
       .then((data) => setMaterials(Array.isArray(data) ? data : (data.materials || [])))
       .catch(() => {})
       .finally(() => setMaterialsLoading(false));
-  }, [course?.id, sessionToken]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [course?.id]);
 
   // ── available providers ────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!sessionToken) return;
-    fetch('/api/user?resource=api_keys', { headers: authHeaders })
+    fetch('/api/user?resource=api_keys', { credentials: 'include' })
       .then((r) => r.json())
       .then((data) => {
         const available = Object.entries(data || {})
@@ -311,7 +309,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
         setSelectedModelId(modelId);
       })
       .catch(() => {});
-  }, [sessionToken]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── polling helpers ────────────────────────────────────────────────────────
 
@@ -328,12 +326,12 @@ export default function Reports({ course, sessionToken, onAddSource }) {
   }, []);
 
   const loadHistory = useCallback(async () => {
-    if (!course?.id || !sessionToken) return;
+    if (!course?.id) return;
     setHistoryLoading(true);
     try {
       const r = await fetch(
         `/api/reports?action=list_generations&course_id=${course.id}`,
-        { headers: { Authorization: `Bearer ${sessionToken}` } },
+        { credentials: 'include' },
       );
       const data = await r.json();
       const generations = Array.isArray(data?.generations) ? data.generations : [];
@@ -359,7 +357,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
               try {
                 const rr = await fetch(
                   `/api/reports?action=get_generation_status&generation_id=${g.generation_id}`,
-                  { headers: { Authorization: `Bearer ${sessionToken}` } },
+                  { credentials: 'include' },
                 );
                 if (!rr.ok) return;
                 const sd = await rr.json().catch(() => null);
@@ -389,7 +387,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
     } finally {
       setHistoryLoading(false);
     }
-  }, [course?.id, sessionToken, stopPolling]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [course?.id, stopPolling]);
 
   useEffect(() => {
     loadHistory();
@@ -446,7 +444,8 @@ export default function Reports({ course, sessionToken, onAddSource }) {
       const modelIdToUse = selectedModelId || PROVIDER_MODELS[providerToUse]?.[0]?.id || 'gpt-4o-mini';
       const res = await fetch('/api/reports', {
         method: 'POST',
-        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'estimate',
           course_id: course?.id,
@@ -485,7 +484,8 @@ export default function Reports({ course, sessionToken, onAddSource }) {
       const modelIdToUse = modelId || selectedModelId || PROVIDER_MODELS[providerToUse]?.[0]?.id || 'gpt-4o-mini';
       const res = await fetch('/api/reports', {
         method: 'POST',
-        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         keepalive: true,
         body: JSON.stringify({
           action: 'generate',
@@ -518,7 +518,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
             try {
               const rr = await fetch(
                 `/api/reports?action=get_generation_status&generation_id=${genId}`,
-                { headers: authHeaders },
+                { credentials: 'include' },
               );
               if (!rr.ok) return;
               const sd = await rr.json().catch(() => null);
@@ -561,7 +561,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
     setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== genId));
     fetch(`/api/reports?generation_id=${genId}`, {
       method: 'DELETE',
-      headers: authHeaders,
+      credentials: 'include',
     }).catch(() => {});
   }
 
@@ -571,7 +571,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
     if (!gen) return;
     const res = await fetch(
       `/api/reports?action=get_generation&generation_id=${gen.generation_id}`,
-      { headers: authHeaders },
+      { credentials: 'include' },
     );
     const data = await res.json().catch(() => null);
     if (data?.generation_id) {
@@ -584,7 +584,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
     setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== genId));
     await fetch(`/api/reports?generation_id=${genId}`, {
       method: 'DELETE',
-      headers: authHeaders,
+      credentials: 'include',
     }).catch(() => {});
   }
 
@@ -610,7 +610,6 @@ export default function Reports({ course, sessionToken, onAddSource }) {
       <ReportsViewer
         report={reportData}
         course={course}
-        sessionToken={sessionToken}
         sourceMaterials={materials}
         templateLabel={reportTemplate?.label || 'Report'}
         generationError={generateError}

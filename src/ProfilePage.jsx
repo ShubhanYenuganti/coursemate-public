@@ -42,7 +42,7 @@ function TrashIcon() {
 const PROVIDER_LABELS = { gemini: "Gemini", openai: "OpenAI", claude: "Claude" };
 const ALL_PROVIDERS = ["gemini", "openai", "claude"];
 
-function ApiKeysSection({ sessionToken }) {
+function ApiKeysSection() {
   const [keys, setKeys] = useState({ gemini: false, openai: false, claude: false });
   const [loading, setLoading] = useState(true);
 
@@ -65,7 +65,7 @@ function ApiKeysSection({ sessionToken }) {
   async function fetchKeys() {
     try {
       const res = await fetch("/api/user?resource=api_keys", {
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: "include",
       });
       if (res.ok) {
         const data = await res.json();
@@ -108,8 +108,8 @@ function ApiKeysSection({ sessionToken }) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
         },
+        credentials: "include",
         body: JSON.stringify({ resource: "api_keys", provider: addProvider, api_key: addValue.trim() }),
       });
       const data = await res.json();
@@ -145,8 +145,8 @@ function ApiKeysSection({ sessionToken }) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
         },
+        credentials: "include",
         body: JSON.stringify({ resource: "api_keys", provider: editingProvider, api_key: editValue.trim() }),
       });
       const data = await res.json();
@@ -165,8 +165,8 @@ function ApiKeysSection({ sessionToken }) {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
         },
+        credentials: "include",
         body: JSON.stringify({ provider }),
       });
       if (!res.ok) {
@@ -330,7 +330,7 @@ function ApiKeysSection({ sessionToken }) {
   );
 }
 
-export default function ProfilePage({ userData, sessionToken, csrfToken, onSignOut, onUserUpdate }) {
+export default function ProfilePage({ userData, csrfToken, onSignOut, onUserUpdate }) {
   const navigate = useNavigate();
 
   const [usernameInput, setUsernameInput] = useState(userData?.username || userData?.name || "");
@@ -355,9 +355,9 @@ export default function ProfilePage({ userData, sessionToken, csrfToken, onSignO
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
           "X-CSRF-Token": csrfToken,
         },
+        credentials: "include",
         body: JSON.stringify({ resource: "profile", username: trimmed }),
       });
       const data = await res.json();
@@ -380,9 +380,9 @@ export default function ProfilePage({ userData, sessionToken, csrfToken, onSignO
       const res = await fetch("/api/user?resource=profile", {
         method: "DELETE",
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           "X-CSRF-Token": csrfToken,
         },
+        credentials: "include",
       });
       if (!res.ok) {
         const data = await res.json();
@@ -489,7 +489,7 @@ export default function ProfilePage({ userData, sessionToken, csrfToken, onSignO
           <div className="border-t border-gray-100" />
 
           {/* API Keys section */}
-          <ApiKeysSection sessionToken={sessionToken} />
+          <ApiKeysSection />
 
           <div className="border-t border-gray-100" />
 

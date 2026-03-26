@@ -950,7 +950,7 @@ function StreamingHistoryBubble({ history, materials }) {
 
 // ─── main component ───────────────────────────────────────────────────────────
 
-export default function ChatTab({ course, userData, sessionToken, onAddSource }) {
+export default function ChatTab({ course, userData, onAddSource }) {
   const [activeConv, setActiveConv] = useState(null);
   const [chats, setChats] = useState([]);
   const [chatsLoading, setChatsLoading] = useState(false);
@@ -1015,58 +1015,57 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
 
   // Load materials for this course
   useEffect(() => {
-    if (!course?.id || !sessionToken) return;
+    if (!course?.id) return;
     fetch(`/api/material?course_id=${course.id}`, {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     })
       .then((r) => r.json())
       .then((data) => setMaterials(Array.isArray(data) ? data : (data.materials || [])))
       .catch(() => {});
-  }, [course?.id, sessionToken]);
+  }, [course?.id]);
 
   // Load chats for this course
   useEffect(() => {
-    if (!course?.id || !sessionToken) return;
+    if (!course?.id) return;
     setChatsLoading(true);
     fetch(`/api/chat?resource=chat&course_id=${course.id}`, {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     })
       .then((r) => r.json())
       .then((data) => setChats(data.chats || []))
       .catch(() => {})
       .finally(() => setChatsLoading(false));
-  }, [course?.id, sessionToken]);
+  }, [course?.id]);
 
   // Fetch archived chats when the archived dropdown is opened
   useEffect(() => {
-    if (!archivedOpen || !course?.id || !sessionToken) return;
+    if (!archivedOpen || !course?.id) return;
     setArchivedLoading(true);
     fetch(`/api/chat?resource=chat&course_id=${course.id}&archived=true`, {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     })
       .then((r) => r.json())
       .then((data) => setArchivedChats(data.chats || []))
       .catch(() => {})
       .finally(() => setArchivedLoading(false));
-  }, [archivedOpen, course?.id, sessionToken]);
+  }, [archivedOpen, course?.id]);
 
   // Load messages when active conversation changes
   useEffect(() => {
-    if (!activeConv || activeConv === '__new__' || !sessionToken) return;
+    if (!activeConv || activeConv === '__new__') return;
     if (sendingRef.current) return;
     fetch(`/api/chat?resource=message&chat_id=${activeConv}`, {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     })
       .then((r) => r.json())
       .then((data) => setMessages(data.messages || []))
       .catch(() => {});
-  }, [activeConv, sessionToken]);
+  }, [activeConv]);
 
   // Load available API-key-backed models
   useEffect(() => {
-    if (!sessionToken) return;
     fetch('/api/user?resource=api_keys', {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     })
       .then((r) => r.json())
       .then((data) => {
@@ -1085,7 +1084,7 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
         }
       })
       .catch(() => {});
-  }, [sessionToken]);
+  }, []);
 
   useEffect(() => {
     if (!modelDropdownOpen) return;
@@ -1176,9 +1175,9 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({ resource: 'chat', action: 'archive', chat_id: chatId, is_archived: isArchived }),
       });
       if (!res.ok) return;
@@ -1194,9 +1193,9 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({ resource: 'chat', action: 'archive', chat_id: chatId, is_archived: false }),
       });
       if (!res.ok) return;
@@ -1211,9 +1210,9 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
       const res = await fetch('/api/chat', {
         method: 'DELETE',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({ resource: 'chat', chat_id: chatId }),
       });
       if (!res.ok) return;
@@ -1227,9 +1226,9 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({ resource: 'chat', action: 'archive_all', course_id: course.id }),
       });
       if (!res.ok) return;
@@ -1277,9 +1276,9 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({ resource: 'chat', action: 'update', chat_id: activeConv, title: trimmed }),
       });
       const data = await res.json();
@@ -1306,7 +1305,7 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
   function openSources(messageId, focusIndex) {
     if (!msgChunks[messageId]) {
       fetch(`/api/chat?resource=chunks&message_id=${messageId}`, {
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: 'include',
       })
         .then((r) => r.json())
         .then((data) => setMsgChunks((prev) => ({ ...prev, [messageId]: data.chunks || [] })))
@@ -1404,9 +1403,9 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${sessionToken}`,
             'Content-Type': 'application/json',
           },
+          credentials: 'include',
           body: JSON.stringify({ resource: 'chat', action: 'create', course_id: course.id, title }),
         });
         const chatData = await res.json();
@@ -1423,9 +1422,9 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
           resource: 'message',
           action: 'stream_send',
@@ -1477,7 +1476,7 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
 
   async function handleEditMessage(messageId, newContent) {
     const trimmed = (newContent || '').trim();
-    if (!trimmed || sending || !sessionToken || !selectedModel) return;
+    if (!trimmed || sending || !selectedModel) return;
     const target = messages.find((m) => m.id === messageId);
     if (!target || target.role !== 'user' || typeof target.message_index !== 'number') return;
 
@@ -1503,9 +1502,9 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
           resource: 'message',
           action: 'stream_edit',
@@ -1614,7 +1613,8 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ resource: 'message', action: 'revert', message_id: assistantMsgId }),
       });
       const data = await res.json();
@@ -1655,7 +1655,8 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ resource: 'message', action: 'restore', message_id: assistantMsgId }),
       });
       const data = await res.json();
@@ -1697,7 +1698,8 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           resource: 'message',
           action: 'stream_regenerate',

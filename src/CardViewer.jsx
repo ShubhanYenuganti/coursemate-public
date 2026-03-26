@@ -113,17 +113,16 @@ function CourseCard({ course, onDelete, onClick }) {
   );
 }
 
-export default function CardViewer({ sessionToken, onCreateNew }) {
+export default function CardViewer({ onCreateNew }) {
   const navigate = useNavigate();
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (!sessionToken) return;
     setLoading(true);
     fetch("/api/course", {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: "include",
     })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -132,7 +131,7 @@ export default function CardViewer({ sessionToken, onCreateNew }) {
       .then((data) => setCourses(data.courses || []))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [sessionToken]);
+  }, []);
 
   const handleDelete = async (courseId) => {
     setCourses((prev) => prev.filter((c) => c.id !== courseId));
@@ -141,8 +140,8 @@ export default function CardViewer({ sessionToken, onCreateNew }) {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
         },
+        credentials: "include",
         body: JSON.stringify({ course_id: courseId }),
       });
       if (!res.ok) {
@@ -152,7 +151,7 @@ export default function CardViewer({ sessionToken, onCreateNew }) {
     } catch (e) {
       // Rollback optimistic removal on failure
       setError(`Failed to delete course: ${e.message}`);
-      fetch("/api/course", { headers: { Authorization: `Bearer ${sessionToken}` } })
+      fetch("/api/course", { credentials: "include" })
         .then((r) => r.json())
         .then((data) => setCourses(data.courses || []));
     }

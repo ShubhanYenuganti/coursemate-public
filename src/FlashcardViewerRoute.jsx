@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import FlashcardViewer from './FlashcardViewer';
 import GenerationConfirmModal from './components/GenerationConfirmModal.jsx';
@@ -46,17 +46,12 @@ const PROVIDER_MODELS = {
 
 const MODEL_LABELS = { gemini: 'Gemini', openai: 'GPT', claude: 'Claude' };
 
-export default function FlashcardViewerRoute({ sessionToken }) {
+export default function FlashcardViewerRoute() {
   const navigate = useNavigate();
   const params = useParams();
 
   const courseId = params?.id;
   const routeGenerationId = params?.generationId;
-
-  const authHeaders = useMemo(
-    () => ({ Authorization: `Bearer ${sessionToken}` }),
-    [sessionToken]
-  );
 
   const [flashcards, setFlashcards] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -73,12 +68,12 @@ export default function FlashcardViewerRoute({ sessionToken }) {
 
   useEffect(() => {
     async function load() {
-      if (!sessionToken || !routeGenerationId) return;
+      if (!routeGenerationId) return;
       setLoading(true);
       setLoadError('');
       try {
         const res = await fetch(`/api/flashcards?action=get_generation&generation_id=${routeGenerationId}`, {
-          headers: authHeaders,
+          credentials: 'include',
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -94,11 +89,10 @@ export default function FlashcardViewerRoute({ sessionToken }) {
     }
 
     load();
-  }, [sessionToken, routeGenerationId, authHeaders]);
+  }, [routeGenerationId]);
 
   useEffect(() => {
-    if (!sessionToken) return;
-    fetch('/api/user?resource=api_keys', { headers: authHeaders })
+    fetch('/api/user?resource=api_keys', { credentials: 'include' })
       .then((r) => r.json())
       .then((data) => {
         const providers = Object.entries(data || {})
@@ -107,16 +101,17 @@ export default function FlashcardViewerRoute({ sessionToken }) {
         setAvailableProviders(providers);
       })
       .catch(() => {});
-  }, [sessionToken, authHeaders]);
+  }, []);
 
   async function handleRegenerate() {
-    if (!flashcards || !courseId || !sessionToken || estimating) return;
+    if (!flashcards || !courseId || estimating) return;
     setEstimating(true);
     try {
       const materialIds = Array.isArray(flashcards.selected_material_ids) ? flashcards.selected_material_ids : [];
       const res = await fetch('/api/flashcards', {
         method: 'POST',
-        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'estimate',
           course_id: flashcards.course_id || Number(courseId),
@@ -151,7 +146,8 @@ export default function FlashcardViewerRoute({ sessionToken }) {
     try {
       const res = await fetch('/api/flashcards', {
         method: 'POST',
-        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
@@ -168,11 +164,11 @@ export default function FlashcardViewerRoute({ sessionToken }) {
   }
 
   useEffect(() => {
-    if (!regeneratingId || !sessionToken) return;
+    if (!regeneratingId) return;
     const timer = setInterval(async () => {
       try {
         const r = await fetch(`/api/flashcards?action=get_generation_status&generation_id=${regeneratingId}`, {
-          headers: authHeaders,
+          credentials: 'include',
         });
         if (!r.ok) return;
         const statusData = await r.json().catch(() => null);
@@ -182,7 +178,7 @@ export default function FlashcardViewerRoute({ sessionToken }) {
           clearInterval(timer);
           setRegeneratingId(null);
           const full = await fetch(`/api/flashcards?action=get_generation&generation_id=${regeneratingId}`, {
-            headers: authHeaders,
+            credentials: 'include',
           });
           const payload = await full.json().catch(() => null);
           if (full.ok && payload?.generation_id) {
@@ -200,7 +196,7 @@ export default function FlashcardViewerRoute({ sessionToken }) {
       }
     }, 5000);
     return () => clearInterval(timer);
-  }, [regeneratingId, authHeaders, sessionToken]);
+  }, [regeneratingId]);
 
   function handleResolve(resolution, revertPayload) {
     if (resolution === 'revert' && revertPayload) {
@@ -245,7 +241,6 @@ export default function FlashcardViewerRoute({ sessionToken }) {
       <FlashcardViewer
         data={flashcards}
         course={{ id: Number(courseId), name: flashcards.title || 'Flashcards' }}
-        sessionToken={sessionToken}
         generationId={generationId}
         parentGenerationId={parentGenerationId}
         onRegenerate={handleRegenerate}

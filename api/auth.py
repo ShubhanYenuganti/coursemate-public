@@ -12,10 +12,10 @@ from datetime import datetime, timedelta
 
 try:
     from .models import User, Session
-    from .middleware import send_json, handle_options, check_rate_limit, authenticate_request, generate_csrf_token
+    from .middleware import send_json, handle_options, check_rate_limit, authenticate_request, generate_csrf_token, set_session_cookie
 except ImportError:
     from models import User, Session
-    from middleware import send_json, handle_options, check_rate_limit, authenticate_request, generate_csrf_token
+    from middleware import send_json, handle_options, check_rate_limit, authenticate_request, generate_csrf_token, set_session_cookie
 
 
 def _build_user_response(user):
@@ -54,12 +54,12 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             csrf_token = generate_csrf_token(session_token)
+            cookie_header = set_session_cookie(session_token)
             send_json(self, 200, {
                 "success": True,
                 "user": _build_user_response(user),
-                "session_token": session_token,
                 "csrf_token": csrf_token,
-            })
+            }, extra_headers={"Set-Cookie": cookie_header})
 
         except Exception:
             send_json(self, 500, {"error": "Internal server error"})
@@ -125,15 +125,16 @@ class handler(BaseHTTPRequestHandler):
                 session    = Session.create(google_id=google_id)
                 csrf_token = generate_csrf_token(session['session_token'])
 
+                cookie_header = set_session_cookie(session['session_token'])
                 send_json(self, 200, {
                     "success": True,
                     "message": "User profile created/updated successfully",
                     "user": _build_user_response(user),
-                    "session_token": session['session_token'],
+                    "session_token": session['session_token'],  # keep for Bearer callers
                     "csrf_token": csrf_token,
                     "expires_at": session['expires_at'].isoformat() if hasattr(session['expires_at'], 'isoformat') else str(session['expires_at']),
                     "database_saved": True,
-                })
+                }, extra_headers={"Set-Cookie": cookie_header})
 
             except Exception:
                 # Graceful degradation if database fails — user still authenticated via Google
@@ -158,16 +159,13 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 429, {"error": "Too many requests"})
             return
 
-        auth_header = self.headers.get('Authorization', '')
-        if not auth_header.startswith('Bearer '):
-            send_json(self, 401, {"error": "Missing session token"})
-            return
+        _, session_token = authenticate_request(self)
+        if session_token:
+            try:
+                Session.revoke(session_token)
+            except Exception:
+                pass  # Don't fail logout if DB is unreachable
 
-        session_token = auth_header[7:]
-
-        try:
-            Session.revoke(session_token)
-        except Exception:
-            pass  # Don't fail logout if DB is unreachable
-
-        send_json(self, 200, {"success": True, "message": "Logged out"})
+        cookie_header = set_session_cookie('', clear=True)
+        send_json(self, 200, {"success": True, "message": "Logged out"},
+                  extra_headers={"Set-Cookie": cookie_header})

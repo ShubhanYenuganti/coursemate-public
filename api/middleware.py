@@ -16,19 +16,22 @@ def get_cors_headers():
     origin = os.environ.get('ALLOWED_ORIGIN', 'http://localhost:5173')
     return {
         "Access-Control-Allow-Origin": origin,
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization, X-CSRF-Token",
         "Access-Control-Allow-Credentials": "true",
     }
 
 
-def send_json(handler, status_code, body):
+def send_json(handler, status_code, body, extra_headers=None):
     """Send a JSON response with CORS headers."""
     payload = json.dumps(body, default=str).encode("utf-8")
     handler.send_response(status_code)
     handler.send_header("Content-Type", "application/json")
     for key, value in get_cors_headers().items():
         handler.send_header(key, value)
+    if extra_headers:
+        for key, value in extra_headers.items():
+            handler.send_header(key, value)
     handler.end_headers()
     handler.wfile.write(payload)
 
@@ -99,17 +102,50 @@ def verify_csrf_token(handler, session_token):
     return hmac.compare_digest(provided, expected)
 
 
+def _parse_cookie(cookie_header, name):
+    """Extract a named value from a Cookie header string."""
+    for part in cookie_header.split(';'):
+        part = part.strip()
+        if part.startswith(name + '='):
+            return part[len(name) + 1:].strip()
+    return None
+
+
+def set_session_cookie(token, clear=False):
+    """Build a Set-Cookie header value for the session cookie.
+
+    Uses VERCEL_ENV to determine cookie attributes:
+    - production/preview: Secure; SameSite=Strict
+    - development/local: SameSite=Lax (no Secure, works over HTTP)
+    """
+    is_https = os.environ.get('VERCEL_ENV') in ('production', 'preview')
+    max_age = 0 if clear else 86400
+    value = '' if clear else token
+    attrs = [f"cm_session={value}", "HttpOnly", f"Max-Age={max_age}", "Path=/"]
+    if is_https:
+        attrs += ["Secure", "SameSite=Strict"]
+    else:
+        attrs.append("SameSite=Lax")
+    return "; ".join(attrs)
+
+
 # --- Session Authentication ---
 
 def authenticate_request(handler):
     """
-    Extract and validate session token from Authorization header.
-    Returns google_id if valid, None otherwise.
+    Extract and validate session token from HttpOnly cookie (primary) or
+    Authorization: Bearer header (fallback for non-browser callers like Lambda).
+    Returns (google_id, session_token) tuple, or (None, None) if invalid.
     """
-    auth_header = handler.headers.get('Authorization', '')
-    if not auth_header.startswith('Bearer '):
+    # Primary: HttpOnly cookie
+    session_token = _parse_cookie(handler.headers.get('Cookie', ''), 'cm_session')
+    # Fallback: Authorization: Bearer (for Lambda, scripts, Postman)
+    if not session_token:
+        auth_header = handler.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            session_token = auth_header[7:]
+    if not session_token:
         return None, None
-    session_token = auth_header[7:]
     from .db import get_db
     with get_db() as conn:
         cursor = conn.cursor()

@@ -163,7 +163,7 @@ const MODEL_LABELS = { gemini: 'Gemini', openai: 'GPT', claude: 'Claude' };
 
 // ─── Quiz component ───────────────────────────────────────────────────────────
 
-export default function Quiz({ course, sessionToken, onAddSource }) {
+export default function Quiz({ course, onAddSource }) {
   const [materials, setMaterials] = useState([]);
   const [selectedSources, setSelectedSources] = useState(new Set());
   const [selectAll, setSelectAll] = useState(true);
@@ -227,21 +227,20 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   }, [selectAll, selectedSources, course?.id]);
 
   useEffect(() => {
-    if (!course?.id || !sessionToken) return;
+    if (!course?.id) return;
     setMaterialsLoading(true);
     fetch(`/api/material?course_id=${course.id}`, {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     })
       .then((r) => r.json())
       .then((data) => setMaterials(Array.isArray(data) ? data : (data.materials || [])))
       .catch(() => {})
       .finally(() => setMaterialsLoading(false));
-  }, [course?.id, sessionToken]);
+  }, [course?.id]);
 
   useEffect(() => {
-    if (!sessionToken) return;
     fetch('/api/user?resource=api_keys', {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     })
       .then((r) => r.json())
       .then((data) => {
@@ -260,7 +259,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
         setSelectedModelId(modelId);
       })
       .catch(() => {});
-  }, [sessionToken]);
+  }, []);
 
   useEffect(() => {
     if (!providerDropdownOpen) return;
@@ -276,11 +275,11 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   // Load generation history for the current course.
   // Also resumes polling for any rows that are still mid-generation (e.g. after a page refresh).
   async function loadHistory() {
-    if (!course?.id || !sessionToken) return;
+    if (!course?.id) return;
     setHistoryLoading(true);
     try {
       const r = await fetch(`/api/quiz?action=list_generations&course_id=${course.id}`, {
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: 'include',
       });
       const data = await r.json();
       const generations = Array.isArray(data?.generations) ? data.generations : [];
@@ -302,7 +301,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
     finally { setHistoryLoading(false); }
   }
 
-  useEffect(() => { loadHistory(); }, [course?.id, sessionToken]);
+  useEffect(() => { loadHistory(); }, [course?.id]);
 
   // Clear all polls when the course changes or component unmounts.
   useEffect(() => {
@@ -327,7 +326,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
     pollTimersRef.current[genId] = setInterval(async () => {
       try {
         const r = await fetch(`/api/quiz?action=get_generation_status&generation_id=${genId}`, {
-          headers: { Authorization: `Bearer ${sessionToken}` },
+          credentials: 'include',
         });
         if (!r.ok) return;
         const data = await r.json().catch(() => null);
@@ -351,7 +350,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
         // Network hiccup — keep polling.
       }
     }, 5000);
-  }, [sessionToken, stopPolling]);
+  }, [stopPolling]);
 
   // Fire generate (from draft or confirm) and begin polling after server ack.
   const triggerGeneration = useCallback(async (genId, parentId = null, provider = null, modelId = null) => {
@@ -361,7 +360,8 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
     try {
       const res = await fetch('/api/quiz', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(body),
         // Helps the request continue during quick route changes / refresh.
         keepalive: true,
@@ -392,12 +392,12 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
       loadHistory();
       return false;
     }
-  }, [sessionToken, startPolling, stopPolling]);
+  }, [startPolling, stopPolling]);
 
   async function reopenFromHistory(gen) {
     if (!gen) return;
     const res = await fetch(`/api/quiz?action=get_generation&generation_id=${gen.generation_id}`, {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     });
     const data = await res.json().catch(() => null);
     if (data?.generation_id) {
@@ -511,9 +511,9 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
       const res = await fetch('/api/quiz', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'estimate',
           course_id: course?.id,
@@ -590,7 +590,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
     setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== genId));
     fetch(`/api/quiz?generation_id=${genId}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     }).catch(() => {});
   }
 
@@ -599,7 +599,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
     setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== genId));
     await fetch(`/api/quiz?generation_id=${genId}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      credentials: 'include',
     }).catch(() => {});
   }
 
@@ -610,7 +610,6 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
           quiz={quizData}
           generationId={generationId}
           parentGenerationId={parentGenerationId}
-          sessionToken={sessionToken}
           onClose={() => {
             setQuizData(null);
             setGenerationId(null);

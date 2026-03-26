@@ -501,7 +501,7 @@ function FilterBar({ ownerFilter, setOwnerFilter, typeFilter, setTypeFilter }) {
 
 // ─── main component ───────────────────────────────────────────────────────────
 
-export default function MaterialsPage({ courseId, sessionToken, userId }) {
+export default function MaterialsPage({ courseId, userId }) {
   const [materials, setMaterials]       = useState([]);
   const [loadingMats, setLoadingMats]   = useState(true);
   const [stagingItems, setStagingItems] = useState([]);
@@ -514,7 +514,7 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
     setLoadingMats(true);
     try {
       const res = await fetch(`/api/material?course_id=${courseId}`, {
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: 'include',
       });
       const data = await res.json();
       setMaterials(data.materials || []);
@@ -523,7 +523,7 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
     } finally {
       setLoadingMats(false);
     }
-  }, [courseId, sessionToken]);
+  }, [courseId]);
 
   useEffect(() => { fetchMaterials(); }, [fetchMaterials]);
 
@@ -548,7 +548,8 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
       // 1. Request presigned URL
       const r1 = await fetch('/api/material', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'request_upload',
           course_id: courseId,
@@ -570,7 +571,8 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
       // 3. Confirm upload — creates DB record (loading banner stops here)
       const r3 = await fetch('/api/material', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'confirm_upload',
           s3_key,
@@ -588,7 +590,7 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
     } catch (e) {
       update({ status: 'error', error: e.message });
     }
-  }, [courseId, sessionToken]);
+  }, [courseId]);
 
   // ── stage files (no upload yet) ──────────────────────────────────────────
   const handleFiles = useCallback((files) => {
@@ -637,7 +639,8 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
     try {
       await fetch('/api/material', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'update_visibility',
           material_id: item.materialId,
@@ -653,7 +656,7 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
     } finally {
       setUploadItems(prev => prev.map(i => i.id === id ? { ...i, visibilityUpdating: false } : i));
     }
-  }, [uploadItems, sessionToken]);
+  }, [uploadItems]);
 
   // ── visibility toggle for existing materials ──────────────────────────────
   const handleMaterialVisibility = useCallback(async (materialId, isPublic) => {
@@ -662,7 +665,8 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
     try {
       await fetch('/api/material', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'update_visibility',
           material_id: materialId,
@@ -676,21 +680,22 @@ export default function MaterialsPage({ courseId, sessionToken, userId }) {
     } finally {
       setMaterials(prev => prev.map(m => m.id === materialId ? { ...m, updating: false } : m));
     }
-  }, [sessionToken]);
+  }, []);
 
   // ── delete material ──────────────────────────────────────────────────────
   const handleDelete = useCallback(async (materialId) => {
     try {
       await fetch('/api/material', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ material_id: materialId, course_id: courseId }),
       });
       setMaterials(prev => prev.filter(m => m.id !== materialId));
     } catch {
       // ignore
     }
-  }, [courseId, sessionToken]);
+  }, [courseId]);
 
   const dismissItem = (id) => setUploadItems(prev => prev.filter(i => i.id !== id));
 

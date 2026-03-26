@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import QuizViewer from './QuizViewer';
 import GenerationConfirmModal from './components/GenerationConfirmModal.jsx';
@@ -63,19 +63,12 @@ function ToolbarItem({ icon, label, onClick }) {
   );
 }
 
-export default function QuizViewerRoute({ sessionToken }) {
+export default function QuizViewerRoute() {
   const navigate = useNavigate();
   const params = useParams();
 
   const courseId = params?.id;
   const routeGenerationId = params?.generationId;
-
-  const authHeaders = useMemo(
-    () => ({
-      Authorization: `Bearer ${sessionToken}`,
-    }),
-    [sessionToken]
-  );
 
   const [quiz, setQuiz] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -91,12 +84,12 @@ export default function QuizViewerRoute({ sessionToken }) {
 
   useEffect(() => {
     async function load() {
-      if (!sessionToken || !routeGenerationId) return;
+      if (!routeGenerationId) return;
       setLoading(true);
       setLoadError('');
       try {
         const res = await fetch(`/api/quiz?action=get_generation&generation_id=${routeGenerationId}`, {
-          headers: authHeaders,
+          credentials: 'include',
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -112,12 +105,11 @@ export default function QuizViewerRoute({ sessionToken }) {
     }
 
     load();
-  }, [sessionToken, routeGenerationId, authHeaders]);
+  }, [routeGenerationId]);
 
   useEffect(() => {
-    if (!sessionToken) return;
     fetch('/api/user?resource=api_keys', {
-      headers: authHeaders,
+      credentials: 'include',
     })
       .then((r) => r.json())
       .then((data) => {
@@ -127,16 +119,17 @@ export default function QuizViewerRoute({ sessionToken }) {
         setAvailableProviders(providers);
       })
       .catch(() => {});
-  }, [sessionToken, authHeaders]);
+  }, []);
 
   async function handleRegenerate() {
-    if (!quiz || !courseId || !sessionToken || estimating) return;
+    if (!quiz || !courseId || estimating) return;
     setEstimating(true);
     try {
       const materialIds = Array.isArray(quiz.selected_material_ids) ? quiz.selected_material_ids : [];
       const res = await fetch('/api/quiz', {
         method: 'POST',
-        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'estimate',
           course_id: quiz.course_id || Number(courseId),
@@ -170,7 +163,8 @@ export default function QuizViewerRoute({ sessionToken }) {
     if (modelId) body.model_id = modelId;
     const res = await fetch('/api/quiz', {
       method: 'POST',
-      headers: { ...authHeaders, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
@@ -184,11 +178,11 @@ export default function QuizViewerRoute({ sessionToken }) {
   }
 
   useEffect(() => {
-    if (!regeneratingId || !sessionToken) return;
+    if (!regeneratingId) return;
     const timer = setInterval(async () => {
       try {
         const r = await fetch(`/api/quiz?action=get_generation_status&generation_id=${regeneratingId}`, {
-          headers: authHeaders,
+          credentials: 'include',
         });
         if (!r.ok) return;
         const statusData = await r.json().catch(() => null);
@@ -197,7 +191,7 @@ export default function QuizViewerRoute({ sessionToken }) {
           clearInterval(timer);
           setRegeneratingId(null);
           const full = await fetch(`/api/quiz?action=get_generation&generation_id=${regeneratingId}`, {
-            headers: authHeaders,
+            credentials: 'include',
           });
           const payload = await full.json().catch(() => null);
           if (full.ok && payload?.generation_id) {
@@ -215,7 +209,7 @@ export default function QuizViewerRoute({ sessionToken }) {
       }
     }, 5000);
     return () => clearInterval(timer);
-  }, [regeneratingId, authHeaders, sessionToken]);
+  }, [regeneratingId]);
 
   function handleResolve(resolution, revertPayload) {
     if (resolution === 'revert' && revertPayload) {
@@ -261,7 +255,6 @@ export default function QuizViewerRoute({ sessionToken }) {
         quiz={quiz}
         generationId={generationId}
         parentGenerationId={parentGenerationId}
-        sessionToken={sessionToken}
         onClose={() => navigate(`/course/${courseId}`)}
         onRegenerate={handleRegenerate}
         onResolve={handleResolve}
@@ -276,7 +269,7 @@ export default function QuizViewerRoute({ sessionToken }) {
             if (genId) {
               fetch(`/api/quiz?generation_id=${genId}`, {
                 method: 'DELETE',
-                headers: authHeaders,
+                credentials: 'include',
               }).catch(() => {});
             }
           }}

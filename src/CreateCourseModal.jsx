@@ -16,7 +16,7 @@ function NotebookIcon() {
   );
 }
 
-const CreateCourseModal = forwardRef(function CreateCourseModal({ sessionToken }, ref) {
+const CreateCourseModal = forwardRef(function CreateCourseModal(_, ref) {
   const navigate = useNavigate();
   const [showModal, setShowModal] = useState(false);
   const [title, setTitle] = useState("");
@@ -56,8 +56,8 @@ const CreateCourseModal = forwardRef(function CreateCourseModal({ sessionToken }
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
         },
+        credentials: "include",
         body: JSON.stringify({ title: title.trim(), description: description.trim() || undefined }),
       });
 

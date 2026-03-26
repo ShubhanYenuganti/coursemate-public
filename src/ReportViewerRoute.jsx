@@ -1,18 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import ReportsViewer from './ReportsViewer.jsx';
 
-export default function ReportViewerRoute({ sessionToken }) {
+export default function ReportViewerRoute() {
   const navigate = useNavigate();
   const params = useParams();
 
   const courseId = params?.id;
   const routeGenerationId = params?.generationId;
-
-  const authHeaders = useMemo(
-    () => ({ Authorization: `Bearer ${sessionToken}` }),
-    [sessionToken]
-  );
 
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -20,12 +15,12 @@ export default function ReportViewerRoute({ sessionToken }) {
 
   useEffect(() => {
     async function load() {
-      if (!sessionToken || !routeGenerationId) return;
+      if (!routeGenerationId) return;
       setLoading(true);
       setLoadError('');
       try {
         const res = await fetch(`/api/reports?action=get_generation&generation_id=${routeGenerationId}`, {
-          headers: authHeaders,
+          credentials: 'include',
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -38,7 +33,7 @@ export default function ReportViewerRoute({ sessionToken }) {
     }
 
     load();
-  }, [sessionToken, routeGenerationId, authHeaders]);
+  }, [routeGenerationId]);
 
   if (loading) {
     return (
@@ -67,7 +62,6 @@ export default function ReportViewerRoute({ sessionToken }) {
     <ReportsViewer
       report={report}
       course={{ id: Number(courseId), name: report.title || 'Report' }}
-      sessionToken={sessionToken}
       templateLabel={report.template_label || report.template || 'Report'}
       onClose={() => navigate(`/course/${courseId}`)}
       onRegenerate={() => navigate(`/course/${courseId}`)}

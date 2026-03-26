@@ -416,7 +416,6 @@ function MarkdownDocument({ text, zoom }) {
 export default function ReportsViewer({
   report,
   course,
-  sessionToken,
   sourceMaterials = [],
   templateLabel = 'Study Guide',
   generationError = '',
@@ -486,11 +485,6 @@ export default function ReportsViewer({
 
   async function handleSave() {
     if (!generationId || saveStatus === 'saving' || saveStatus === 'saved') return;
-    if (!sessionToken) {
-      setSaveError('Missing session token');
-      setSaveStatus('error');
-      return;
-    }
 
     setSaveStatus('saving');
     setSaveError('');
@@ -498,9 +492,9 @@ export default function ReportsViewer({
       const res = await fetch('/api/reports', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({ action: 'save_artifact', generation_id: generationId }),
       });
       if (res.ok) {
@@ -526,16 +520,12 @@ export default function ReportsViewer({
 
   async function handleExport() {
     if (!generationId || exportStatus === 'exporting') return;
-    if (!sessionToken) {
-      setExportStatus('error');
-      return;
-    }
 
     setExportStatus('exporting');
     try {
       const res = await fetch(`/api/reports?action=export_pdf&generation_id=${generationId}`, {
         method: 'GET',
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: 'include',
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -560,7 +550,8 @@ export default function ReportsViewer({
     try {
       const res = await fetch('/api/reports', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           action: 'resolve_regeneration',
           generation_id: generationId,

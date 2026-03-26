@@ -46,7 +46,7 @@ const TABS = [
 
 // ─── Generations ─────────────────────────────────────────────────────────────
 
-export default function Generations({ course, userData, sessionToken, onAddSource }) {
+export default function Generations({ course, userData, onAddSource }) {
   const storageKey = useMemo(
     () => `coursemate_generations_tab_${course?.id || 'global'}`,
     [course?.id]
@@ -93,13 +93,13 @@ export default function Generations({ course, userData, sessionToken, onAddSourc
 
       {/* ── Active generator ── */}
       {activeTab === 'quiz' && (
-        <Quiz course={course} sessionToken={sessionToken} onAddSource={onAddSource} />
+        <Quiz course={course} onAddSource={onAddSource} />
       )}
       {activeTab === 'flashcards' && (
-        <Flashcards course={course} sessionToken={sessionToken} onAddSource={onAddSource} />
+        <Flashcards course={course} onAddSource={onAddSource} />
       )}
       {activeTab === 'reports' && (
-        <Reports course={course} sessionToken={sessionToken} onAddSource={onAddSource} />
+        <Reports course={course} onAddSource={onAddSource} />
       )}
 
     </div>
