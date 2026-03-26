@@ -167,6 +167,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   const [selectedSources, setSelectedSources] = useState(new Set());
   const [selectAll, setSelectAll] = useState(true);
   const [materialsLoading, setMaterialsLoading] = useState(true);
+  const sourcesLoaded = useRef(false);
 
   // Quiz config
   const [topic, setTopic] = useState('');
@@ -201,6 +202,28 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
   // Polling — track which generation IDs are currently being polled.
   const [generatingIds, setGeneratingIds] = useState(new Set());
   const pollTimersRef = useRef({});
+
+  // ── selected sources persistence ───────────────────────────────────────────
+
+  useEffect(() => {
+    if (!course?.id) return;
+    sourcesLoaded.current = false;
+    const key = `sources_quiz_${course.id}`;
+    try {
+      const saved = JSON.parse(localStorage.getItem(key));
+      if (saved) {
+        setSelectAll(saved.selectAll ?? true);
+        setSelectedSources(new Set(saved.ids ?? []));
+      }
+    } catch {}
+    sourcesLoaded.current = true;
+  }, [course?.id]);
+
+  useEffect(() => {
+    if (!course?.id || !sourcesLoaded.current) return;
+    const key = `sources_quiz_${course.id}`;
+    localStorage.setItem(key, JSON.stringify({ selectAll, ids: Array.from(selectedSources) }));
+  }, [selectAll, selectedSources, course?.id]);
 
   useEffect(() => {
     if (!course?.id || !sessionToken) return;

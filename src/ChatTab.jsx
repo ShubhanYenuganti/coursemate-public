@@ -973,6 +973,7 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
   const [materials, setMaterials] = useState([]);
   const [selectedMaterials, setSelectedMaterials] = useState(new Set());
   const [selectAllMaterials, setSelectAllMaterials] = useState(true);
+  const sourcesLoaded = useRef(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState('');
   const [titleSaving, setTitleSaving] = useState(false);
@@ -991,6 +992,28 @@ export default function ChatTab({ course, userData, sessionToken, onAddSource })
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // ── selected sources persistence ───────────────────────────────────────────
+
+  useEffect(() => {
+    if (!course?.id) return;
+    sourcesLoaded.current = false;
+    const key = `sources_chat_${course.id}`;
+    try {
+      const saved = JSON.parse(localStorage.getItem(key));
+      if (saved) {
+        setSelectAllMaterials(saved.selectAll ?? true);
+        setSelectedMaterials(new Set(saved.ids ?? []));
+      }
+    } catch {}
+    sourcesLoaded.current = true;
+  }, [course?.id]);
+
+  useEffect(() => {
+    if (!course?.id || !sourcesLoaded.current) return;
+    const key = `sources_chat_${course.id}`;
+    localStorage.setItem(key, JSON.stringify({ selectAll: selectAllMaterials, ids: Array.from(selectedMaterials) }));
+  }, [selectAllMaterials, selectedMaterials, course?.id]);
 
   // Load materials for this course
   useEffect(() => {

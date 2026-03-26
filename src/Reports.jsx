@@ -198,6 +198,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
   const [selectedSources, setSelectedSources] = useState(new Set());
   const [selectAll, setSelectAll] = useState(true);
   const [materialsLoading, setMaterialsLoading] = useState(true);
+  const sourcesLoaded = useRef(false);
 
   const [template, setTemplate] = useState('study-guide');
   const [customPrompt, setCustomPrompt] = useState('');
@@ -230,6 +231,28 @@ export default function Reports({ course, sessionToken, onAddSource }) {
   useEffect(() => {
     generatingIdsRef.current = generatingIds;
   }, [generatingIds]);
+
+  // ── selected sources persistence ───────────────────────────────────────────
+
+  useEffect(() => {
+    if (!course?.id) return;
+    sourcesLoaded.current = false;
+    const key = `sources_reports_${course.id}`;
+    try {
+      const saved = JSON.parse(localStorage.getItem(key));
+      if (saved) {
+        setSelectAll(saved.selectAll ?? true);
+        setSelectedSources(new Set(saved.ids ?? []));
+      }
+    } catch {}
+    sourcesLoaded.current = true;
+  }, [course?.id]);
+
+  useEffect(() => {
+    if (!course?.id || !sourcesLoaded.current) return;
+    const key = `sources_reports_${course.id}`;
+    localStorage.setItem(key, JSON.stringify({ selectAll, ids: Array.from(selectedSources) }));
+  }, [selectAll, selectedSources, course?.id]);
 
   // ── materials ──────────────────────────────────────────────────────────────
 
