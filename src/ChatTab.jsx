@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { formatDateTime, parseUTC } from './utils/dateUtils';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
@@ -290,7 +291,7 @@ function groupChatsByDate(chats) {
   const weekStart = new Date(todayStart.getTime() - 6 * 24 * 60 * 60 * 1000);
   const today = [], lastWeek = [], older = [];
   for (const chat of chats) {
-    const d = new Date(chat.last_message_at || chat.created_at);
+    const d = parseUTC(chat.last_message_at || chat.created_at);
     if (d >= todayStart) today.push(chat);
     else if (d >= weekStart) lastWeek.push(chat);
     else older.push(chat);
@@ -558,10 +559,7 @@ function MessageBubble({
   }
 
   function formatEditTime(raw) {
-    if (!raw) return '';
-    const dt = new Date(raw);
-    if (Number.isNaN(dt.getTime())) return '';
-    return dt.toLocaleString();
+    return formatDateTime(raw);
   }
 
   if (isUser) {

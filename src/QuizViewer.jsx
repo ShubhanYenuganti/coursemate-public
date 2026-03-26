@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { formatDateTime } from './utils/dateUtils';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -701,7 +702,7 @@ export default function QuizViewer({ quiz, generationId, parentGenerationId, ses
                       {score !== null ? `${score.toFixed(0)}%` : 'N/A'}
                     </p>
                     <p className="text-[11px] text-gray-400 mt-0.5">
-                      {a.submitted_at ? new Date(a.submitted_at).toLocaleString() : ''}
+                      {formatDateTime(a.submitted_at)}
                       {a.manual_review_count > 0 && <span className="ml-2 text-amber-600">· {a.manual_review_count} manual review</span>}
                     </p>
                   </div>
@@ -741,7 +742,7 @@ export default function QuizViewer({ quiz, generationId, parentGenerationId, ses
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-[11px] text-gray-400">{selectedAttempt.submitted_at ? new Date(selectedAttempt.submitted_at).toLocaleString() : ''}</p>
+                    <p className="text-[11px] text-gray-400">{formatDateTime(selectedAttempt.submitted_at)}</p>
                     {selectedAttempt.manual_review_count > 0 && (
                       <p className="text-[11px] text-amber-600 mt-0.5">{selectedAttempt.manual_review_count} question(s) need manual review</p>
                     )}

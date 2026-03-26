@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { formatDate } from './utils/dateUtils';
 
 /** Deterministic indigo/cyan/violet accent from a string */
 function cardAccent(title) {
@@ -16,14 +17,6 @@ function cardAccent(title) {
   return accents[Math.abs(hash) % accents.length];
 }
 
-function formatDate(dateStr) {
-  if (!dateStr) return null;
-  return new Date(dateStr).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
 
 function DotsIcon() {
   return (

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { formatDateTime } from './utils/dateUtils';
 import FlashcardViewer from './FlashcardViewer';
 import GenerationConfirmModal from './components/GenerationConfirmModal.jsx';
 
@@ -757,6 +758,53 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
           {activeDepth && <p className="text-xs text-gray-500">{activeDepth.description}</p>}
         </div>
 
+        {availableProviders.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-2">AI Model</label>
+            <div className="relative inline-block" ref={providerDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setProviderDropdownOpen((open) => !open)}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs text-gray-700 hover:border-indigo-400 transition-colors"
+              >
+                <span className="font-medium">{MODEL_LABELS[selectedProvider] || selectedProvider}</span>
+                <span className="text-gray-400">·</span>
+                <span>{(PROVIDER_MODELS[selectedProvider] || []).find((m) => m.id === selectedModelId)?.label || selectedModelId}</span>
+                <ChevronDownIcon />
+              </button>
+              {providerDropdownOpen && (
+                <div className="absolute z-20 mt-1 left-0 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-[220px] max-h-[280px] overflow-y-auto">
+                  {availableProviders.map((provider) => (
+                    <div key={provider}>
+                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                        {MODEL_LABELS[provider] || provider}
+                      </p>
+                      {(PROVIDER_MODELS[provider] || []).map((model) => (
+                        <button
+                          key={model.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedProvider(provider);
+                            setSelectedModelId(model.id);
+                            localStorage.setItem('flashcards_selected_provider', provider);
+                            localStorage.setItem('flashcards_selected_model_id', model.id);
+                            setProviderDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-1.5 text-xs hover:bg-indigo-50 transition-colors ${
+                            model.id === selectedModelId ? 'text-indigo-600 font-medium' : 'text-gray-700'
+                          }`}
+                        >
+                          {model.label}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="mt-1 bg-white rounded-xl border border-gray-200 p-3">
           <div className="flex items-center justify-between gap-3 mb-2">
             <p className="text-xs font-semibold text-gray-900">Generated & Drafted Flashcards</p>
@@ -794,7 +842,7 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
                     ? `${tokenLow}-${tokenHigh}`
                     : 'N/A';
 
-                const createdAt = g.created_at ? new Date(g.created_at).toLocaleString() : '';
+                const createdAt = formatDateTime(g.created_at);
 
                 return (
                   <div key={g.generation_id} className="rounded-lg border border-gray-200 p-2.5">
@@ -874,53 +922,6 @@ export default function Flashcards({ course, sessionToken, onAddSource }) {
             </div>
           )}
         </div>
-
-        {availableProviders.length > 0 && (
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-2">AI Model</label>
-            <div className="relative inline-block" ref={providerDropdownRef}>
-              <button
-                type="button"
-                onClick={() => setProviderDropdownOpen((open) => !open)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs text-gray-700 hover:border-indigo-400 transition-colors"
-              >
-                <span className="font-medium">{MODEL_LABELS[selectedProvider] || selectedProvider}</span>
-                <span className="text-gray-400">·</span>
-                <span>{(PROVIDER_MODELS[selectedProvider] || []).find((m) => m.id === selectedModelId)?.label || selectedModelId}</span>
-                <ChevronDownIcon />
-              </button>
-              {providerDropdownOpen && (
-                <div className="absolute z-20 mt-1 left-0 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-[220px] max-h-[280px] overflow-y-auto">
-                  {availableProviders.map((provider) => (
-                    <div key={provider}>
-                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-                        {MODEL_LABELS[provider] || provider}
-                      </p>
-                      {(PROVIDER_MODELS[provider] || []).map((model) => (
-                        <button
-                          key={model.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedProvider(provider);
-                            setSelectedModelId(model.id);
-                            localStorage.setItem('flashcards_selected_provider', provider);
-                            localStorage.setItem('flashcards_selected_model_id', model.id);
-                            setProviderDropdownOpen(false);
-                          }}
-                          className={`w-full text-left px-4 py-1.5 text-xs hover:bg-indigo-50 transition-colors ${
-                            model.id === selectedModelId ? 'text-indigo-600 font-medium' : 'text-gray-700'
-                          }`}
-                        >
-                          {model.label}
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
         {generateError && <p className="text-xs text-red-600">{generateError}</p>}
 

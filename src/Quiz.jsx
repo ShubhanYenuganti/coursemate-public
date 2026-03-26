@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { formatDateTime } from './utils/dateUtils';
 import QuizViewer from './QuizViewer';
 import GenerationConfirmModal from './components/GenerationConfirmModal.jsx';
 
@@ -859,7 +860,7 @@ export default function Quiz({ course, sessionToken, onAddSource }) {
                     ? `${tokenLow}-${tokenHigh}`
                     : 'N/A';
 
-                const createdAt = g.created_at ? new Date(g.created_at).toLocaleString() : '';
+                const createdAt = formatDateTime(g.created_at);
 
                 return (
                   <div key={g.generation_id} className="rounded-lg border border-gray-200 p-2.5">
