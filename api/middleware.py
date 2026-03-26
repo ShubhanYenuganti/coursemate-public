@@ -17,7 +17,7 @@ def get_cors_headers():
     return {
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-CSRF-Token",
+        "Access-Control-Allow-Headers": "Content-Type, X-CSRF-Token",
         "Access-Control-Allow-Credentials": "true",
     }
 
@@ -133,17 +133,11 @@ def set_session_cookie(token, clear=False):
 
 def authenticate_request(handler):
     """
-    Extract and validate session token from HttpOnly cookie (primary) or
-    Authorization: Bearer header (fallback for non-browser callers like Lambda).
+    Extract and validate session token from HttpOnly cookie.
     Returns (google_id, session_token) tuple, or (None, None) if invalid.
     """
     # Primary: HttpOnly cookie
     session_token = _parse_cookie(handler.headers.get('Cookie', ''), 'cm_session')
-    # Fallback: Authorization: Bearer (for Lambda, scripts, Postman)
-    if not session_token:
-        auth_header = handler.headers.get('Authorization', '')
-        if auth_header.startswith('Bearer '):
-            session_token = auth_header[7:]
     if not session_token:
         return None, None
     from .db import get_db

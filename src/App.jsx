@@ -82,6 +82,13 @@ export default function App() {
   const navigate = useNavigate();
 
   useEffect(() => {
+    // Legacy cleanup: older builds may have stored session tokens in Web Storage.
+    // Current auth uses HttpOnly cookies, so this prevents stale values from sticking around in DevTools.
+    try {
+      localStorage.removeItem("cm_session");
+      sessionStorage.removeItem("cm_session");
+    } catch {}
+
     fetch("/api/auth", { credentials: 'include' })
       .then((res) => {
         if (!res.ok) throw new Error("invalid");
@@ -137,6 +144,12 @@ export default function App() {
     } catch (e) {
       console.error("Logout API error:", e);
     }
+
+    // Legacy cleanup for older token storage.
+    try {
+      localStorage.removeItem("cm_session");
+      sessionStorage.removeItem("cm_session");
+    } catch {}
 
     setUserData(null);
     setCsrfToken(null);
