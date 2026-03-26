@@ -25,8 +25,8 @@ TIMEOUT_SECONDS = 180
 MATERIAL_CHUNK_LIMIT = 300
 CONTEXT_CHAR_BUDGET = 80_000
 TOPIC_SUMMARY_BUDGET = 2_000
-MAX_SECTIONS = 16
-MAX_PAGE_COUNT = 4
+MAX_SECTIONS = 32
+MAX_PAGE_COUNT = 8
 REPORTS_LOCK_NAMESPACE = 4101
 
 VALID_BLOCK_TYPES = frozenset(
@@ -327,7 +327,6 @@ def _call_openai_json(api_key, model_id, system, user) -> dict:
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json={
             "model": model_id,
-            "max_completion_tokens": 8192,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -356,14 +355,17 @@ def _call_claude_json(api_key, model_id, system, user) -> dict:
         },
         json={
             "model": model_id,
-            "max_tokens": 8192,
+            "max_tokens": 32000,
             "system": system,
             "messages": [{"role": "user", "content": user}],
         },
         timeout=TIMEOUT_SECONDS,
     )
     resp.raise_for_status()
-    blocks = resp.json().get("content") or []
+    body = resp.json()
+    if body.get("stop_reason") == "max_tokens":
+        raise ValueError("Model response truncated: output token limit reached")
+    blocks = body.get("content") or []
     raw = "\n".join(
         block.get("text", "")
         for block in blocks
@@ -380,7 +382,6 @@ def _call_gemini_json(api_key, model_id, system, user) -> dict:
         json={
             "system_instruction": {"parts": [{"text": system}]},
             "contents": [{"parts": [{"text": user}]}],
-            "generationConfig": {"maxOutputTokens": 8192},
         },
         timeout=TIMEOUT_SECONDS,
     )
@@ -449,6 +450,8 @@ def _sanitize_error_message(error: object) -> str:
         return "The selected AI provider is not supported for report generation."
     if "unknown template_id" in message:
         return "The selected report template is not supported."
+    if "model response truncated" in message or "output token limit reached" in message:
+        return "The report was too long for this model's output limit. Try a shorter depth or a higher-capacity model."
     if "model returned empty content" in message or "could not parse model json output" in message:
         return "The AI provider returned an invalid report payload."
     return "Report generation failed due to an internal error."
