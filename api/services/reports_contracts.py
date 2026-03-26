@@ -125,7 +125,7 @@ def normalize_report_sections(raw: dict) -> dict:
     subtitle = str(raw.get("subtitle") or "").strip()
     page_count = _safe_page_count(raw.get("page_count") or 2)
 
-    raw_sections = raw.get("sections") or []
+    raw_sections = raw.get("sections") or raw.get("sections_json") or []
     if not isinstance(raw_sections, list):
         raw_sections = []
 

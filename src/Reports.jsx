@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import ReportsViewer from './ReportsViewer';
 import GenerationConfirmModal from './components/GenerationConfirmModal.jsx';
 
@@ -17,6 +17,18 @@ function SparkleIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
       <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
     </svg>
   );
 }
@@ -199,227 +211,155 @@ export default function Reports({ course, sessionToken, onAddSource }) {
   );
 
   const [reportData, setReportData] = useState(null);
-  const [generationId, setGenerationId] = useState(null);
-  const [generationStatus, setGenerationStatus] = useState(null);
-  const [generationError, setGenerationError] = useState('');
+  const [generateError, setGenerateError] = useState('');
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [estimateData, setEstimateData] = useState(null);
   const [isEstimating, setIsEstimating] = useState(false);
   const [isQueueing, setIsQueueing] = useState(false);
-  const pollingTimeoutRef = useRef(null);
-  const pollingAbortRef = useRef(null);
-  const pollingSessionRef = useRef(0);
-  const activePollGenerationRef = useRef(null);
-  const generationStatusRef = useRef(null);
   const [availableProviders, setAvailableProviders] = useState([]);
+
+  // ── multi-generation polling (mirrors Flashcards pattern) ──────────────────
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyGenerations, setHistoryGenerations] = useState([]);
+  const [generatingIds, setGeneratingIds] = useState(new Set());
+  const generatingIdsRef = useRef(new Set());
+  const pollTimersRef = useRef({});
 
   const authHeaders = { Authorization: `Bearer ${sessionToken}` };
   const activeTemplate = TEMPLATES.find((t) => t.id === template);
   const isCustom = activeTemplate?.customPrompt;
-  const generationInProgress = generationStatus === 'queued' || generationStatus === 'generating';
+
+  useEffect(() => {
+    generatingIdsRef.current = generatingIds;
+  }, [generatingIds]);
+
+  // ── materials ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!course?.id || !sessionToken) return;
     setMaterialsLoading(true);
-    fetch(`/api/material?course_id=${course.id}`, {
-      headers: authHeaders,
-    })
+    fetch(`/api/material?course_id=${course.id}`, { headers: authHeaders })
       .then((r) => r.json())
       .then((data) => setMaterials(Array.isArray(data) ? data : (data.materials || [])))
       .catch(() => {})
       .finally(() => setMaterialsLoading(false));
-  }, [course?.id, sessionToken]);
-
-  useEffect(() => {
-    generationStatusRef.current = generationStatus;
-  }, [generationStatus]);
-
-  useEffect(() => {
-    stopPolling();
-    setGenerationId(null);
-    setGenerationStatus(null);
-    if (!course?.id || !sessionToken) return;
-    loadHistory();
-    loadAvailableProviders();
-    return () => stopPolling();
   }, [course?.id, sessionToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function loadAvailableProviders() {
+  // ── available providers ────────────────────────────────────────────────────
+
+  useEffect(() => {
     if (!sessionToken) return;
-    try {
-      const res = await fetch('/api/user?resource=api_keys', { headers: authHeaders });
-      const data = await res.json();
-      const providers = Object.entries(data || {})
-        .filter(([, has]) => has)
-        .map(([provider]) => provider);
-      setAvailableProviders(providers);
+    fetch('/api/user?resource=api_keys', { headers: authHeaders })
+      .then((r) => r.json())
+      .then((data) => {
+        const available = Object.entries(data || {})
+          .filter(([, has]) => has)
+          .map(([provider]) => provider);
+        setAvailableProviders(available);
 
-      const savedProvider = localStorage.getItem('reports_selected_provider');
-      const provider = providers.includes(savedProvider) ? savedProvider : (providers[0] || 'openai');
-      const savedModelId = localStorage.getItem('reports_selected_model_id');
-      const modelList = PROVIDER_MODELS[provider] || [];
-      const modelId = modelList.find((model) => model.id === savedModelId)?.id || modelList[0]?.id || null;
+        const savedProvider = localStorage.getItem('reports_selected_provider');
+        const provider = available.includes(savedProvider) ? savedProvider : (available[0] || 'openai');
+        const savedModelId = localStorage.getItem('reports_selected_model_id');
+        const modelList = PROVIDER_MODELS[provider] || [];
+        const modelId = modelList.find((m) => m.id === savedModelId)?.id || modelList[0]?.id || null;
 
-      setSelectedProvider(provider);
-      setSelectedModelId(modelId);
-    } catch {
-      // non-fatal
+        setSelectedProvider(provider);
+        setSelectedModelId(modelId);
+      })
+      .catch(() => {});
+  }, [sessionToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── polling helpers ────────────────────────────────────────────────────────
+
+  const stopPolling = useCallback((genId) => {
+    if (pollTimersRef.current[genId]) {
+      clearInterval(pollTimersRef.current[genId]);
+      delete pollTimersRef.current[genId];
     }
-  }
+    setGeneratingIds((prev) => {
+      const n = new Set(prev);
+      n.delete(genId);
+      return n;
+    });
+  }, []);
 
-  async function loadHistory() {
+  const loadHistory = useCallback(async () => {
     if (!course?.id || !sessionToken) return;
+    setHistoryLoading(true);
     try {
-      const res = await fetch(`/api/reports?action=list_generations&course_id=${course.id}`, {
-        headers: authHeaders,
-      });
-      const data = await res.json().catch(() => ({}));
-      const generations = Array.isArray(data?.generations) ? data.generations : [];
-      const locallyTrackedGenerationId = activePollGenerationRef.current;
-      const normalizedGenerations = generations.map((generation) => {
-        if (
-          locallyTrackedGenerationId &&
-          String(generation.generation_id) === String(locallyTrackedGenerationId) &&
-          generation.status === 'draft'
-        ) {
-          return {
-            ...generation,
-            status: generationStatusRef.current === 'queued' ? 'queued' : 'generating',
-          };
-        }
-        return generation;
-      });
-
-      const inflight = normalizedGenerations.find(
-        (generation) => generation.status === 'queued' || generation.status === 'generating'
+      const r = await fetch(
+        `/api/reports?action=list_generations&course_id=${course.id}`,
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
       );
-      if (inflight) {
-        setGenerationId(inflight.generation_id);
-        setGenerationStatus(inflight.status);
-        startPolling(inflight.generation_id);
-      } else if (
-        locallyTrackedGenerationId &&
-        (generationStatusRef.current === 'queued' || generationStatusRef.current === 'generating')
-      ) {
-        startPolling(locallyTrackedGenerationId);
-      }
+      const data = await r.json();
+      const generations = Array.isArray(data?.generations) ? data.generations : [];
+
+      // Prevent stale "draft" status for generations we're actively tracking
+      const locallyGenerating = new Set([
+        ...Array.from(generatingIdsRef.current, (id) => String(id)),
+        ...Object.keys(pollTimersRef.current),
+      ]);
+      const normalized = generations.map((g) => (
+        locallyGenerating.has(String(g.generation_id)) && g.status === 'draft'
+          ? { ...g, status: 'generating' }
+          : g
+      ));
+      setHistoryGenerations(normalized);
+
+      // Auto-start polls for any in-flight generation not yet tracked
+      normalized.forEach((g) => {
+        if (g.status === 'queued' || g.status === 'generating') {
+          if (!pollTimersRef.current[g.generation_id]) {
+            setGeneratingIds((prev) => new Set([...prev, g.generation_id]));
+            pollTimersRef.current[g.generation_id] = setInterval(async () => {
+              try {
+                const rr = await fetch(
+                  `/api/reports?action=get_generation_status&generation_id=${g.generation_id}`,
+                  { headers: { Authorization: `Bearer ${sessionToken}` } },
+                );
+                if (!rr.ok) return;
+                const sd = await rr.json().catch(() => null);
+                if (!sd) return;
+                if (sd.status === 'ready') {
+                  stopPolling(g.generation_id);
+                  setHistoryGenerations((prev) =>
+                    prev.map((x) => x.generation_id === g.generation_id ? { ...x, status: 'ready' } : x)
+                  );
+                  loadHistory();
+                } else if (sd.status === 'failed') {
+                  stopPolling(g.generation_id);
+                  setHistoryGenerations((prev) =>
+                    prev.map((x) => x.generation_id === g.generation_id ? { ...x, status: 'failed', error: sd.error } : x)
+                  );
+                  if (sd.error) setGenerateError(`Generation failed: ${sd.error}`);
+                }
+              } catch {
+                // retry on next interval
+              }
+            }, 5000);
+          }
+        }
+      });
     } catch {
       // non-fatal
+    } finally {
+      setHistoryLoading(false);
     }
-  }
+  }, [course?.id, sessionToken, stopPolling]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function stopPolling() {
-    pollingSessionRef.current += 1;
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
 
-    if (pollingTimeoutRef.current) {
-      clearTimeout(pollingTimeoutRef.current);
-      pollingTimeoutRef.current = null;
-    }
-
-    if (pollingAbortRef.current) {
-      pollingAbortRef.current.abort();
-      pollingAbortRef.current = null;
-    }
-
-    activePollGenerationRef.current = null;
-  }
-
-  function startPolling(genId) {
-    if (!genId) return;
-    if (activePollGenerationRef.current === genId && (pollingTimeoutRef.current || pollingAbortRef.current)) {
-      return;
-    }
-
-    stopPolling();
-    const pollingSessionId = pollingSessionRef.current;
-    activePollGenerationRef.current = genId;
-    setGenerationId(genId);
-    setGenerationStatus((prev) => (
-      prev === 'queued' || prev === 'generating' ? prev : 'queued'
-    ));
-
-    const scheduleNextPoll = () => {
-      if (
-        pollingSessionRef.current !== pollingSessionId ||
-        activePollGenerationRef.current !== genId
-      ) {
-        return;
-      }
-      pollingTimeoutRef.current = setTimeout(runPoll, 3000);
+  // Clear all poll timers when course changes
+  useEffect(() => {
+    return () => {
+      Object.values(pollTimersRef.current).forEach(clearInterval);
+      pollTimersRef.current = {};
     };
+  }, [course?.id]);
 
-    const runPoll = async () => {
-      try {
-        const statusController = new AbortController();
-        pollingAbortRef.current = statusController;
-        const res = await fetch(
-          `/api/reports?action=get_generation_status&generation_id=${genId}`,
-          { headers: authHeaders, signal: statusController.signal },
-        );
-        if (pollingAbortRef.current === statusController) {
-          pollingAbortRef.current = null;
-        }
-        const data = await res.json().catch(() => null);
-        if (
-          pollingSessionRef.current !== pollingSessionId ||
-          activePollGenerationRef.current !== genId
-        ) {
-          return;
-        }
-        if (!res.ok || !data) {
-          scheduleNextPoll();
-          return;
-        }
-
-        const normalizedStatus = (
-          data.status === 'draft' && activePollGenerationRef.current === genId
-            ? (generationStatusRef.current === 'queued' ? 'queued' : 'generating')
-            : data.status
-        );
-        setGenerationStatus(normalizedStatus);
-
-        if (normalizedStatus === 'ready') {
-          const viewController = new AbortController();
-          pollingAbortRef.current = viewController;
-          const viewRes = await fetch(
-            `/api/reports?action=get_generation&generation_id=${genId}`,
-            { headers: authHeaders, signal: viewController.signal },
-          );
-          if (pollingAbortRef.current === viewController) {
-            pollingAbortRef.current = null;
-          }
-          const viewData = await viewRes.json().catch(() => null);
-          if (!viewRes.ok || !viewData) {
-            setGenerationError('Report finished but could not be loaded.');
-            setGenerationStatus(null);
-            setGenerationId(null);
-            activePollGenerationRef.current = null;
-            await loadHistory();
-            return;
-          }
-          setReportData(viewData);
-          setEstimateData(null);
-          setGenerationStatus(null);
-          setGenerationId(null);
-          activePollGenerationRef.current = null;
-          await loadHistory();
-        } else if (normalizedStatus === 'failed') {
-          setGenerationError(data.error || 'Generation failed.');
-          setGenerationStatus(null);
-          setGenerationId(null);
-          activePollGenerationRef.current = null;
-          await loadHistory();
-        } else {
-          scheduleNextPoll();
-        }
-      } catch (error) {
-        if (error?.name === 'AbortError') return;
-        scheduleNextPoll();
-      }
-    };
-
-    runPoll();
-  }
+  // ── source selection ───────────────────────────────────────────────────────
 
   function isSourceSelected(id) {
     return selectAll || selectedSources.has(id);
@@ -450,22 +390,19 @@ export default function Reports({ course, sessionToken, onAddSource }) {
 
   const selectedCount = selectAll ? materials.length : selectedSources.size;
 
+  // ── estimate → confirm → generate ─────────────────────────────────────────
+
   async function handleEstimate({ parent_generation_id: parentGenerationId } = {}) {
     if (isEstimating) return false;
-    setGenerationError('');
+    setGenerateError('');
     setIsEstimating(true);
     try {
-      const materialIds = selectAll
-        ? materials.map((m) => m.id)
-        : Array.from(selectedSources);
+      const materialIds = selectAll ? materials.map((m) => m.id) : Array.from(selectedSources);
       const providerToUse = selectedProvider || 'openai';
       const modelIdToUse = selectedModelId || PROVIDER_MODELS[providerToUse]?.[0]?.id || 'gpt-4o-mini';
       const res = await fetch('/api/reports', {
         method: 'POST',
-        headers: {
-          ...authHeaders,
-          'Content-Type': 'application/json',
-        },
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'estimate',
           course_id: course?.id,
@@ -478,9 +415,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       setEstimateData({
         ...data,
         provider: data.provider || providerToUse,
@@ -490,7 +425,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
       loadHistory();
       return true;
     } catch (error) {
-      setGenerationError(error?.message || 'Estimate failed. Please try again.');
+      setGenerateError(error?.message || 'Estimate failed. Please try again.');
       return false;
     } finally {
       setIsEstimating(false);
@@ -499,17 +434,14 @@ export default function Reports({ course, sessionToken, onAddSource }) {
 
   async function handleConfirmGenerate({ provider, model_id: modelId } = {}) {
     if (!estimateData?.generation_id || isQueueing) return;
-    setGenerationError('');
+    setGenerateError('');
     setIsQueueing(true);
     try {
       const providerToUse = provider || selectedProvider || 'openai';
       const modelIdToUse = modelId || selectedModelId || PROVIDER_MODELS[providerToUse]?.[0]?.id || 'gpt-4o-mini';
       const res = await fetch('/api/reports', {
         method: 'POST',
-        headers: {
-          ...authHeaders,
-          'Content-Type': 'application/json',
-        },
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
         keepalive: true,
         body: JSON.stringify({
           action: 'generate',
@@ -519,31 +451,97 @@ export default function Reports({ course, sessionToken, onAddSource }) {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.status !== 202 && !res.ok) {
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
+      if (res.status !== 202 && !res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
       setSelectedProvider(providerToUse);
       setSelectedModelId(modelIdToUse);
       localStorage.setItem('reports_selected_provider', providerToUse);
       localStorage.setItem('reports_selected_model_id', modelIdToUse);
 
-      activePollGenerationRef.current = estimateData.generation_id;
-      setGenerationId(estimateData.generation_id);
-      setGenerationStatus(data.status || 'queued');
+      const genId = estimateData.generation_id;
+      const nextStatus = data.status || 'queued';
+
+      // Update history row immediately
+      setHistoryGenerations((prev) =>
+        prev.map((g) => g.generation_id === genId ? { ...g, status: nextStatus } : g)
+      );
+
+      // Start per-generation poll
+      if (nextStatus === 'queued' || nextStatus === 'generating') {
+        if (!pollTimersRef.current[genId]) {
+          setGeneratingIds((prev) => new Set([...prev, genId]));
+          pollTimersRef.current[genId] = setInterval(async () => {
+            try {
+              const rr = await fetch(
+                `/api/reports?action=get_generation_status&generation_id=${genId}`,
+                { headers: authHeaders },
+              );
+              if (!rr.ok) return;
+              const sd = await rr.json().catch(() => null);
+              if (!sd) return;
+              if (sd.status === 'ready') {
+                stopPolling(genId);
+                setHistoryGenerations((prev) =>
+                  prev.map((x) => x.generation_id === genId ? { ...x, status: 'ready' } : x)
+                );
+                loadHistory();
+              } else if (sd.status === 'failed') {
+                stopPolling(genId);
+                setHistoryGenerations((prev) =>
+                  prev.map((x) => x.generation_id === genId ? { ...x, status: 'failed', error: sd.error } : x)
+                );
+                if (sd.error) setGenerateError(`Generation failed: ${sd.error}`);
+              }
+            } catch {
+              // retry on next interval
+            }
+          }, 5000);
+        }
+      }
+
       setShowConfirmModal(false);
-      startPolling(estimateData.generation_id);
-      loadHistory();
+      setEstimateData(null);
     } catch (error) {
-      setGenerationError(error?.message || 'Failed to queue generation.');
+      setGenerateError(error?.message || 'Failed to queue generation.');
     } finally {
       setIsQueueing(false);
     }
   }
 
   function handleCancelConfirm() {
+    const genId = estimateData?.generation_id;
     setShowConfirmModal(false);
     setEstimateData(null);
+    if (!genId) return;
+    // Remove the draft from history and delete it server-side
+    setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== genId));
+    fetch(`/api/reports?generation_id=${genId}`, {
+      method: 'DELETE',
+      headers: authHeaders,
+    }).catch(() => {});
+  }
+
+  // ── history actions ────────────────────────────────────────────────────────
+
+  async function reopenFromHistory(gen) {
+    if (!gen) return;
+    const res = await fetch(
+      `/api/reports?action=get_generation&generation_id=${gen.generation_id}`,
+      { headers: authHeaders },
+    );
+    const data = await res.json().catch(() => null);
+    if (data?.generation_id) {
+      setReportData(data);
+    }
+  }
+
+  async function deleteGeneration(genId) {
+    stopPolling(genId);
+    setHistoryGenerations((prev) => prev.filter((g) => g.generation_id !== genId));
+    await fetch(`/api/reports?generation_id=${genId}`, {
+      method: 'DELETE',
+      headers: authHeaders,
+    }).catch(() => {});
   }
 
   function handleReportSaveComplete({ generation_id: savedGenerationId, artifact_material_id: artifactMaterialId } = {}) {
@@ -552,8 +550,15 @@ export default function Reports({ course, sessionToken, onAddSource }) {
       if (!prev || String(prev.generation_id) !== String(savedGenerationId)) return prev;
       return { ...prev, artifact_material_id: artifactMaterialId };
     });
-    loadHistory();
+    setHistoryGenerations((prev) =>
+      prev.map((g) => String(g.generation_id) === String(savedGenerationId)
+        ? { ...g, artifact_material_id: artifactMaterialId }
+        : g
+      )
+    );
   }
+
+  // ── viewer ─────────────────────────────────────────────────────────────────
 
   if (reportData) {
     const reportTemplate = TEMPLATES.find((t) => t.id === reportData.template_id) || activeTemplate;
@@ -564,18 +569,18 @@ export default function Reports({ course, sessionToken, onAddSource }) {
         sessionToken={sessionToken}
         sourceMaterials={materials}
         templateLabel={reportTemplate?.label || 'Report'}
-        generationError={generationError}
+        generationError={generateError}
         onClose={() => setReportData(null)}
         onSaveComplete={handleReportSaveComplete}
         onRegenerate={async (payload) => {
           const estimated = await handleEstimate(payload);
-          if (estimated) {
-            setReportData(null);
-          }
+          if (estimated) setReportData(null);
         }}
       />
     );
   }
+
+  // ── form view ──────────────────────────────────────────────────────────────
 
   return (
     <div className="flex gap-4 items-start">
@@ -669,7 +674,7 @@ export default function Reports({ course, sessionToken, onAddSource }) {
           </div>
         </div>
 
-        {/* Custom prompt — only for "Create Your Own" */}
+        {/* Custom prompt */}
         {isCustom && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">Custom Prompt</label>
@@ -694,28 +699,121 @@ export default function Reports({ course, sessionToken, onAddSource }) {
           </div>
         </div>
 
-        {/* Error */}
-        {generationError && (
-          <p className="text-xs text-red-600">{generationError}</p>
-        )}
-
-        {(generationStatus === 'queued' || generationStatus === 'generating') && (
-          <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-indigo-50 border border-indigo-100">
-            <svg className="animate-spin h-4 w-4 text-indigo-500 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-            </svg>
-            <span className="text-xs text-indigo-700">
-              {generationStatus === 'queued' ? 'Queued - waiting for worker...' : 'Generating report...'}
-            </span>
+        {/* History */}
+        <div className="bg-white rounded-xl border border-gray-200 p-3">
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <p className="text-xs font-semibold text-gray-900">Generated & Drafted Reports</p>
+            {historyLoading ? (
+              <p className="text-[10px] text-gray-400">Loading…</p>
+            ) : (
+              <p className="text-[10px] text-gray-400">{historyGenerations.length} saved</p>
+            )}
           </div>
+
+          {historyLoading ? (
+            <p className="text-[10px] text-gray-400">Fetching your reports…</p>
+          ) : historyGenerations.length === 0 ? (
+            <p className="text-[10px] text-gray-400 italic">No report history yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {historyGenerations.map((g) => {
+                const isPolling = generatingIds.has(g.generation_id);
+                const status = isPolling && g.status === 'queued'
+                  ? 'queued'
+                  : (isPolling ? 'generating' : (g.status || 'ready'));
+                const badgeClass =
+                  status === 'ready'    ? 'border-green-200 bg-green-50 text-green-700'
+                  : status === 'failed' ? 'border-red-200 bg-red-50 text-red-600'
+                  : status === 'draft'  ? 'border-amber-200 bg-amber-50 text-amber-800'
+                  : status === 'queued' ? 'border-purple-200 bg-purple-50 text-purple-700'
+                  :                       'border-indigo-200 bg-indigo-50 text-indigo-700';
+
+                const templateLabel = TEMPLATES.find((t) => t.id === g.template_id)?.label
+                  || (g.template_id ? g.template_id : 'Report');
+                const rowTitle = g.template_id === 'custom' && g.custom_prompt
+                  ? g.custom_prompt.slice(0, 60) + (g.custom_prompt.length > 60 ? '…' : '')
+                  : templateLabel;
+
+                const tokenLow = g.estimated_total_tokens_low;
+                const tokenHigh = g.estimated_total_tokens_high;
+                const tokenText =
+                  typeof tokenLow === 'number' && typeof tokenHigh === 'number'
+                    ? `${tokenLow}–${tokenHigh}`
+                    : 'N/A';
+
+                const createdAt = g.created_at ? new Date(g.created_at).toLocaleString() : '';
+
+                return (
+                  <div key={g.generation_id} className="rounded-lg border border-gray-200 p-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-gray-900 truncate">{rowTitle}</p>
+                        <p className="text-[10px] text-gray-500 mt-0.5 truncate">
+                          {g.provider || 'provider'} · {g.model_id || 'model'} · {createdAt}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-medium ${badgeClass}`}>
+                          {(status === 'generating' || status === 'queued') && (
+                            <svg className="animate-spin h-2.5 w-2.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                            </svg>
+                          )}
+                          {status}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => deleteGeneration(g.generation_id)}
+                          className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                          aria-label="Delete"
+                        >
+                          <TrashIcon />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                      <p className="text-[10px] text-gray-500">
+                        Tokens: <span className="font-medium text-gray-700">{tokenText}</span>
+                      </p>
+                      <div className="flex items-center gap-2">
+                        {status === 'generating' ? (
+                          <p className="text-[10px] text-indigo-600 italic">Processing…</p>
+                        ) : status === 'queued' ? (
+                          <p className="text-[10px] text-purple-600 italic">Queued…</p>
+                        ) : status === 'ready' ? (
+                          <button
+                            type="button"
+                            onClick={() => reopenFromHistory(g)}
+                            className="px-2 py-1 rounded-lg border border-gray-200 text-[10px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                          >
+                            Open
+                          </button>
+                        ) : status === 'failed' ? (
+                          <p className="text-[10px] text-red-500 italic truncate max-w-[120px]" title={g.error}>
+                            {g.error ? g.error.slice(0, 40) : 'Failed'}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Error */}
+        {generateError && (
+          <p className="text-xs text-red-600">{generateError}</p>
         )}
 
-        {/* Generate button */}
+        {/* Generate button — no longer blocked by in-progress generation */}
         <button
           type="button"
           onClick={() => handleEstimate()}
-          disabled={isEstimating || isQueueing || generationInProgress || selectedCount === 0 || (isCustom && !customPrompt.trim())}
+          disabled={isEstimating || isQueueing || selectedCount === 0 || (isCustom && !customPrompt.trim())}
           className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
         >
           {isEstimating ? (
@@ -725,14 +823,6 @@ export default function Reports({ course, sessionToken, onAddSource }) {
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
               </svg>
               Estimating...
-            </>
-          ) : generationInProgress ? (
-            <>
-              <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-              </svg>
-              Report in progress...
             </>
           ) : (
             <>
