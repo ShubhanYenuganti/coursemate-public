@@ -629,6 +629,8 @@ def init_db():
                 ADD COLUMN IF NOT EXISTS estimated_total_tokens_high INTEGER;
             ALTER TABLE report_generations
                 ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+            ALTER TABLE report_generations
+                ALTER COLUMN status SET DEFAULT 'draft';
         """)
         cursor.execute("""
             ALTER TABLE report_versions
