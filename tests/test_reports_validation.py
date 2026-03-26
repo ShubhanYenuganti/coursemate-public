@@ -5,6 +5,7 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda", "reports_generate"))
 
 from api.services.reports_contracts import (
     MAX_SECTIONS,
@@ -14,6 +15,7 @@ from api.services.reports_contracts import (
 )
 from api.services.reports_pdf_builder import build_reports_pdf_html
 from api.services.reports_token_estimator import estimate_reports_token_ranges
+from handler import _build_prompt, _build_synthesis_prompt, _normalize_output
 
 
 def test_estimate_returns_four_keys():
@@ -139,6 +141,44 @@ def test_normalize_report_sections_caps_to_max_sections():
     assert len(result["sections"]) == MAX_SECTIONS
 
 
+def test_normalize_preserves_callout():
+    raw = {
+        "title": "T",
+        "sections": [
+            {"type": "callout", "content": "Important note"},
+        ],
+    }
+    result = normalize_report_sections(raw)
+    assert result["sections"][0]["type"] == "callout"
+    assert result["sections"][0]["content"] == "Important note"
+
+
+def test_normalize_bullet_list_with_items():
+    raw = {
+        "title": "T",
+        "sections": [
+            {"type": "bullet_list", "items": ["a", "b", "c"]},
+        ],
+    }
+    result = normalize_report_sections(raw)
+    section = result["sections"][0]
+    assert section["type"] == "bullet_list"
+    assert section["items"] == ["a", "b", "c"]
+
+
+def test_normalize_drops_empty_blocks():
+    raw = {
+        "title": "T",
+        "sections": [
+            {"type": "paragraph", "content": ""},
+            {"type": "heading", "content": "Title"},
+        ],
+    }
+    result = normalize_report_sections(raw)
+    assert len(result["sections"]) == 1
+    assert result["sections"][0]["content"] == "Title"
+
+
 def test_custom_template_requires_synthesized_schema():
     with pytest.raises(ValueError, match=r"custom template requires synthesized_schema \(from Call 1\)"):
         build_report_prompt(
@@ -147,6 +187,62 @@ def test_custom_template_requires_synthesized_schema():
             custom_prompt=None,
             synthesized_schema=None,
         )
+
+
+def test_worker_normalize_output_aliases_and_custom_contract_fields():
+    raw = {
+        "title": "  Report Draft  ",
+        "subtitle": None,
+        "page_count": False,
+        "sections": [
+            {"type": "unknown", "items": ["alpha", "", 2]},
+            {"type": "unknown", "instructions": "Fill this section."},
+            {"type": "equation", "lines": ["E = mc^2", " ", "F = ma"]},
+            {"type": "page_break"},
+        ],
+    }
+
+    result = _normalize_output(raw)
+
+    assert result["title"] == "Report Draft"
+    assert result["subtitle"] == ""
+    assert result["page_count"] == 2
+    assert result["sections"] == [
+        {"type": "bullet_list", "items": ["alpha", "2"]},
+        {"type": "paragraph", "content": "Fill this section."},
+        {"type": "equation", "lines": ["E = mc^2", "F = ma"]},
+        {"type": "page_break"},
+    ]
+
+
+def test_worker_custom_prompt_contract_uses_schema_and_request_text():
+    schema = {
+        "title": "Custom report",
+        "subtitle": "Fill the instructions",
+        "page_count": 1,
+        "sections": [
+            {
+                "type": "heading",
+                "name": "Section 1",
+                "instructions": "Describe the first section",
+            }
+        ],
+    }
+    schema_json = json.dumps(schema, ensure_ascii=False)
+
+    synth_system, synth_user = _build_synthesis_prompt("Write a tailored report.", "Topic A\nTopic B")
+    assert "document schema designer" in synth_system
+    assert "Report request: Write a tailored report." in synth_user
+    assert "Available material topics (sample):" in synth_user
+
+    system, user = _build_prompt(
+        template_id="custom",
+        material_context="Lecture excerpt.",
+        custom_prompt="Write a tailored report.",
+        synthesized_schema=schema,
+    )
+    assert "document content generator" in system
+    assert user == f"Schema to fill:\n{schema_json}\n\nCourse materials:\nLecture excerpt."
 
 
 def test_pdf_html_contains_title():
