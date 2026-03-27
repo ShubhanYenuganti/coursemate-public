@@ -355,19 +355,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Footer CTA */}
-      <section className="bg-indigo-600 py-14 text-center">
-        <h2 className="text-2xl font-bold text-white mb-4">Ready to learn smarter?</h2>
-        <p className="text-indigo-200 mb-8">
-          Bring your own API keys and start chatting with your course materials in minutes.
-        </p>
-        <button
-          onClick={goToSignIn}
-          className="px-8 py-3 bg-white text-indigo-600 font-semibold rounded-lg hover:bg-indigo-50 transition-colors shadow"
-        >
-          Sign up free
-        </button>
-      </section>
     </div>
   );
 }
