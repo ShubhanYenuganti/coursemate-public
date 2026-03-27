@@ -296,14 +296,16 @@ class handler(BaseHTTPRequestHandler):
             cursor.close()
 
         if file_type == 'application/pdf':
-            try:
-                sfn = boto3.client('stepfunctions', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
-                sfn.start_execution(
-                    stateMachineArn=os.environ['STATE_MACHINE_ARN'],
-                    input=json.dumps({'s3_key': s3_key, 'cursor': 0}),
-                )
-            except Exception:
-                pass  # embedding is best-effort; material is already created
+            state_machine_arn = os.environ.get('STATE_MACHINE_ARN')
+            if state_machine_arn:
+                try:
+                    sfn = boto3.client('stepfunctions', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
+                    sfn.start_execution(
+                        stateMachineArn=state_machine_arn,
+                        input=json.dumps({'s3_key': s3_key, 'cursor': 0}),
+                    )
+                except Exception as e:
+                    print(f"[material] Failed to start SFN execution for {s3_key}: {e}")
 
         send_json(self, 201, {"material": material})
 
