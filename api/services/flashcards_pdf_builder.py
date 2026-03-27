@@ -70,10 +70,82 @@ def build_flashcards_pdf_html(*, deck: dict) -> str:
 
 
 def build_flashcards_pdf_bytes(*, deck: dict) -> bytes:
-    try:
-        from weasyprint import HTML  # type: ignore
-    except Exception as e:
-        raise RuntimeError(f"weasyprint is not available: {e}")
+    from fpdf import FPDF  # type: ignore
 
-    html = build_flashcards_pdf_html(deck=deck)
-    return HTML(string=html).write_pdf()
+    def _s(v) -> str:
+        return str(v or "").encode("latin-1", errors="replace").decode("latin-1")
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_margins(left=18, top=18, right=18)
+
+    cards = deck.get("cards") or []
+
+    # --- Cover page ---
+    pdf.add_page()
+
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.multi_cell(0, 10, txt=_s(deck.get("title") or "Flashcards"))
+
+    topic = _s(deck.get("topic") or "")
+    if topic:
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_text_color(80, 80, 80)
+        pdf.multi_cell(0, 7, txt=topic)
+        pdf.set_text_color(17, 17, 17)
+
+    pdf.ln(4)
+
+    model_str = f"{_s(deck.get('provider') or '')} {_s(deck.get('model_id') or '')}".strip()
+    if model_str:
+        pdf.set_font("Helvetica", "", 11)
+        pdf.multi_cell(0, 7, txt=f"Model: {model_str}")
+
+    depth = _s(deck.get("depth") or "moderate")
+    pdf.set_font("Helvetica", "", 11)
+    pdf.multi_cell(0, 7, txt=f"Mode: {depth.title()}")
+
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(80, 80, 80)
+    pdf.multi_cell(0, 6, txt=f"{len(cards)} card{'s' if len(cards) != 1 else ''}")
+
+    gen_at = _s(deck.get("generated_at") or "")
+    if gen_at:
+        pdf.multi_cell(0, 6, txt=f"Generated: {gen_at}")
+    pdf.set_text_color(17, 17, 17)
+
+    # --- Cards ---
+    pdf.add_page()
+
+    for card in cards:
+        idx = card.get("card_index")
+        front = _s(card.get("front") or "")
+        back = _s(card.get("back") or "")
+        hint = _s(card.get("hint") or "")
+
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(79, 70, 229)
+        pdf.multi_cell(0, 7, txt=f"Card {idx}")
+        pdf.set_text_color(17, 17, 17)
+
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.multi_cell(0, 6, txt="Front:")
+        pdf.set_font("Helvetica", "", 11)
+        pdf.multi_cell(0, 6, txt=front)
+        pdf.ln(1)
+
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.multi_cell(0, 6, txt="Back:")
+        pdf.set_font("Helvetica", "", 11)
+        pdf.multi_cell(0, 6, txt=back)
+
+        if hint:
+            pdf.ln(1)
+            pdf.set_font("Helvetica", "I", 9)
+            pdf.set_text_color(80, 80, 80)
+            pdf.multi_cell(0, 5, txt=f"Hint: {hint}")
+            pdf.set_text_color(17, 17, 17)
+
+        pdf.ln(5)
+
+    return bytes(pdf.output())

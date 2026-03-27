@@ -130,12 +130,100 @@ def build_quiz_pdf_html(*, quiz: dict) -> str:
 
 
 def build_quiz_pdf_bytes(*, quiz: dict) -> bytes:
-    try:
-        from weasyprint import HTML  # type: ignore
-    except Exception as e:
-        raise RuntimeError(f"weasyprint is not available: {e}")
+    from fpdf import FPDF  # type: ignore
 
-    html = build_quiz_pdf_html(quiz=quiz)
-    pdf_bytes = HTML(string=html).write_pdf()
-    return pdf_bytes
+    def _s(v) -> str:
+        return str(v or "").encode("latin-1", errors="replace").decode("latin-1")
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_margins(left=18, top=18, right=18)
+
+    # --- Cover page ---
+    pdf.add_page()
+
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.multi_cell(0, 10, txt=_s(quiz.get("title") or "Quiz"))
+
+    topic = _s(quiz.get("topic") or "")
+    if topic:
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_text_color(80, 80, 80)
+        pdf.multi_cell(0, 7, txt=topic)
+        pdf.set_text_color(17, 17, 17)
+
+    pdf.ln(4)
+
+    model_str = f"{_s(quiz.get('provider') or '')} {_s(quiz.get('model_id') or '')}".strip()
+    if model_str:
+        pdf.set_font("Helvetica", "", 11)
+        pdf.multi_cell(0, 7, txt=f"Model: {model_str}")
+
+    gen_at = _s(quiz.get("generated_at") or "")
+    if gen_at:
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(80, 80, 80)
+        pdf.multi_cell(0, 6, txt=f"Generated: {gen_at}")
+        pdf.set_text_color(17, 17, 17)
+
+    counts = (quiz.get("generation_settings") or {}).get("counts") or {}
+    if counts:
+        parts = [f"{k.upper()}: {v}" for k, v in counts.items() if v]
+        if parts:
+            pdf.set_font("Helvetica", "", 10)
+            pdf.set_text_color(80, 80, 80)
+            pdf.multi_cell(0, 6, txt=", ".join(parts))
+            pdf.set_text_color(17, 17, 17)
+
+    # --- Questions ---
+    questions = quiz.get("questions") or []
+
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.multi_cell(0, 9, txt="Quiz")
+    pdf.ln(2)
+
+    for q in questions:
+        q_type = _s(q.get("type") or "").upper()
+        q_text = _s(q.get("question") or "")
+        options = q.get("options") or []
+
+        pdf.set_font("Helvetica", "B", 11)
+        header = f"{q.get('question_index')}.  [{q_type}]" if q_type else f"{q.get('question_index')}."
+        pdf.multi_cell(0, 7, txt=header)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.multi_cell(0, 6, txt=q_text)
+
+        for i, opt in enumerate(options):
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(0, 5, txt=f"  {chr(65 + i)}. {_s(opt)}")
+
+        pdf.ln(3)
+
+    # --- Answer key ---
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.multi_cell(0, 9, txt="Answer Key")
+    pdf.ln(2)
+
+    for q in questions:
+        q_type = _s(q.get("type") or "").upper()
+        q_text = _s(q.get("question") or "")
+        answer = _s(q.get("answer") or "")
+
+        pdf.set_font("Helvetica", "B", 11)
+        header = f"{q.get('question_index')}.  [{q_type}]" if q_type else f"{q.get('question_index')}."
+        pdf.multi_cell(0, 7, txt=header)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.multi_cell(0, 6, txt=q_text)
+
+        if answer:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(0, 100, 0)
+            pdf.multi_cell(0, 6, txt=f"Answer: {answer}")
+            pdf.set_text_color(17, 17, 17)
+
+        pdf.ln(3)
+
+    return bytes(pdf.output())
 

@@ -687,6 +687,7 @@ class handler(BaseHTTPRequestHandler):
             'topic': gen.get('topic') or '',
             'provider': gen.get('provider') or '',
             'model_id': gen.get('model_id') or '',
+            'depth': gen.get('depth') or 'moderate',
             'generated_at': str(gen.get('created_at') or ''),
             'cards': [
                 {

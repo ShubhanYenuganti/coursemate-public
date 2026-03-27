@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from "react-router-dom";
 import SignInPage from "./SignInPage.jsx";
+import LandingPage from "./LandingPage.jsx";
 import Dashboard from "./Dashboard.jsx";
 import CoursePage from "./CoursePage.jsx";
 import ProfilePage from "./ProfilePage.jsx";
@@ -171,6 +172,16 @@ export default function App() {
     <Routes>
       <Route
         path="/"
+        element={
+          userData ? (
+            <Navigate to="/dashboard" replace />
+          ) : (
+            <LandingPage />
+          )
+        }
+      />
+      <Route
+        path="/signin"
         element={
           userData ? (
             <Navigate to="/dashboard" replace />

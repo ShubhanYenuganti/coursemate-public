@@ -77,9 +77,74 @@ def build_reports_pdf_html(*, report: dict) -> str:
 
 
 def build_reports_pdf_bytes(*, report: dict) -> bytes:
-    html = build_reports_pdf_html(report=report)
-    try:
-        from weasyprint import HTML  # type: ignore
-    except ImportError:
-        return html.encode("utf-8")
-    return HTML(string=html).write_pdf()
+    from fpdf import FPDF  # type: ignore
+
+    def _s(v) -> str:
+        return str(v or "").encode("latin-1", errors="replace").decode("latin-1")
+
+    normalized = normalize_report_sections(report)
+    title = _s(normalized.get("title") or "Report")
+    subtitle = _s(normalized.get("subtitle") or "")
+    sections = normalized.get("sections") or []
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_margins(left=18, top=18, right=18)
+    pdf.add_page()
+
+    pdf.set_font("Helvetica", "B", 24)
+    pdf.multi_cell(0, 12, txt=title)
+
+    if subtitle:
+        pdf.set_font("Helvetica", "", 13)
+        pdf.set_text_color(80, 80, 80)
+        pdf.multi_cell(0, 8, txt=subtitle)
+        pdf.set_text_color(17, 17, 17)
+
+    pdf.ln(6)
+
+    for block in sections:
+        btype = block.get("type") or "paragraph"
+        content = _s(block.get("content") or "")
+
+        if btype in ("heading", "section"):
+            pdf.ln(4)
+            pdf.set_font("Helvetica", "B", 15)
+            pdf.multi_cell(0, 9, txt=content)
+            pdf.ln(1)
+
+        elif btype in ("subheading", "subsection"):
+            pdf.ln(2)
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.multi_cell(0, 7, txt=content)
+
+        elif btype == "paragraph":
+            pdf.set_font("Helvetica", "", 11)
+            pdf.multi_cell(0, 6, txt=content)
+            pdf.ln(2)
+
+        elif btype in ("bullet_list", "list"):
+            pdf.set_font("Helvetica", "", 11)
+            for item in (block.get("items") or []):
+                pdf.multi_cell(0, 6, txt=f"  - {_s(item)}")
+            pdf.ln(2)
+
+        elif btype == "callout":
+            pdf.set_font("Helvetica", "I", 11)
+            pdf.set_text_color(60, 60, 60)
+            pdf.set_x(pdf.get_x() + 5)
+            pdf.multi_cell(0, 6, txt=content)
+            pdf.set_text_color(17, 17, 17)
+            pdf.ln(2)
+
+        elif btype in ("equation", "display_equation"):
+            lines = block.get("lines") or ([content] if content else [])
+            pdf.set_font("Courier", "", 11)
+            for line in lines:
+                pdf.multi_cell(0, 6, txt=_s(line))
+            pdf.ln(2)
+
+        elif btype == "page_break":
+            pdf.add_page()
+
+    return bytes(pdf.output())
