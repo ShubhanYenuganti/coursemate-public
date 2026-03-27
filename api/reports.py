@@ -29,7 +29,7 @@ try:
         normalize_report_sections,
         VALID_TEMPLATES,
     )
-    from .services.reports_pdf_builder import build_reports_pdf_bytes
+    from .services.reports_pdf_builder import build_reports_pdf_html
 except ImportError:
     from middleware import send_json, handle_options, authenticate_request, get_cors_headers
     from models import User
@@ -41,7 +41,7 @@ except ImportError:
         normalize_report_sections,
         VALID_TEMPLATES,
     )
-    from services.reports_pdf_builder import build_reports_pdf_bytes
+    from services.reports_pdf_builder import build_reports_pdf_html
 
 
 _REPORTS_QUEUE_URL = os.environ.get("REPORTS_GENERATION_QUEUE_URL")
@@ -533,23 +533,19 @@ class handler(BaseHTTPRequestHandler):
             return
 
         payload = _build_viewer_payload(gen, version)
-        try:
-            pdf_bytes = build_reports_pdf_bytes(report=payload)
-        except Exception:
-            send_json(self, 500, {"error": "Failed to build PDF"})
-            return
+        html = build_reports_pdf_html(report=payload)
+        # Inject auto-print so the browser opens the print dialog immediately
+        html = html.replace("</body>", "<script>window.print();</script></body>")
+        html_bytes = html.encode("utf-8")
 
-        title_slug = (payload.get("title") or "report").replace(" ", "_")[:40]
-        content_type = "application/pdf" if pdf_bytes[:4] == b"%PDF" else "text/html; charset=utf-8"
         cors = get_cors_headers()
         self.send_response(200)
         for key, value in cors.items():
             self.send_header(key, value)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Disposition", f'attachment; filename="{title_slug}.pdf"')
-        self.send_header("Content-Length", str(len(pdf_bytes)))
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(html_bytes)))
         self.end_headers()
-        self.wfile.write(pdf_bytes)
+        self.wfile.write(html_bytes)
 
     # --- DELETE ---------------------------------------------------------------
 

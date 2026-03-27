@@ -518,30 +518,9 @@ export default function ReportsViewer({
     }
   }
 
-  async function handleExport() {
+  function handleExport() {
     if (!generationId || exportStatus === 'exporting') return;
-
-    setExportStatus('exporting');
-    try {
-      const res = await fetch(`/api/reports?action=export_pdf&generation_id=${generationId}`, {
-        method: 'GET',
-        credentials: 'include',
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${(title || 'report').replace(/\s+/g, '_').toLowerCase()}-${generationId}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      setExportStatus('idle');
-    } catch {
-      setExportStatus('error');
-    }
+    window.open(`/api/reports?action=export_pdf&generation_id=${generationId}`, '_blank');
   }
 
   async function handleResolve(resolution) {
