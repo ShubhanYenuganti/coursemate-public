@@ -92,12 +92,102 @@ def build_reports_pdf_html(*, report: dict) -> str:
 
 
 def build_reports_pdf_bytes(*, report: dict) -> bytes:
-    from io import BytesIO
-    from xhtml2pdf import pisa  # type: ignore
+    import os
+    from fpdf import FPDF  # type: ignore
 
-    html = build_reports_pdf_html(report=report)
-    buf = BytesIO()
-    result = pisa.CreatePDF(html.encode("utf-8"), dest=buf)
-    if result.err:
-        raise RuntimeError(f"xhtml2pdf error: {result.err}")
-    return buf.getvalue()
+    _FONTS = os.path.join(os.path.dirname(__file__), "fonts")
+
+    normalized = normalize_report_sections(report)
+    title = normalized.get("title") or "Report"
+    subtitle = normalized.get("subtitle") or ""
+    sections = normalized.get("sections") or []
+
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.add_font("DejaVu", "", os.path.join(_FONTS, "DejaVuSans.ttf"))
+    pdf.add_font("DejaVu", "B", os.path.join(_FONTS, "DejaVuSans-Bold.ttf"))
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_margins(18, 18, 18)
+    pdf.add_page()
+    W = pdf.w - pdf.l_margin - pdf.r_margin
+
+    def mc(h, text):
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(W, h, str(text or ""), align="L")
+
+    pdf.set_font("DejaVu", "B", 24)
+    mc(12, title)
+
+    if subtitle:
+        pdf.set_font("DejaVu", "", 13)
+        pdf.set_text_color(80, 80, 80)
+        mc(8, subtitle)
+        pdf.set_text_color(17, 17, 17)
+
+    pdf.ln(6)
+
+    for block in sections:
+        btype = block.get("type") or "paragraph"
+        content = str(block.get("content") or "")
+
+        if btype in {"heading", "section"}:
+            pdf.ln(4)
+            pdf.set_font("DejaVu", "B", 15)
+            mc(9, content)
+            pdf.ln(1)
+
+        elif btype in {"subheading", "subsection"}:
+            pdf.ln(2)
+            pdf.set_font("DejaVu", "B", 12)
+            mc(7, content)
+
+        elif btype == "paragraph":
+            pdf.set_font("DejaVu", "", 11)
+            mc(6, content)
+            pdf.ln(2)
+
+        elif btype in {"bullet_list", "list"}:
+            pdf.set_font("DejaVu", "", 11)
+            for item in (block.get("items") or []):
+                mc(6, f"  \u2022 {item}")
+            pdf.ln(2)
+
+        elif btype == "callout":
+            pdf.set_font("DejaVu", "", 11)
+            pdf.set_text_color(60, 60, 60)
+            mc(6, content)
+            pdf.set_text_color(17, 17, 17)
+            pdf.ln(2)
+
+        elif btype in {"equation", "display_equation"}:
+            lines = block.get("lines") or ([content] if content else [])
+            pdf.set_font("DejaVu", "", 11)
+            for line in lines:
+                mc(6, line)
+            pdf.ln(2)
+
+        elif btype == "table":
+            headers = block.get("headers") or []
+            rows = block.get("rows") or []
+            n_cols = len(headers) or (len(rows[0]) if rows else 0)
+            if n_cols:
+                col_w = W / n_cols
+                pdf.set_font("DejaVu", "B", 10)
+                if headers:
+                    x0, y0 = pdf.l_margin, pdf.get_y()
+                    for i, h in enumerate(headers):
+                        pdf.set_xy(x0 + i * col_w, y0)
+                        pdf.multi_cell(col_w, 6, str(h or ""), border=1, align="L")
+                    pdf.set_xy(x0, pdf.get_y())
+                pdf.set_font("DejaVu", "", 10)
+                for row in rows:
+                    x0, y0 = pdf.l_margin, pdf.get_y()
+                    for i, cell in enumerate(row[:n_cols]):
+                        pdf.set_xy(x0 + i * col_w, y0)
+                        pdf.multi_cell(col_w, 6, str(cell or ""), border=1, align="L")
+                    pdf.set_xy(x0, pdf.get_y())
+                pdf.ln(3)
+
+        elif btype == "page_break":
+            pdf.add_page()
+
+    return bytes(pdf.output())
