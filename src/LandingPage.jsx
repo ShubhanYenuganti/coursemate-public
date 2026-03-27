@@ -179,7 +179,7 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero */}
-      <section className="max-w-3xl mx-auto px-6 pt-20 pb-16 text-center">
+      <section className="max-w-5xl mx-auto px-6 pt-20 pb-16 text-center">
         <div className="inline-block px-3 py-1 bg-indigo-50 text-indigo-600 text-xs font-medium rounded-full mb-6">
           Your keys. Your models. Your learning.
         </div>
@@ -272,9 +272,9 @@ export default function LandingPage() {
           <p className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-8">
             How It Works
           </p>
-          <div className="flex gap-6 items-start">
+          <div className="grid grid-cols-2 gap-6 items-start">
             {/* Steps list */}
-            <div className="flex-1 border-l-2 border-gray-100 space-y-2">
+            <div className="border-l-2 border-gray-100 space-y-2">
               {HOW_IT_WORKS.map(({ step, title }) => {
                 const active = step === activeStep;
                 return (
@@ -298,7 +298,7 @@ export default function LandingPage() {
               })}
             </div>
             {/* Description panel */}
-            <div className="w-80 flex-shrink-0 bg-white border border-gray-200 rounded-xl p-6 shadow-sm min-h-[160px] flex items-center">
+            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm min-h-[160px] flex items-center">
               <p className="text-gray-700 text-sm leading-relaxed">
                 {HOW_IT_WORKS.find((s) => s.step === activeStep)?.description}
               </p>

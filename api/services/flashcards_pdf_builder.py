@@ -72,16 +72,19 @@ def build_flashcards_pdf_html(*, deck: dict) -> str:
 def build_flashcards_pdf_bytes(*, deck: dict) -> bytes:
     from fpdf import FPDF  # type: ignore
 
-    _TYPO = str.maketrans({
-        '\u2014': '--',  '\u2013': '-',   '\u2012': '-',   '\u2015': '--',
-        '\u2018': "'",   '\u2019': "'",   '\u201a': "'",
-        '\u201c': '"',   '\u201d': '"',   '\u201e': '"',
-        '\u2026': '...', '\u00a0': ' ',   '\u2022': '-',
-        '\u2010': '-',   '\u2011': '-',   '\u25cf': '-',
-    })
+    _REPLACEMENTS = [
+        ('\u2014', '--'), ('\u2013', '-'),  ('\u2012', '-'),  ('\u2015', '--'),
+        ('\u2018', "'"),  ('\u2019', "'"),  ('\u201a', "'"),
+        ('\u201c', '"'),  ('\u201d', '"'),  ('\u201e', '"'),
+        ('\u2026', '...'),('\u00a0', ' '),  ('\u2022', '-'),
+        ('\u2010', '-'),  ('\u2011', '-'),  ('\u25cf', '-'),
+    ]
 
     def _s(v) -> str:
-        return str(v or "").translate(_TYPO).encode("latin-1", errors="replace").decode("latin-1")
+        text = str(v or "")
+        for old, new in _REPLACEMENTS:
+            text = text.replace(old, new)
+        return ''.join(c if ord(c) < 256 else '?' for c in text)
 
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=15)
