@@ -147,6 +147,12 @@ export default function FlashcardViewer({
   onResolve,
   onGoToTab,
 }) {
+  const flashcardsDownloadName = ((data?.title || 'flashcards')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || `flashcards-${generationId || 'export'}`) + '.pdf';
   const cards = data?.flashcards || data?.cards || (Array.isArray(data) ? data : []);
 
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -241,7 +247,7 @@ export default function FlashcardViewer({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `flashcards-${generationId}.pdf`;
+      a.download = flashcardsDownloadName;
       document.body.appendChild(a);
       a.click();
       a.remove();

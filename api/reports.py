@@ -534,8 +534,44 @@ class handler(BaseHTTPRequestHandler):
 
         payload = _build_viewer_payload(gen, version)
         html = build_reports_pdf_html(report=payload)
-        # Inject auto-print so the browser opens the print dialog immediately
-        html = html.replace("</body>", "<script>window.print();</script></body>")
+        # Render LaTeX client-side before opening print dialog.
+        html = html.replace(
+            "</body>",
+            """
+<script>
+  (function () {
+    function renderAndPrint() {
+      if (typeof renderMathInElement === "function") {
+        try {
+          renderMathInElement(document.body, {
+            throwOnError: false,
+            delimiters: [
+              { left: "$$", right: "$$", display: true },
+              { left: "\\\\[", right: "\\\\]", display: true },
+              { left: "$", right: "$", display: false },
+              { left: "\\\\(", right: "\\\\)", display: false }
+            ]
+          });
+        } catch (e) {
+          // Continue to print even if some math fails to parse.
+        }
+      }
+      window.print();
+    }
+
+    // KaTeX scripts are loaded with defer. Wait for full load before rendering.
+    if (document.readyState === "complete") {
+      setTimeout(renderAndPrint, 50);
+    } else {
+      window.addEventListener("load", function () {
+        setTimeout(renderAndPrint, 50);
+      });
+    }
+  })();
+</script>
+</body>
+""",
+        )
         html_bytes = html.encode("utf-8")
 
         cors = get_cors_headers()

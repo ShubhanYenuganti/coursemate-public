@@ -32,7 +32,7 @@ def _render_block(block: dict) -> str:
     if block_type in {"equation", "display_equation"}:
         lines = block.get("lines") or [block.get("content") or ""]
         equation_html = "".join(
-            f"<div class=\"equation-line\">{_e(line)}</div>"
+            f"<div class=\"equation-line\">\\[{_e(line)}\\]</div>"
             for line in lines
             if str(line or "").strip()
         )
@@ -65,6 +65,11 @@ def build_reports_pdf_html(*, report: dict) -> str:
 <html>
   <head>
     <meta charset="utf-8" />
+    <title>{title}</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
+    />
     <style>
       @page {{ size: A4; margin: 16mm; }}
       body {{ font-family: Arial, sans-serif; color: #111; }}
@@ -80,7 +85,16 @@ def build_reports_pdf_html(*, report: dict) -> str:
       table {{ border-collapse: collapse; width: 100%; margin: 12px 0; }}
       th, td {{ border: 1px solid #ccc; padding: 6px 8px; font-size: 12px; text-align: left; }}
       th {{ background: #f0f0f0; font-weight: bold; }}
+      .equation-line {{ margin: 6px 0; }}
     </style>
+    <script
+      defer
+      src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
+    ></script>
+    <script
+      defer
+      src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+    ></script>
   </head>
   <body>
     <h1>{title}</h1>

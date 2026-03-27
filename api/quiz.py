@@ -46,6 +46,15 @@ _TYPE_ALIASES = {
     'long-answer': 'la',
 }
 
+
+def _pdf_filename_from_title(title: str | None, fallback_prefix: str, fallback_id: int) -> str:
+    """Build a safe downloadable PDF filename from artifact title."""
+    base = (title or "").strip().lower()
+    base = re.sub(r"[^a-z0-9]+", "-", base).strip("-")
+    if not base:
+        base = f"{fallback_prefix}-{fallback_id}"
+    return f"{base}.pdf"
+
 _TF_TRUE_VALUES = {'true', 'yes', '1', 't', 'correct'}
 _TF_FALSE_VALUES = {'false', 'no', '0', 'f', 'incorrect', 'wrong'}
 
@@ -1465,7 +1474,7 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'application/pdf')
         for key, value in get_cors_headers().items():
             self.send_header(key, value)
-        filename = f'quiz-{gen_id}.pdf'
+        filename = _pdf_filename_from_title(gen.get('title'), 'quiz', gen_id)
         self.send_header('Content-Disposition', f'attachment; filename=\"{filename}\"')
         self.end_headers()
         self.wfile.write(pdf_bytes)

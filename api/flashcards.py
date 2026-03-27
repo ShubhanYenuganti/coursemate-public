@@ -7,6 +7,7 @@
 
 import json
 import os
+import re
 import boto3
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
@@ -32,6 +33,15 @@ _AWS_REGION = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION
 _MATERIAL_CHUNK_LIMIT = 80
 _CONTEXT_CHAR_BUDGET = 24_000
 _ALLOWED_DEPTHS = {'brief', 'moderate', 'in-depth'}
+
+
+def _pdf_filename_from_title(title: str | None, fallback_prefix: str, fallback_id: int) -> str:
+    """Build a safe downloadable PDF filename from artifact title."""
+    base = (title or "").strip().lower()
+    base = re.sub(r"[^a-z0-9]+", "-", base).strip("-")
+    if not base:
+        base = f"{fallback_prefix}-{fallback_id}"
+    return f"{base}.pdf"
 
 
 def _normalize_depth(value: str) -> str:
@@ -710,7 +720,8 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'application/pdf')
         for key, value in get_cors_headers().items():
             self.send_header(key, value)
-        self.send_header('Content-Disposition', f'attachment; filename="flashcards-{generation_id}.pdf"')
+        filename = _pdf_filename_from_title(gen.get('title'), 'flashcards', generation_id)
+        self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
         self.end_headers()
         self.wfile.write(pdf_bytes)
 

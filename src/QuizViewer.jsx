@@ -299,6 +299,12 @@ function QuestionCard({ question, index, total, answer, onAnswer, revealed, onRe
 // ─── QuizViewer ────────────────────────────────────────────────────────────────
 
 export default function QuizViewer({ quiz, generationId, parentGenerationId, onClose, onRegenerate, onResolve }) {
+  const quizDownloadName = ((quiz?.title || 'quiz')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || `quiz-${generationId || 'export'}`) + '.pdf';
   // Shuffle questions once per quiz load, preserving originalIndex for backend submission.
   const questions = useMemo(() => {
     const raw = quiz?.questions || (Array.isArray(quiz) ? quiz : []);
@@ -416,7 +422,7 @@ export default function QuizViewer({ quiz, generationId, parentGenerationId, onC
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `quiz-${generationId}.pdf`;
+      a.download = quizDownloadName;
       document.body.appendChild(a);
       a.click();
       a.remove();
