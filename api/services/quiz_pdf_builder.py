@@ -135,21 +135,24 @@ def build_quiz_pdf_bytes(*, quiz: dict) -> bytes:
     def _s(v) -> str:
         return str(v or "").encode("latin-1", errors="replace").decode("latin-1")
 
-    pdf = FPDF()
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.set_margins(left=18, top=18, right=18)
+    pdf.set_margins(18, 18, 18)
+    pdf.add_page()
+    W = pdf.w - pdf.l_margin - pdf.r_margin  # ~174mm for A4 w/ 18mm margins
+
+    def mc(h, text):
+        pdf.multi_cell(W, h, _s(text))
 
     # --- Cover page ---
-    pdf.add_page()
-
     pdf.set_font("Helvetica", "B", 22)
-    pdf.multi_cell(0, 10, txt=_s(quiz.get("title") or "Quiz"))
+    mc(10, quiz.get("title") or "Quiz")
 
     topic = _s(quiz.get("topic") or "")
     if topic:
         pdf.set_font("Helvetica", "", 12)
         pdf.set_text_color(80, 80, 80)
-        pdf.multi_cell(0, 7, txt=topic)
+        mc(7, topic)
         pdf.set_text_color(17, 17, 17)
 
     pdf.ln(4)
@@ -157,13 +160,13 @@ def build_quiz_pdf_bytes(*, quiz: dict) -> bytes:
     model_str = f"{_s(quiz.get('provider') or '')} {_s(quiz.get('model_id') or '')}".strip()
     if model_str:
         pdf.set_font("Helvetica", "", 11)
-        pdf.multi_cell(0, 7, txt=f"Model: {model_str}")
+        mc(7, f"Model: {model_str}")
 
     gen_at = _s(quiz.get("generated_at") or "")
     if gen_at:
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(80, 80, 80)
-        pdf.multi_cell(0, 6, txt=f"Generated: {gen_at}")
+        mc(6, f"Generated: {gen_at}")
         pdf.set_text_color(17, 17, 17)
 
     counts = (quiz.get("generation_settings") or {}).get("counts") or {}
@@ -172,7 +175,7 @@ def build_quiz_pdf_bytes(*, quiz: dict) -> bytes:
         if parts:
             pdf.set_font("Helvetica", "", 10)
             pdf.set_text_color(80, 80, 80)
-            pdf.multi_cell(0, 6, txt=", ".join(parts))
+            mc(6, ", ".join(parts))
             pdf.set_text_color(17, 17, 17)
 
     # --- Questions ---
@@ -180,7 +183,7 @@ def build_quiz_pdf_bytes(*, quiz: dict) -> bytes:
 
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 14)
-    pdf.multi_cell(0, 9, txt="Quiz")
+    mc(9, "Quiz")
     pdf.ln(2)
 
     for q in questions:
@@ -190,20 +193,20 @@ def build_quiz_pdf_bytes(*, quiz: dict) -> bytes:
 
         pdf.set_font("Helvetica", "B", 11)
         header = f"{q.get('question_index')}.  [{q_type}]" if q_type else f"{q.get('question_index')}."
-        pdf.multi_cell(0, 7, txt=header)
+        mc(7, header)
         pdf.set_font("Helvetica", "", 11)
-        pdf.multi_cell(0, 6, txt=q_text)
+        mc(6, q_text)
 
         for i, opt in enumerate(options):
             pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(0, 5, txt=f"  {chr(65 + i)}. {_s(opt)}")
+            mc(5, f"  {chr(65 + i)}. {_s(opt)}")
 
         pdf.ln(3)
 
     # --- Answer key ---
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 14)
-    pdf.multi_cell(0, 9, txt="Answer Key")
+    mc(9, "Answer Key")
     pdf.ln(2)
 
     for q in questions:
@@ -213,14 +216,14 @@ def build_quiz_pdf_bytes(*, quiz: dict) -> bytes:
 
         pdf.set_font("Helvetica", "B", 11)
         header = f"{q.get('question_index')}.  [{q_type}]" if q_type else f"{q.get('question_index')}."
-        pdf.multi_cell(0, 7, txt=header)
+        mc(7, header)
         pdf.set_font("Helvetica", "", 11)
-        pdf.multi_cell(0, 6, txt=q_text)
+        mc(6, q_text)
 
         if answer:
             pdf.set_font("Helvetica", "B", 10)
             pdf.set_text_color(0, 100, 0)
-            pdf.multi_cell(0, 6, txt=f"Answer: {answer}")
+            mc(6, f"Answer: {answer}")
             pdf.set_text_color(17, 17, 17)
 
         pdf.ln(3)

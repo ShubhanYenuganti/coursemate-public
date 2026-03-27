@@ -87,18 +87,22 @@ def build_reports_pdf_bytes(*, report: dict) -> bytes:
     subtitle = _s(normalized.get("subtitle") or "")
     sections = normalized.get("sections") or []
 
-    pdf = FPDF()
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.set_margins(left=18, top=18, right=18)
+    pdf.set_margins(18, 18, 18)
     pdf.add_page()
+    W = pdf.w - pdf.l_margin - pdf.r_margin  # ~174mm for A4 w/ 18mm margins
+
+    def mc(h, text):
+        pdf.multi_cell(W, h, _s(text))
 
     pdf.set_font("Helvetica", "B", 24)
-    pdf.multi_cell(0, 12, txt=title)
+    mc(12, title)
 
     if subtitle:
         pdf.set_font("Helvetica", "", 13)
         pdf.set_text_color(80, 80, 80)
-        pdf.multi_cell(0, 8, txt=subtitle)
+        mc(8, subtitle)
         pdf.set_text_color(17, 17, 17)
 
     pdf.ln(6)
@@ -110,30 +114,29 @@ def build_reports_pdf_bytes(*, report: dict) -> bytes:
         if btype in ("heading", "section"):
             pdf.ln(4)
             pdf.set_font("Helvetica", "B", 15)
-            pdf.multi_cell(0, 9, txt=content)
+            mc(9, content)
             pdf.ln(1)
 
         elif btype in ("subheading", "subsection"):
             pdf.ln(2)
             pdf.set_font("Helvetica", "B", 12)
-            pdf.multi_cell(0, 7, txt=content)
+            mc(7, content)
 
         elif btype == "paragraph":
             pdf.set_font("Helvetica", "", 11)
-            pdf.multi_cell(0, 6, txt=content)
+            mc(6, content)
             pdf.ln(2)
 
         elif btype in ("bullet_list", "list"):
             pdf.set_font("Helvetica", "", 11)
             for item in (block.get("items") or []):
-                pdf.multi_cell(0, 6, txt=f"  - {_s(item)}")
+                mc(6, f"  - {_s(item)}")
             pdf.ln(2)
 
         elif btype == "callout":
             pdf.set_font("Helvetica", "I", 11)
             pdf.set_text_color(60, 60, 60)
-            pdf.set_x(pdf.get_x() + 5)
-            pdf.multi_cell(0, 6, txt=content)
+            mc(6, content)
             pdf.set_text_color(17, 17, 17)
             pdf.ln(2)
 
@@ -141,7 +144,7 @@ def build_reports_pdf_bytes(*, report: dict) -> bytes:
             lines = block.get("lines") or ([content] if content else [])
             pdf.set_font("Courier", "", 11)
             for line in lines:
-                pdf.multi_cell(0, 6, txt=_s(line))
+                mc(6, line)
             pdf.ln(2)
 
         elif btype == "page_break":
