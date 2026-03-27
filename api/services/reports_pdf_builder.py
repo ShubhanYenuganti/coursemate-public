@@ -79,8 +79,16 @@ def build_reports_pdf_html(*, report: dict) -> str:
 def build_reports_pdf_bytes(*, report: dict) -> bytes:
     from fpdf import FPDF  # type: ignore
 
+    _TYPO = str.maketrans({
+        '\u2014': '--',  '\u2013': '-',   '\u2012': '-',   '\u2015': '--',
+        '\u2018': "'",   '\u2019': "'",   '\u201a': "'",
+        '\u201c': '"',   '\u201d': '"',   '\u201e': '"',
+        '\u2026': '...', '\u00a0': ' ',   '\u2022': '-',
+        '\u2010': '-',   '\u2011': '-',   '\u25cf': '-',
+    })
+
     def _s(v) -> str:
-        return str(v or "").encode("latin-1", errors="replace").decode("latin-1")
+        return str(v or "").translate(_TYPO).encode("latin-1", errors="replace").decode("latin-1")
 
     normalized = normalize_report_sections(report)
     title = _s(normalized.get("title") or "Report")
@@ -94,7 +102,8 @@ def build_reports_pdf_bytes(*, report: dict) -> bytes:
     W = pdf.w - pdf.l_margin - pdf.r_margin  # ~174mm for A4 w/ 18mm margins
 
     def mc(h, text):
-        pdf.multi_cell(W, h, _s(text))
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(W, h, _s(text), align="L")
 
     pdf.set_font("Helvetica", "B", 24)
     mc(12, title)
@@ -111,13 +120,13 @@ def build_reports_pdf_bytes(*, report: dict) -> bytes:
         btype = block.get("type") or "paragraph"
         content = _s(block.get("content") or "")
 
-        if btype in ("heading", "section"):
+        if btype == "heading":
             pdf.ln(4)
             pdf.set_font("Helvetica", "B", 15)
             mc(9, content)
             pdf.ln(1)
 
-        elif btype in ("subheading", "subsection"):
+        elif btype == "subheading":
             pdf.ln(2)
             pdf.set_font("Helvetica", "B", 12)
             mc(7, content)
@@ -127,7 +136,7 @@ def build_reports_pdf_bytes(*, report: dict) -> bytes:
             mc(6, content)
             pdf.ln(2)
 
-        elif btype in ("bullet_list", "list"):
+        elif btype == "bullet_list":
             pdf.set_font("Helvetica", "", 11)
             for item in (block.get("items") or []):
                 mc(6, f"  - {_s(item)}")
@@ -140,12 +149,52 @@ def build_reports_pdf_bytes(*, report: dict) -> bytes:
             pdf.set_text_color(17, 17, 17)
             pdf.ln(2)
 
-        elif btype in ("equation", "display_equation"):
+        elif btype == "equation":
             lines = block.get("lines") or ([content] if content else [])
             pdf.set_font("Courier", "", 11)
             for line in lines:
                 mc(6, line)
             pdf.ln(2)
+
+        elif btype == "table":
+            headers = block.get("headers") or []
+            rows = block.get("rows") or []
+            n_cols = len(headers) or (len(rows[0]) if rows else 0)
+            if n_cols:
+                col_w = W / n_cols
+                # Measure the tallest cell in each row so all cells in a row share the same height
+                def _row_height(cells, font_style, font_size, line_h):
+                    pdf.set_font("Helvetica", font_style, font_size)
+                    max_lines = 1
+                    for cell_text in cells:
+                        text = _s(cell_text)
+                        # Estimate number of lines by splitting on width
+                        char_w = pdf.get_string_width("W") or 1
+                        estimated = max(1, int(len(text) * char_w / col_w) + 1)
+                        max_lines = max(max_lines, estimated)
+                    return line_h * max_lines
+
+                if headers:
+                    row_h = _row_height(headers, "B", 10, 6)
+                    pdf.set_font("Helvetica", "B", 10)
+                    x0 = pdf.l_margin
+                    y0 = pdf.get_y()
+                    for i, h in enumerate(headers):
+                        pdf.set_xy(x0 + i * col_w, y0)
+                        pdf.multi_cell(col_w, 6, _s(h), border=1, align="L")
+                    pdf.set_xy(x0, y0 + row_h)
+
+                pdf.set_font("Helvetica", "", 10)
+                for row in rows:
+                    cells = row[:n_cols]
+                    row_h = _row_height(cells, "", 10, 6)
+                    x0 = pdf.l_margin
+                    y0 = pdf.get_y()
+                    for i, cell_text in enumerate(cells):
+                        pdf.set_xy(x0 + i * col_w, y0)
+                        pdf.multi_cell(col_w, 6, _s(cell_text), border=1, align="L")
+                    pdf.set_xy(x0, y0 + row_h)
+                pdf.ln(3)
 
         elif btype == "page_break":
             pdf.add_page()

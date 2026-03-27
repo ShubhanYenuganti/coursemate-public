@@ -72,8 +72,16 @@ def build_flashcards_pdf_html(*, deck: dict) -> str:
 def build_flashcards_pdf_bytes(*, deck: dict) -> bytes:
     from fpdf import FPDF  # type: ignore
 
+    _TYPO = str.maketrans({
+        '\u2014': '--',  '\u2013': '-',   '\u2012': '-',   '\u2015': '--',
+        '\u2018': "'",   '\u2019': "'",   '\u201a': "'",
+        '\u201c': '"',   '\u201d': '"',   '\u201e': '"',
+        '\u2026': '...', '\u00a0': ' ',   '\u2022': '-',
+        '\u2010': '-',   '\u2011': '-',   '\u25cf': '-',
+    })
+
     def _s(v) -> str:
-        return str(v or "").encode("latin-1", errors="replace").decode("latin-1")
+        return str(v or "").translate(_TYPO).encode("latin-1", errors="replace").decode("latin-1")
 
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -82,7 +90,8 @@ def build_flashcards_pdf_bytes(*, deck: dict) -> bytes:
     W = pdf.w - pdf.l_margin - pdf.r_margin  # ~174mm for A4 w/ 18mm margins
 
     def mc(h, text):
-        pdf.multi_cell(W, h, _s(text))
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(W, h, _s(text), align="L")
 
     cards = deck.get("cards") or []
 

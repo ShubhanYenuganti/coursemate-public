@@ -127,10 +127,29 @@ function FaqItem({ q, a }) {
   );
 }
 
+const HOW_IT_WORKS = [
+  {
+    step: 1,
+    title: "Sign in with Google",
+    description: "One click, no passwords, no setup. Your Google account is all you need to get started.",
+  },
+  {
+    step: 2,
+    title: "Add your API keys",
+    description: "Connect your OpenAI, Anthropic, or Google Gemini API keys. You pay providers directly, CourseMate never marks up usage.",
+  },
+  {
+    step: 3,
+    title: "Upload materials & start learning",
+    description: "Upload PDFs, slides, or notes. CourseMate indexes them instantly. Start learning with refined selection of models for chat and generation. Chat right away or queue a quiz, flashcard deck, or report to pick up whenever it's ready.",
+  },
+];
+
 export default function LandingPage() {
   const navigate = useNavigate();
   const [activeFeature, setActiveFeature] = useState("rag");
   const [activeGenerate, setActiveGenerate] = useState("quiz");
+  const [activeStep, setActiveStep] = useState(1);
 
   const feature = FEATURES.find((f) => f.id === activeFeature);
   const generateTab = GENERATE_TABS.find((t) => t.id === activeGenerate);
@@ -250,32 +269,38 @@ export default function LandingPage() {
           <p className="text-xs font-semibold tracking-widest text-gray-400 uppercase mb-8">
             How It Works
           </p>
-          <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
-            {[
-              { step: 1, title: "Sign in with Google", active: true },
-              { step: 2, title: "Add your API keys", active: false },
-              { step: 3, title: "Upload materials & start learning", active: false },
-            ].map(({ step, title, active }) => (
-              <div
-                key={step}
-                className={`flex items-center gap-4 px-6 py-4 ${active ? "bg-indigo-50" : ""}`}
-              >
-                <div
-                  className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
-                    active ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-400"
-                  }`}
-                >
-                  {step}
-                </div>
-                <span className={`text-sm font-medium ${active ? "text-indigo-700" : "text-gray-400"}`}>
-                  {title}
-                </span>
-              </div>
-            ))}
+          <div className="flex gap-6 items-start">
+            {/* Steps list */}
+            <div className="flex-1 border-l-2 border-gray-100 space-y-2">
+              {HOW_IT_WORKS.map(({ step, title }) => {
+                const active = step === activeStep;
+                return (
+                  <button
+                    key={step}
+                    onClick={() => setActiveStep(step)}
+                    className={`w-full text-left px-5 py-4 rounded-xl transition-all ${
+                      active
+                        ? "bg-indigo-50 border border-indigo-300 border-l-4 border-l-indigo-500"
+                        : "hover:bg-gray-50"
+                    }`}
+                  >
+                    <p className={`text-xs font-semibold mb-1 ${active ? "text-indigo-600" : "text-gray-400"}`}>
+                      Step {step}
+                    </p>
+                    <p className={`text-sm font-semibold ${active ? "text-gray-900" : "text-gray-400"}`}>
+                      {title}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+            {/* Description panel */}
+            <div className="w-80 flex-shrink-0 bg-white border border-gray-200 rounded-xl p-6 shadow-sm min-h-[160px] flex items-center">
+              <p className="text-gray-700 text-sm leading-relaxed">
+                {HOW_IT_WORKS.find((s) => s.step === activeStep)?.description}
+              </p>
+            </div>
           </div>
-          <p className="mt-4 text-sm text-gray-500 text-center">
-            One click, no passwords, no setup. Your Google account is all you need to get started.
-          </p>
         </div>
       </section>
 
