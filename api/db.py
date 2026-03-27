@@ -297,15 +297,18 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON user_api_keys(user_id);
 
             CREATE TABLE IF NOT EXISTS material_embed_jobs (
-                id              SERIAL PRIMARY KEY,
-                material_id     INTEGER      NOT NULL REFERENCES materials(id) ON DELETE CASCADE UNIQUE,
-                status          VARCHAR(20)  NOT NULL DEFAULT 'pending'
-                                CHECK (status IN ('pending', 'processing', 'done', 'failed', 'skipped')),
-                chunks_created  INTEGER,
-                error_message   TEXT,
-                started_at      TIMESTAMP,
-                completed_at    TIMESTAMP,
-                created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+                id                     SERIAL PRIMARY KEY,
+                material_id            INTEGER      NOT NULL REFERENCES materials(id) ON DELETE CASCADE UNIQUE,
+                status                 VARCHAR(20)  NOT NULL DEFAULT 'pending'
+                                       CHECK (status IN ('pending', 'processing', 'done', 'failed', 'skipped')),
+                chunks_created         INTEGER,
+                chunk_cursor           INTEGER      NOT NULL DEFAULT 0,
+                total_chunks_detected  INTEGER,
+                document_id            UUID REFERENCES documents(id) ON DELETE SET NULL,
+                error_message          TEXT,
+                started_at             TIMESTAMP,
+                completed_at           TIMESTAMP,
+                created_at             TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE INDEX IF NOT EXISTS idx_embed_jobs_status      ON material_embed_jobs(status);

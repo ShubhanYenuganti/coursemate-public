@@ -3,6 +3,9 @@ Async ingestion worker for the embed_materials Lambda.
 
 Uses asyncpg connection pool so concurrent gather() tasks each get their
 own connection — a single asyncpg connection cannot handle concurrent queries.
+
+Supports resumable processing via `cursor` (chunk index to start from) and
+`lambda_context` (used to check remaining execution time before each batch).
 """
 import asyncio
 import json
@@ -16,9 +19,12 @@ import pymupdf4llm
 from embedder import embed_visual, embed_text, embed_visual_text
 from chunkers import route_chunker
 from chunkers.base import ChunkSpec
+from db import get_job_state, save_first_run_state, advance_cursor
 
 DPI = 150
 MAX_DIM = 2048
+BATCH_SIZE = 5
+SAFETY_MARGIN_MS = 90_000  # bail if < 90 s remain in Lambda
 
 import re
 _IMG_PLACEHOLDER_RE = re.compile(r'\*\*==> picture \[\d+ x \d+\] intentionally omitted <==\*\*\n?')
@@ -103,71 +109,112 @@ async def _embed_and_insert_child(pool: asyncpg.Pool, doc_id: str, parent_id: st
 
 
 async def ingest_document(material_id: int, course_id: str | None,
-                          s3_key: str, doc_type: str, file_bytes: bytes) -> int:
+                          s3_key: str, doc_type: str, file_bytes: bytes,
+                          cursor: int = 0, lambda_context=None) -> dict:
+    """
+    Embed document chunks starting from `cursor`.
+
+    Returns:
+        {"needs_continuation": True,  "next_cursor": N, "chunks_done": N}  — timed out, resume from N
+        {"needs_continuation": False, "next_cursor": N, "chunks_done": N}  — fully complete
+    """
     pdf_path = _write_tmp(file_bytes, s3_key)
     database_url = os.environ['DATABASE_URL']
-
-    # Pool size: enough for concurrent child inserts (semaphore caps at 5 concurrent)
     pool = await asyncpg.create_pool(database_url, min_size=1, max_size=10)
 
     try:
-        # 1. Insert documents record
-        async with pool.acquire() as conn:
-            doc_id = await conn.fetchval("""
-                INSERT INTO documents (source_uri, modality, source_type, material_id)
-                VALUES ($1, 'pdf', $2, $3)
-                RETURNING id::text
-            """, s3_key, doc_type, material_id)
-
-        # 2. Extract full markdown
+        # Always extract markdown + open PDF (fast, CPU-bound, ~seconds even for 700 pages)
         full_md = pymupdf4llm.to_markdown(pdf_path)
         pdf_doc = fitz.open(pdf_path)
 
-        # 3. Create parent chunk (sequential — no concurrency needed here)
-        first_page_png = _render_page_png(pdf_doc, 0)
-        parent_visual_emb = await embed_visual(first_page_png)
-        parent_text_emb   = await embed_text(_strip_img_placeholders(full_md)[:8000])
+        if cursor == 0:
+            # ── First run: create document row ───────────────────────────
+            async with pool.acquire() as conn:
+                doc_id = await conn.fetchval("""
+                    INSERT INTO documents (source_uri, modality, source_type, material_id)
+                    VALUES ($1, 'pdf', $2, $3)
+                    RETURNING id::text
+                """, s3_key, doc_type, material_id)
 
-        parent_vis_vec = _vec_str(parent_visual_emb)
-        async with pool.acquire() as conn:
-            parent_id = await conn.fetchval("""
-                INSERT INTO chunks
-                    (document_id, content, retrieval_type, embedding, chunk_index,
-                     modal_meta, is_parent, source_type, course_id)
-                VALUES ($1, $2, 'visual', $3::vector, -1, '{}', true, $4, $5)
-                RETURNING id::text
-            """, doc_id, full_md[:8000], parent_vis_vec, doc_type, course_id)
+            # ── Parent chunk (document-level summary) ────────────────────
+            first_page_png = _render_page_png(pdf_doc, 0)
+            parent_visual_emb = await embed_visual(first_page_png)
+            parent_text_emb   = await embed_text(_strip_img_placeholders(full_md)[:8000])
 
-            if parent_text_emb:
-                parent_txt_vec = _vec_str(parent_text_emb)
-                await conn.execute("""
+            parent_vis_vec = _vec_str(parent_visual_emb)
+            async with pool.acquire() as conn:
+                parent_id = await conn.fetchval("""
                     INSERT INTO chunks
                         (document_id, content, retrieval_type, embedding, chunk_index,
                          modal_meta, is_parent, source_type, course_id)
-                    VALUES ($1, $2, 'text', $3::vector, -1, '{}', true, $4, $5)
-                """, doc_id, full_md[:8000], parent_txt_vec, doc_type, course_id)
+                    VALUES ($1, $2, 'visual', $3::vector, -1, '{}', true, $4, $5)
+                    RETURNING id::text
+                """, doc_id, full_md[:8000], parent_vis_vec, doc_type, course_id)
 
-        # 4. Doc-type-aware chunking
-        chunk_specs = route_chunker(doc_type, pdf_path, full_md)
+                if parent_text_emb:
+                    parent_txt_vec = _vec_str(parent_text_emb)
+                    await conn.execute("""
+                        INSERT INTO chunks
+                            (document_id, content, retrieval_type, embedding, chunk_index,
+                             modal_meta, is_parent, source_type, course_id)
+                        VALUES ($1, $2, 'text', $3::vector, -1, '{}', true, $4, $5)
+                    """, doc_id, full_md[:8000], parent_txt_vec, doc_type, course_id)
 
-        # 5. Embed + insert child chunks concurrently (semaphore caps Voyage API calls)
-        sem = asyncio.Semaphore(5)
-        tasks = [
-            _embed_and_insert_child(pool, doc_id, parent_id, spec,
-                                    doc_type, course_id, sem, pdf_doc)
-            for spec in chunk_specs
-        ]
-        await asyncio.gather(*tasks)
+            # ── Chunk specs + persist state for resumptions ──────────────
+            chunk_specs = route_chunker(doc_type, pdf_path, full_md)
+            save_first_run_state(material_id, doc_id, len(chunk_specs))
+
+        else:
+            # ── Resumption: retrieve doc_id + parent_id from DB ─────────
+            state = get_job_state(material_id)
+            doc_id = state["document_id"]  # str UUID
+
+            async with pool.acquire() as conn:
+                parent_id = await conn.fetchval("""
+                    SELECT id::text FROM chunks
+                    WHERE document_id = $1 AND is_parent = true AND retrieval_type = 'visual'
+                    LIMIT 1
+                """, doc_id)
+
+            chunk_specs = route_chunker(doc_type, pdf_path, full_md)
+
+        # ── Batch embedding loop ─────────────────────────────────────────
+        sem = asyncio.Semaphore(BATCH_SIZE)
+        completed = 0
+        next_cursor = len(chunk_specs)  # default: assume all done
+
+        for batch_start in range(cursor, len(chunk_specs), BATCH_SIZE):
+            # Time guard: stop before Lambda hard-kills us
+            if lambda_context is not None:
+                remaining = lambda_context.get_remaining_time_in_millis()
+                if remaining < SAFETY_MARGIN_MS:
+                    advance_cursor(material_id, batch_start)
+                    next_cursor = batch_start
+                    pdf_doc.close()
+                    return {"needs_continuation": True, "next_cursor": next_cursor,
+                            "chunks_done": completed}
+
+            batch = chunk_specs[batch_start : batch_start + BATCH_SIZE]
+            await asyncio.gather(*[
+                _embed_and_insert_child(pool, doc_id, parent_id, spec,
+                                        doc_type, course_id, sem, pdf_doc)
+                for spec in batch
+            ])
+            completed += len(batch)
+            advance_cursor(material_id, batch_start + len(batch))
 
         pdf_doc.close()
 
+        # All chunks done — write final counts
         total = len(chunk_specs) + 1  # +1 for parent
         async with pool.acquire() as conn:
             await conn.execute(
                 "UPDATE material_embed_jobs SET chunks_created = $1 WHERE material_id = $2",
                 total, material_id
             )
-        return total
+
+        return {"needs_continuation": False, "next_cursor": next_cursor,
+                "chunks_done": completed}
 
     finally:
         await pool.close()
