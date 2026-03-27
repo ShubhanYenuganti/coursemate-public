@@ -362,6 +362,55 @@ class Course:
             return dict(course) if course else None
 
     @staticmethod
+    def get_members(course_id: int) -> List[Dict[str, Any]]:
+        """Return all collaborators (non-owner members) for a course."""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    u.id, u.name, u.email, u.picture,
+                    cm.role, cm.joined_at,
+                    inv.name AS invited_by_name
+                FROM course_members cm
+                JOIN users u ON u.id = cm.user_id
+                LEFT JOIN users inv ON inv.id = cm.invited_by
+                WHERE cm.course_id = %s
+                ORDER BY cm.joined_at ASC
+            """, (course_id,))
+            rows = cursor.fetchall()
+            cursor.close()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    def add_member(course_id: int, user_id: int, invited_by_id: int) -> bool:
+        """Add a collaborator: insert into course_members and co_creator_ids."""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO course_members (course_id, user_id, role, invited_by)
+                VALUES (%s, %s, 'creator', %s)
+                ON CONFLICT (course_id, user_id) DO NOTHING
+            """, (course_id, user_id, invited_by_id))
+            cursor.close()
+        Course.add_co_creator(course_id, user_id)
+        return True
+
+    @staticmethod
+    def remove_member(course_id: int, user_id: int) -> bool:
+        """Remove a collaborator: delete from course_members and co_creator_ids."""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM course_members
+                WHERE course_id = %s AND user_id = %s
+            """, (course_id, user_id))
+            deleted = cursor.rowcount > 0
+            cursor.close()
+        if deleted:
+            Course.remove_co_creator(course_id, user_id)
+        return deleted
+
+    @staticmethod
     def verify_access(course_id: int, user_id: int) -> bool:
         """
         Check if a user has access to a course (is creator or co-creator).
