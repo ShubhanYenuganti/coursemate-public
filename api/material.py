@@ -11,6 +11,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
+import boto3
+
 try:
     from .middleware import send_json, handle_options, authenticate_request, sanitize_string
     from .models import User, Material
@@ -284,7 +286,7 @@ class handler(BaseHTTPRequestHandler):
         )
         Course.add_material(course_id, material['id'])
 
-        # Create a pending embed job — Lambda will pick this up asynchronously
+        # Create a pending embed job and immediately start the Step Functions execution
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -292,6 +294,16 @@ class handler(BaseHTTPRequestHandler):
                 (material['id'],)
             )
             cursor.close()
+
+        if file_type == 'application/pdf':
+            try:
+                sfn = boto3.client('stepfunctions', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
+                sfn.start_execution(
+                    stateMachineArn=os.environ['STATE_MACHINE_ARN'],
+                    input=json.dumps({'s3_key': s3_key, 'cursor': 0}),
+                )
+            except Exception:
+                pass  # embedding is best-effort; material is already created
 
         send_json(self, 201, {"material": material})
 
