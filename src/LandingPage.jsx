@@ -93,9 +93,9 @@ const FAQ_ITEMS = [
 function ProviderBadges({ providers }) {
   const icons = { OpenAI: "○", Anthropic: "◆", "Google Gemini": "✦" };
   return (
-    <div className="flex items-center gap-4 text-sm text-gray-500">
+    <div className="flex items-center gap-2 text-sm text-gray-600">
       {providers.map((p) => (
-        <span key={p} className="flex items-center gap-1">
+        <span key={p} className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-gray-200 bg-white">
           <span>{icons[p]}</span>
           <span>{p}</span>
         </span>
@@ -217,18 +217,20 @@ export default function LandingPage() {
       {/* Features */}
       <section className="bg-gray-50 py-16">
         <div className="max-w-5xl mx-auto px-6">
-          <p className="text-xs font-semibold tracking-widest text-gray-400 uppercase mb-6">
+          <p className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-6">
             Features
           </p>
-          {/* Tabs */}
-          <div className="flex gap-1 mb-8 border-b border-gray-200">
+          {/* Card wrapping tabs + content */}
+          <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+          {/* Tabs - segmented control */}
+          <div className="grid grid-cols-3 gap-1 bg-gray-100 rounded-xl p-1 mb-6">
             {FEATURES.map((f) => (
               <button
                 key={f.id}
                 onClick={() => setActiveFeature(f.id)}
-                className={`px-4 py-2.5 text-sm font-medium rounded-t transition-colors ${
+                className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-all ${
                   activeFeature === f.id
-                    ? "text-indigo-600 border-b-2 border-indigo-600 -mb-px bg-white"
+                    ? "bg-white text-indigo-600 shadow-sm border border-gray-200"
                     : "text-gray-500 hover:text-gray-700"
                 }`}
               >
@@ -237,7 +239,7 @@ export default function LandingPage() {
             ))}
           </div>
           {/* Feature content */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div>
             <div className="flex items-start gap-3 mb-3">
               <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
                 <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -260,13 +262,14 @@ export default function LandingPage() {
             </ul>
             <ProviderBadges providers={feature.badges} />
           </div>
+          </div>
         </div>
       </section>
 
       {/* How It Works */}
       <section id="how-it-works" className="py-16">
         <div className="max-w-5xl mx-auto px-6">
-          <p className="text-xs font-semibold tracking-widest text-gray-400 uppercase mb-8">
+          <p className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-8">
             How It Works
           </p>
           <div className="flex gap-6 items-start">
@@ -307,27 +310,27 @@ export default function LandingPage() {
       {/* What You Can Generate */}
       <section className="bg-gray-50 py-16">
         <div className="max-w-5xl mx-auto px-6">
-          <p className="text-xs font-semibold tracking-widest text-gray-400 uppercase mb-6">
+          <p className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-6">
             What You Can Generate
           </p>
-          {/* Tabs */}
-          <div className="flex gap-1 mb-6 border-b border-gray-200">
-            {GENERATE_TABS.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setActiveGenerate(t.id)}
-                className={`px-4 py-2.5 text-sm font-medium rounded-t transition-colors ${
-                  activeGenerate === t.id
-                    ? "text-indigo-600 border-b-2 border-indigo-600 -mb-px bg-white"
-                    : "text-gray-500 hover:text-gray-700"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-start gap-2 mb-2">
+          <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+            {/* Tabs - segmented control */}
+            <div className="grid grid-cols-3 gap-1 bg-gray-100 rounded-xl p-1 mb-6">
+              {GENERATE_TABS.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setActiveGenerate(t.id)}
+                  className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-all ${
+                    activeGenerate === t.id
+                      ? "bg-white text-indigo-600 shadow-sm border border-gray-200"
+                      : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-start gap-2">
               <svg className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h8" />
               </svg>
@@ -342,8 +345,8 @@ export default function LandingPage() {
 
       {/* FAQ */}
       <section className="py-16">
-        <div className="max-w-3xl mx-auto px-6">
-          <p className="text-xs font-semibold tracking-widest text-gray-400 uppercase mb-8">FAQ</p>
+        <div className="max-w-5xl mx-auto px-6">
+          <p className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-8">FAQ</p>
           <div>
             {FAQ_ITEMS.map((item) => (
               <FaqItem key={item.q} q={item.q} a={item.a} />
