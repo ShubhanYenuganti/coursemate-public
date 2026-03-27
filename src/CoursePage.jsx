@@ -60,8 +60,12 @@ function ToolbarItem({ icon, label, active, onClick }) {
 export default function CoursePage({ course, userData, csrfToken, onSignOut, onCourseUpdate }) {
   const navigate = useNavigate();
   const storageKey = `coursemate_active_tab_${course?.id}`;
+  const isOwner = course?.primary_creator === userData?.db_id;
   const [activeTab, setActiveTab] = useState(
-    () => localStorage.getItem(storageKey) || 'home'
+    () => {
+      const saved = localStorage.getItem(storageKey) || 'home';
+      return saved === 'home' && !isOwner ? 'materials' : saved;
+    }
   );
 
   function handleTabChange(tab) {
@@ -74,8 +78,6 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
   const [descValue, setDescValue] = useState(course?.description || '');
   const [descStatus, setDescStatus] = useState(null); // null | 'saving' | 'error'
   const [descError, setDescError] = useState('');
-
-  const isOwner = course?.primary_creator === userData?.db_id;
 
   async function handleSaveDesc() {
     setDescStatus('saving');
@@ -251,8 +253,12 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
 
       {/* Floating toolbar */}
       <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-gray-200 shadow-lg">
-        <ToolbarItem icon="🏠" label="Overview"  active={activeTab === 'home'}      onClick={() => handleTabChange('home')} />
-        <div className="w-px h-6 bg-gray-200" />
+        {isOwner && (
+          <>
+            <ToolbarItem icon="🏠" label="Overview" active={activeTab === 'home'} onClick={() => handleTabChange('home')} />
+            <div className="w-px h-6 bg-gray-200" />
+          </>
+        )}
         <ToolbarItem icon="📄" label="Materials" active={activeTab === 'materials'} onClick={() => handleTabChange('materials')} />
         <div className="w-px h-6 bg-gray-200" />
         <ToolbarItem icon="💬" label="Chat"      active={activeTab === 'chat'}      onClick={() => handleTabChange('chat')} />
