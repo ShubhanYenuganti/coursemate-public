@@ -128,6 +128,7 @@ export default function App() {
 
       if (data.csrf_token) setCsrfToken(data.csrf_token);
       setUserData(data.user ?? data);
+      localStorage.setItem('cm_returning_user', '1');
       navigate("/dashboard");
     } catch (e) {
       setError(e.message);
@@ -175,6 +176,8 @@ export default function App() {
         element={
           userData ? (
             <Navigate to="/dashboard" replace />
+          ) : localStorage.getItem('cm_returning_user') ? (
+            <Navigate to="/signin" replace />
           ) : (
             <LandingPage />
           )
