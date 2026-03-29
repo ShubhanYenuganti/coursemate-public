@@ -1,4 +1,7 @@
 .claude
+.codex
+.cursor
+.github
 node_modules/
 dist/
 .env

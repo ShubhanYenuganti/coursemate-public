@@ -61,7 +61,7 @@ def _resolve_material(s3_key: str):
 
 
 def lambda_handler(event, context):
-    # ── Launcher mode: S3 ObjectCreated ──────────────────────────────────────
+    # ── Launcher mode: S3 ObjectCreated (legacy path, kept for safety) ────────
     if 'Records' in event:
         s3_key = event['Records'][0]['s3']['object']['key']
         sfn_client.start_execution(
@@ -71,15 +71,29 @@ def lambda_handler(event, context):
         return {'status': 'launched'}
 
     # ── Worker mode: invoked by Step Functions ────────────────────────────────
-    return _worker(event, context)
+    s3_key = event.get('s3_key')
+    if not s3_key:
+        return {'status': 'failed', 'error': 'missing s3_key in event'}
+
+    # Resolve material early so any crash below can still mark the job failed
+    row = _resolve_material(s3_key)
+    material_id = row['id'] if row else None
+
+    try:
+        return _worker(event, context, row=row)
+    except Exception as exc:
+        if material_id:
+            _mark_job(material_id, 'failed', error=str(exc))
+        return {'status': 'failed', 's3_key': s3_key, 'error': str(exc)}
 
 
-def _worker(event: dict, context) -> dict:
+def _worker(event: dict, context, row=None) -> dict:
     s3_key = event['s3_key']
     cursor = int(event.get('cursor', 0))
 
-    # 1. Resolve material record
-    row = _resolve_material(s3_key)
+    # 1. Resolve material record (may be pre-resolved by lambda_handler)
+    if row is None:
+        row = _resolve_material(s3_key)
     if not row:
         # confirm_upload hasn't run yet (race condition) — nothing to do
         return {'status': 'done', 's3_key': s3_key, 'cursor': 0}

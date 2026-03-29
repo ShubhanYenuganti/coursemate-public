@@ -104,7 +104,9 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 400, {"error": "You cannot invite yourself"})
             return
 
-        Course.add_member(course_id, invitee["id"], inviter["id"])
+        if not Course.add_member(course_id, invitee["id"], inviter["id"]):
+            send_json(self, 409, {"error": "User is already a collaborator on this course"})
+            return
         members = Course.get_members(course_id)
         send_json(self, 200, {"members": [_serialize_member(m) for m in members]})
 

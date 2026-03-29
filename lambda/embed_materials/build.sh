@@ -49,8 +49,21 @@ fi
 
 
 
+# ─── Step 4: Update Lambda to use the new image ────────────────────────────
+echo "4. Updating Lambda function code..."
+aws lambda update-function-code \
+  --function-name embed_materials \
+  --image-uri "${FULL_URI}" \
+  --region "${AWS_REGION}"
+echo "   Waiting for update to complete..."
+aws lambda wait function-updated \
+  --function-name embed_materials \
+  --region "${AWS_REGION}"
+echo "   Done."
+echo ""
+
 # ─── Summary ───────────────────────────────────────────────────────────────
-echo "=== Image pushed successfully ==="
+echo "=== Image pushed and Lambda updated successfully ==="
 echo ""
 echo "Image URI: ${FULL_URI}"
 echo ""

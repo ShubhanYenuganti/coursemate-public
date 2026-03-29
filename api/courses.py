@@ -383,7 +383,8 @@ class Course:
 
     @staticmethod
     def add_member(course_id: int, user_id: int, invited_by_id: int) -> bool:
-        """Add a collaborator: insert into course_members and co_creator_ids."""
+        """Add a collaborator: insert into course_members and co_creator_ids.
+        Returns False if the user is already a member (INSERT did nothing)."""
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -391,7 +392,10 @@ class Course:
                 VALUES (%s, %s, 'creator', %s)
                 ON CONFLICT (course_id, user_id) DO NOTHING
             """, (course_id, user_id, invited_by_id))
+            inserted = cursor.rowcount > 0
             cursor.close()
+        if not inserted:
+            return False
         Course.add_co_creator(course_id, user_id)
         return True
 
