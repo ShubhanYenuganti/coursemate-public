@@ -1,22 +1,16 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { formatDate } from './utils/dateUtils';
 
-/** Deterministic indigo/cyan/violet accent from a string */
-function cardAccent(title) {
-  const accents = [
-    "from-indigo-400 to-indigo-600",
-    "from-cyan-400 to-cyan-600",
-    "from-violet-400 to-violet-600",
-    "from-blue-400 to-blue-600",
-    "from-teal-400 to-teal-600",
-    "from-sky-400 to-sky-600",
-  ];
-  let hash = 0;
-  for (let i = 0; i < title.length; i++) hash = (hash * 31 + title.charCodeAt(i)) | 0;
-  return accents[Math.abs(hash) % accents.length];
-}
 
+function EditIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </svg>
+  );
+}
 
 function DotsIcon() {
   return (
@@ -66,48 +60,91 @@ function CourseMenu({ courseId, onDelete }) {
   );
 }
 
-function CourseCard({ course, onDelete, onClick }) {
-  const accent = cardAccent(course.title);
-  const initial = course.title.trim()[0]?.toUpperCase() || "?";
+function CourseCard({ course, onDelete, onClick, onRename }) {
   const isCoCreator = !course.is_owner;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(course.title);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const startEdit = useCallback((e) => {
+    e.stopPropagation();
+    setDraft(course.title);
+    setEditing(true);
+  }, [course.title]);
+
+  const commitEdit = useCallback(() => {
+    const trimmed = draft.trim();
+    setEditing(false);
+    if (trimmed && trimmed !== course.title) onRename(course.id, trimmed);
+    else setDraft(course.title);
+  }, [draft, course.title, course.id, onRename]);
+
+  const handleKeyDown = useCallback((e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+    if (e.key === 'Escape') { setEditing(false); setDraft(course.title); }
+  }, [commitEdit, course.title]);
 
   return (
     <div
-      onClick={() => onClick(course)}
-      className="group relative bg-white/80 backdrop-blur-sm border border-gray-200 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer flex flex-col overflow-hidden"
+      onClick={() => !editing && onClick(course)}
+      className="group relative bg-white/80 backdrop-blur-sm border border-gray-200 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer flex flex-col overflow-hidden min-h-[160px]"
     >
-      {/* Card top: icon + menu */}
-      <div className="flex items-start justify-between p-4 pb-0">
-        <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${accent} flex items-center justify-center flex-shrink-0`}>
-          <span className="text-xl font-bold text-white">{initial}</span>
+      {/* Card top: title + meta + menu */}
+      <div className="flex items-start justify-between p-4">
+        <div className="flex-1 min-w-0 pr-1">
+          {editing ? (
+            <input
+              ref={inputRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commitEdit}
+              onKeyDown={handleKeyDown}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full text-base font-semibold text-gray-900 leading-snug bg-white border border-indigo-300 rounded-lg px-2 py-0.5 outline-none focus:ring-2 focus:ring-indigo-400 mb-1.5"
+              maxLength={200}
+            />
+          ) : (
+            <div className="flex items-center gap-1 mb-1.5">
+              <h3 className="text-base font-semibold text-gray-900 leading-snug line-clamp-2">
+                {course.title}
+              </h3>
+              {course.is_owner && (
+                <button
+                  type="button"
+                  onClick={startEdit}
+                  className="flex-shrink-0 p-0.5 text-gray-300 hover:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                  aria-label="Rename course"
+                >
+                  <EditIcon />
+                </button>
+              )}
+            </div>
+          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {formatDate(course.created_at) && (
+              <span className="text-xs text-gray-400">{formatDate(course.created_at)}</span>
+            )}
+            {isCoCreator && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-500 border border-indigo-100 font-medium">
+                Co-creator
+              </span>
+            )}
+            {course.status && course.status !== "draft" && (
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${
+                course.status === "published"
+                  ? "bg-green-50 text-green-600 border-green-100"
+                  : "bg-gray-50 text-gray-400 border-gray-200"
+              }`}>
+                {course.status}
+              </span>
+            )}
+          </div>
         </div>
         <CourseMenu courseId={course.id} onDelete={onDelete} />
-      </div>
-
-      {/* Card bottom: title + meta */}
-      <div className="p-4 pt-3 mt-auto">
-        <h3 className="text-base font-semibold text-gray-900 leading-snug line-clamp-2 mb-1.5">
-          {course.title}
-        </h3>
-        <div className="flex items-center gap-2 flex-wrap">
-          {formatDate(course.created_at) && (
-            <span className="text-xs text-gray-400">{formatDate(course.created_at)}</span>
-          )}
-          {isCoCreator && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-500 border border-indigo-100 font-medium">
-              Co-creator
-            </span>
-          )}
-          {course.status && course.status !== "draft" && (
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${
-              course.status === "published"
-                ? "bg-green-50 text-green-600 border-green-100"
-                : "bg-gray-50 text-gray-400 border-gray-200"
-            }`}>
-              {course.status}
-            </span>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -161,6 +198,27 @@ export default function CardViewer({ onCreateNew }) {
     navigate(`/course/${course.id}`, { state: { course } });
   };
 
+  const handleRename = async (courseId, newTitle) => {
+    setCourses((prev) => prev.map((c) => c.id === courseId ? { ...c, title: newTitle } : c));
+    try {
+      const res = await fetch("/api/course", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ course_id: courseId, title: newTitle }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      setError(`Failed to rename course: ${e.message}`);
+      fetch("/api/course", { credentials: "include" })
+        .then((r) => r.json())
+        .then((data) => setCourses(data.courses || []));
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -203,6 +261,7 @@ export default function CardViewer({ onCreateNew }) {
             course={course}
             onDelete={handleDelete}
             onClick={handleCardClick}
+            onRename={handleRename}
           />
         ))}
       </div>

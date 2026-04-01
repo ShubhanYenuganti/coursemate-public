@@ -7,6 +7,8 @@ import os
 import boto3
 from botocore.exceptions import ClientError
 
+PART_SIZE = 50 * 1024 * 1024  # 50 MB — max size per presigned POST / multipart part
+
 ALLOWED_TYPES = {
     'application/pdf',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -102,3 +104,54 @@ def delete_file(s3_key: str) -> None:
     client = _get_client()
     bucket = os.environ.get('AWS_S3_BUCKET_NAME')
     client.delete_object(Bucket=bucket, Key=s3_key)
+
+
+# ---------------------------------------------------------------------------
+# S3 multipart upload helpers (for files > PART_SIZE)
+# ---------------------------------------------------------------------------
+
+def create_multipart_upload(s3_key: str, file_type: str) -> str:
+    """Initiate an S3 multipart upload. Returns the UploadId."""
+    client = _get_client()
+    bucket = os.environ.get('AWS_S3_BUCKET_NAME')
+    response = client.create_multipart_upload(
+        Bucket=bucket,
+        Key=s3_key,
+        ContentType=file_type,
+    )
+    return response['UploadId']
+
+
+def generate_multipart_part_url(s3_key: str, upload_id: str, part_number: int, expiration: int = 3600) -> str:
+    """Generate a presigned PUT URL for a single multipart part. Expiry: 1 hour."""
+    client = _get_client()
+    bucket = os.environ.get('AWS_S3_BUCKET_NAME')
+    return client.generate_presigned_url(
+        'upload_part',
+        Params={
+            'Bucket': bucket,
+            'Key': s3_key,
+            'UploadId': upload_id,
+            'PartNumber': part_number,
+        },
+        ExpiresIn=expiration,
+    )
+
+
+def complete_multipart_upload(s3_key: str, upload_id: str, parts: list) -> None:
+    """Complete a multipart upload. parts: [{'PartNumber': n, 'ETag': '...'}]"""
+    client = _get_client()
+    bucket = os.environ.get('AWS_S3_BUCKET_NAME')
+    client.complete_multipart_upload(
+        Bucket=bucket,
+        Key=s3_key,
+        UploadId=upload_id,
+        MultipartUpload={'Parts': parts},
+    )
+
+
+def abort_multipart_upload(s3_key: str, upload_id: str) -> None:
+    """Abort a multipart upload and free the uploaded parts."""
+    client = _get_client()
+    bucket = os.environ.get('AWS_S3_BUCKET_NAME')
+    client.abort_multipart_upload(Bucket=bucket, Key=s3_key, UploadId=upload_id)

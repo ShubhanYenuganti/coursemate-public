@@ -6,6 +6,7 @@
 # DELETE /api/material                              → delete material
 
 import json
+import math
 import os
 import uuid
 from http.server import BaseHTTPRequestHandler
@@ -20,9 +21,12 @@ try:
     from .db import get_db
     from .document_types import VALID_DOC_TYPES, DEFAULT_DOC_TYPE
     from .s3_utils import (
+        PART_SIZE,
         validate_file_type, get_file_extension,
         generate_upload_presigned_url, generate_download_presigned_url,
         verify_file_exists, delete_file,
+        create_multipart_upload, generate_multipart_part_url,
+        complete_multipart_upload, abort_multipart_upload,
     )
 except ImportError:
     from middleware import send_json, handle_options, authenticate_request, sanitize_string
@@ -31,9 +35,12 @@ except ImportError:
     from db import get_db
     from document_types import VALID_DOC_TYPES, DEFAULT_DOC_TYPE
     from s3_utils import (
+        PART_SIZE,
         validate_file_type, get_file_extension,
         generate_upload_presigned_url, generate_download_presigned_url,
         verify_file_exists, delete_file,
+        create_multipart_upload, generate_multipart_part_url,
+        complete_multipart_upload, abort_multipart_upload,
     )
 
 
@@ -197,6 +204,7 @@ class handler(BaseHTTPRequestHandler):
         filename = sanitize_string(data.get('filename', ''), max_length=255)
         file_type = sanitize_string(data.get('file_type', ''), max_length=100)
         visibility = data.get('visibility', 'private')
+        file_size = data.get('file_size')  # bytes, optional — required for multipart routing
 
         if not course_id or not filename or not file_type:
             send_json(self, 400, {"error": "course_id, filename, and file_type are required"})
@@ -210,6 +218,15 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 400, {"error": "Unsupported file type"})
             return
 
+        if file_size is not None:
+            try:
+                file_size = int(file_size)
+                if file_size < 0:
+                    raise ValueError
+            except (ValueError, TypeError):
+                send_json(self, 400, {"error": "file_size must be a non-negative integer (bytes)"})
+                return
+
         user = User.get_by_google_id(google_id)
         if not user:
             send_json(self, 404, {"error": "User not found"})
@@ -222,6 +239,32 @@ class handler(BaseHTTPRequestHandler):
         ext = get_file_extension(filename)
         s3_key = f"materials/{uuid.uuid4()}.{ext}" if ext else f"materials/{uuid.uuid4()}"
 
+        # Large file: use S3 multipart upload so each part stays within PART_SIZE.
+        if file_size is not None and file_size > PART_SIZE:
+            num_parts = math.ceil(file_size / PART_SIZE)
+            try:
+                upload_id = create_multipart_upload(s3_key, file_type)
+                parts = [
+                    {
+                        "part_number": i,
+                        "upload_url": generate_multipart_part_url(s3_key, upload_id, i),
+                    }
+                    for i in range(1, num_parts + 1)
+                ]
+            except Exception as e:
+                send_json(self, 500, {"error": "Failed to initiate multipart upload", "detail": str(e)})
+                return
+
+            send_json(self, 200, {
+                "multipart": True,
+                "upload_id": upload_id,
+                "s3_key": s3_key,
+                "parts": parts,
+                "part_size": PART_SIZE,
+            })
+            return
+
+        # Small file (or no file_size provided): single presigned POST.
         try:
             presigned = generate_upload_presigned_url(s3_key, file_type)
         except Exception as e:
@@ -229,6 +272,7 @@ class handler(BaseHTTPRequestHandler):
             return
 
         send_json(self, 200, {
+            "multipart": False,
             "upload_url": presigned['url'],
             "fields": presigned['fields'],
             "s3_key": s3_key,
@@ -240,6 +284,9 @@ class handler(BaseHTTPRequestHandler):
         filename = sanitize_string(data.get('filename', ''), max_length=255)
         file_type = sanitize_string(data.get('file_type', ''), max_length=100)
         visibility = data.get('visibility', 'private')
+        # Multipart-only fields
+        upload_id = data.get('upload_id')
+        parts = data.get('parts')  # [{'part_number': n, 'etag': '...'}, ...]
 
         if not s3_key or not course_id or not filename or not file_type:
             send_json(self, 400, {"error": "s3_key, course_id, filename, and file_type are required"})
@@ -247,6 +294,10 @@ class handler(BaseHTTPRequestHandler):
 
         if visibility not in ('public', 'private'):
             send_json(self, 400, {"error": "visibility must be 'public' or 'private'"})
+            return
+
+        if upload_id and not parts:
+            send_json(self, 400, {"error": "parts is required when upload_id is provided"})
             return
 
         user = User.get_by_google_id(google_id)
@@ -257,6 +308,22 @@ class handler(BaseHTTPRequestHandler):
         if not Course.verify_access(course_id, user['id']):
             send_json(self, 403, {"error": "Access denied to this course"})
             return
+
+        # Complete multipart upload before verifying existence.
+        if upload_id:
+            try:
+                s3_parts = [
+                    {'PartNumber': p['part_number'], 'ETag': p['etag']}
+                    for p in parts
+                ]
+                complete_multipart_upload(s3_key, upload_id, s3_parts)
+            except Exception as e:
+                try:
+                    abort_multipart_upload(s3_key, upload_id)
+                except Exception:
+                    pass
+                send_json(self, 500, {"error": "Failed to complete multipart upload", "detail": str(e)})
+                return
 
         try:
             if not verify_file_exists(s3_key):

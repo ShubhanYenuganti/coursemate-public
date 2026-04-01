@@ -105,8 +105,9 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 403, {"error": "Only the course owner can edit it"})
             return
 
+        title = sanitize_string(data.get('title', '') or '', max_length=200) or None
         description = sanitize_string(data.get('description', '') or '', max_length=2000) or None
-        updated = Course.update(course_id, description=description)
+        updated = Course.update(course_id, title=title, description=description)
         send_json(self, 200, {"course": updated})
 
     # --------------------------------------------------------------- DELETE --

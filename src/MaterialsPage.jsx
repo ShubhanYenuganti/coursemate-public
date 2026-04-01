@@ -143,7 +143,7 @@ function UploadZone({ onFiles, disabled }) {
       <div>
         <h3 className="text-sm font-semibold text-gray-800">Upload Files</h3>
         <p className="text-xs text-gray-500 mt-0.5">
-          PDF, DOCX, TXT, JPEG, PNG, GIF, SVG, XLSX, CSV · max 10 MB per file · batches of 3
+          PDF, DOCX, TXT, JPEG, PNG, GIF, SVG, XLSX, CSV
         </p>
       </div>
 
