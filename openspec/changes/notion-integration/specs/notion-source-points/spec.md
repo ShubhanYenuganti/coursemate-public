@@ -5,7 +5,7 @@
 
 #### Scenario: Adding a new source point
 - **WHEN** an authenticated connected user calls `POST /api/notion?action=add_source_point` with `{ course_id: 3, database_id: 'abc123', database_title: 'Lecture Notes' }`
-- **THEN** a row is inserted into `integration_source_points` with `provider='notion'`, `external_id='abc123'`, `last_synced_at=NULL`
+- **THEN** a row is inserted into `integration_source_points` with `provider='notion'`, `external_id='abc123'`, `last_synced_at=NULL`, `is_active=true`
 - **AND** the response returns `{ id, external_id, external_title, last_synced_at, is_active }`
 
 #### Scenario: Adding a duplicate source point
@@ -16,18 +16,38 @@
 - **WHEN** the user has no stored Notion token
 - **THEN** the endpoint returns 403 Forbidden with `{ "error": "Notion not connected" }`
 
-### Requirement: User can list and remove source points per course
-`GET /api/notion?action=list_source_points&course_id=<id>` SHALL return all of the current user's active source points for that course. `DELETE /api/notion?action=remove_source_point&id=<id>` SHALL set `is_active=false` (soft delete) for the given source point owned by the requesting user.
+### Requirement: User can list source points per course (including disabled)
+`GET /api/notion?action=list_source_points&course_id=<id>` SHALL return all of the current user's source points for that course — both active (`is_active=true`) and disabled (`is_active=false`). This allows the UI to render disabled source points with a re-enable affordance.
 
 #### Scenario: Listing source points
 - **WHEN** `GET /api/notion?action=list_source_points&course_id=3`
-- **THEN** the response returns an array of the user's source points: `[{ id, external_id, external_title, last_synced_at, is_active }]`
+- **THEN** the response returns an array of all the user's source points: `[{ id, external_id, external_title, last_synced_at, is_active }]`
+- **AND** both active and disabled source points are included
 - **AND** only the requesting user's source points are returned (not other collaborators')
+
+### Requirement: User can disable and re-enable a source point
+`PATCH /api/notion?action=toggle_source_point&id=<id>` SHALL flip `is_active` for the given source point owned by the requesting user. A disabled source point (`is_active=false`) is still visible in the UI with a re-enable affordance. The poller will not process disabled source points.
+
+#### Scenario: Disabling an active source point
+- **WHEN** `PATCH /api/notion?action=toggle_source_point&id=7` and the row has `is_active=true`
+- **THEN** `integration_source_points.is_active` is set to `false`
+- **AND** the response returns the updated row `{ id, external_id, external_title, last_synced_at, is_active: false }`
+- **AND** the poller will no longer process that source point until re-enabled
+- **AND** existing materials ingested from that source point are NOT affected
+
+#### Scenario: Re-enabling a disabled source point
+- **WHEN** `PATCH /api/notion?action=toggle_source_point&id=7` and the row has `is_active=false`
+- **THEN** `integration_source_points.is_active` is set to `true`
+- **AND** the poller will resume processing that source point on its next run
+
+### Requirement: User can permanently remove a source point
+`DELETE /api/notion?action=remove_source_point&id=<id>` SHALL permanently delete the row from `integration_source_points` for the given source point owned by the requesting user. This action is not reversible. Existing materials ingested from that source point are NOT deleted.
 
 #### Scenario: Removing a source point
 - **WHEN** `DELETE /api/notion?action=remove_source_point&id=7`
-- **THEN** `integration_source_points.is_active` is set to `false` for row 7
-- **AND** existing materials ingested from that source point are NOT deleted (they remain as course materials)
+- **THEN** the row is permanently deleted from `integration_source_points`
+- **AND** the source point no longer appears in any list responses
+- **AND** existing materials ingested from that source point remain as course materials
 - **AND** the poller will no longer process that source point
 
 ### Requirement: New Notion pages are automatically ingested as course materials
@@ -73,7 +93,7 @@ Re-ingestion steps:
 - **THEN** the poller skips the page and logs a warning; no material row is created
 
 ### Requirement: Polling runs every ~2 hours via EventBridge Scheduler
-An AWS EventBridge Scheduler rule SHALL invoke the `integration_poller` Lambda on a fixed rate schedule (every 2 hours). The Lambda SHALL process all active source points across all users and providers within a single invocation.
+An AWS EventBridge Scheduler rule SHALL invoke the `integration_poller` Lambda on a fixed rate schedule (every 2 hours). The Lambda SHALL process all active source points (`is_active=true`) across all users and providers within a single invocation.
 
 #### Scenario: Poller processes multiple source points
 - **WHEN** EventBridge triggers the `integration_poller` Lambda
@@ -82,12 +102,12 @@ An AWS EventBridge Scheduler rule SHALL invoke the `integration_poller` Lambda o
 - **AND** failures on one source point do not abort processing of others (continue-on-error)
 
 ### Requirement: User can trigger an immediate manual sync
-`POST /api/notion?action=sync&course_id=<id>` SHALL directly invoke the `integration_poller` Lambda (AWS SDK `invoke` with `InvocationType=Event`) filtered to the requesting user's source points for that course. The response SHALL return 202 Accepted immediately; sync runs asynchronously.
+`POST /api/notion?action=sync&course_id=<id>` SHALL directly invoke the `integration_poller` Lambda (AWS SDK `invoke` with `InvocationType=Event`) filtered to the requesting user's **active** source points for that course. Disabled source points are excluded from manual sync. The response SHALL return 202 Accepted immediately; sync runs asynchronously.
 
 #### Scenario: Manual sync triggered
 - **WHEN** the user clicks "Sync Now" for a course
 - **THEN** `POST /api/notion?action=sync&course_id=3` returns 202 immediately
-- **AND** the poller Lambda is invoked asynchronously for only this user's source points in course 3
+- **AND** the poller Lambda is invoked asynchronously for only this user's active source points in course 3
 - **AND** the UI shows a "Syncing…" indicator; on next page load the updated `last_synced_at` is visible
 
 ### Requirement: Ingested Notion materials are private by default

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: User can search Notion pages and databases
-`GET /api/notion?action=search&q=<query>` SHALL call Notion's `/search` API using the user's stored access token and return a filtered list of pages and databases matching the query. Results SHALL include `id`, `title`, `type` ('page' | 'database'), and `icon` for display. The endpoint SHALL return a maximum of 20 results.
+`GET /api/notion?action=search&q=<query>` SHALL call Notion's `/search` API using the user's stored access token and return a filtered list of pages and databases matching the query. Results SHALL include `id`, `title`, `type` ('page' | 'database'), and `icon` for display. The endpoint SHALL return a maximum of 20 results. An optional `filter_type` query param (`page` | `database`) SHALL restrict results to that type only.
 
 #### Scenario: Search returns matching results
 - **WHEN** an authenticated connected user calls `GET /api/notion?action=search&q=robotics`
@@ -21,12 +21,24 @@
 
 #### Scenario: First-time target selection
 - **WHEN** the user selects a Notion destination for a flashcard generation from course 5
-- **THEN** a row is inserted into `notion_course_targets` with generation_type='flashcards', course_id=5
+- **THEN** a row is inserted into `course_export_targets` with generation_type='flashcards', course_id=5
 - **AND** subsequent flashcard exports from course 5 default to that destination
 
 #### Scenario: Re-selecting a different target
 - **WHEN** the user selects a different Notion destination for the same (course, generation_type)
-- **THEN** the existing row in `notion_course_targets` is updated (upsert)
+- **THEN** the existing row in `course_export_targets` is updated (upsert)
+
+### Requirement: Picker accepts an allowedTypes constraint
+`NotionTargetPicker` SHALL accept an `allowedTypes` prop (array of `'page'` | `'database'`). When set, the picker SHALL only display and allow selection of results matching those types. Search results SHALL be filtered client-side after the API call (or by passing `filter_type` to the search endpoint). The `+ Create new` sub-form SHALL only offer type options present in `allowedTypes`.
+
+#### Scenario: Picker restricted to pages only
+- **WHEN** `NotionTargetPicker` is opened with `allowedTypes: ['page']`
+- **THEN** search results show only Notion pages (databases are hidden)
+- **AND** the `+ Create new` sub-form shows only "Page" as a type option
+
+#### Scenario: Picker with no allowedTypes (default)
+- **WHEN** `allowedTypes` is not passed or is `['page', 'database']`
+- **THEN** both pages and databases appear in search results and create-new options
 
 ### Requirement: Export UI shows current sticky target
 In the export picker UI, if a sticky target already exists for the (course, generation_type), the picker SHALL pre-select that target. The user MAY change it before exporting, which SHALL update the sticky target.
@@ -41,20 +53,15 @@ In the export picker UI, if a sticky target already exists for the (course, gene
 - **THEN** the picker opens with no pre-selection and prompts the user to search
 
 ### Requirement: User can create a new Notion page from the picker
-The picker SHALL include a `+ Create new` button. When clicked, a sub-form SHALL appear allowing the user to: select type (Page or Database), enter a name, and search for a parent page to nest under. On confirmation, the backend SHALL call `POST /v1/pages` (for pages) or `POST /v1/databases` (for databases) and auto-select the created resource as the sticky target.
+The picker SHALL include a `+ Create new` button. When clicked, a sub-form SHALL appear allowing the user to: enter a name and search for a parent page to nest under. If `allowedTypes` includes `'database'`, the sub-form SHALL also offer a type selector (Page or Database). On confirmation, the backend SHALL call `POST /v1/pages` and auto-select the created resource as the sticky target.
 
 #### Scenario: Creating a new page as export destination
-- **WHEN** the user clicks `+ Create new`, selects "Page", enters name "Quiz Answers", picks parent "Study Vault"
+- **WHEN** the user clicks `+ Create new`, enters name "Quiz Answers", picks parent "Study Vault"
 - **THEN** `POST /api/notion?action=create_target` is called with `{ type: 'page', name: 'Quiz Answers', parent_id: '<Study Vault id>' }`
 - **AND** the backend creates the page via Notion API and upserts it into `course_export_targets`
 - **AND** the picker closes with the new page pre-selected
 
-#### Scenario: Creating a new database as export destination
-- **WHEN** the user clicks `+ Create new`, selects "Database", enters name "Robotics Flashcards", picks parent page
-- **THEN** the backend creates a Notion database with hardcoded properties: `Front` (title), `Back` (rich_text), `Hint` (rich_text)
-- **AND** the new database is auto-selected as the sticky target for the current (course, generation_type)
-
 #### Scenario: Parent page search in create-new sub-form
 - **WHEN** the user types in the parent page search field
-- **THEN** the same `GET /api/notion?action=search` endpoint is called, filtered to type='page' only
+- **THEN** `GET /api/notion?action=search` is called with `filter_type=page`
 - **AND** results appear as a list to select from

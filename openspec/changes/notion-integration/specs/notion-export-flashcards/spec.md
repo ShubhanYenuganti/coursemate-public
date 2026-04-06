@@ -1,38 +1,44 @@
 ## ADDED Requirements
 
-### Requirement: Flashcards export to Notion Database
-`POST /api/notion?action=export` with `generation_type='flashcards'` SHALL export all cards from a ready flashcard generation as rows in the user's selected Notion database. Each row SHALL have three properties: `Name` (title, maps to card `front`), `Back` (rich text, maps to card `back`), and `Hint` (rich text, maps to card `hint`). The exporter SHALL call Notion's `POST /v1/pages` once per card.
+### Requirement: Flashcards export as toggle blocks on a Notion page
+`POST /api/notion?action=export` with `generation_type='flashcards'` SHALL export all cards from a ready flashcard generation as toggle blocks appended to the user's selected Notion page. Each card SHALL become a toggle block: the toggle heading = card `front`, the expanded content = card `back` and card `hint` (if present). The exporter SHALL call Notion's `POST /v1/blocks/{page_id}/children` once with all toggle blocks in a single request.
 
-#### Scenario: Successful flashcard export to database
+#### Scenario: Successful flashcard export to page
 - **WHEN** the user has a connected Notion account
-- **AND** the user selects a Notion database as the target
-- **AND** calls `POST /api/notion?action=export` with `generation_id` and `generation_type='flashcards'`
-- **THEN** one Notion page (database row) is created per card
-- **AND** each row has `Name` = front text, `Back` = back text, `Hint` = hint text
-- **AND** the response includes `{ "exported": <count>, "notion_url": "<database url>" }`
-
-#### Scenario: Fallback to toggle blocks when target is a page
-- **WHEN** the user selected a Notion page (not a database) as the target
-- **THEN** cards are exported as toggle blocks: each toggle heading = front, expanded content = back + hint
-- **AND** the response includes `{ "exported": <count>, "notion_url": "<page url>", "format": "toggle_blocks" }`
+- **AND** the user selects a Notion page as the target
+- **AND** calls `POST /api/notion?action=export` with `{ exports: [{ generation_id, generation_type: 'flashcards', targets: [{ provider: 'notion', target_id }] }] }`
+- **THEN** toggle blocks are appended to the target page — one per card
+- **AND** each toggle heading = card front, body = back + hint
+- **AND** the response includes `{ total: 1, succeeded: 1, failed: 0, results: [{ generation_id, provider: 'notion', status: 'success', exported_count: <count>, url: '<page url>' }] }`
 
 #### Scenario: Export denied for non-owner/non-collaborator
 - **WHEN** the authenticated user does not have access to the flashcard generation
-- **THEN** the endpoint returns 403 Forbidden
+- **THEN** the result entry has `status: 'error'` and `error: 'Forbidden'`
 
 #### Scenario: Export of non-ready generation
 - **WHEN** `generation_id` refers to a generation with status != 'ready'
-- **THEN** the endpoint returns 409 Conflict with `{ "error": "Generation not ready" }`
+- **THEN** the result entry has `status: 'error'` and `error: 'Generation not ready'`
 
-### Requirement: Flashcards export validates database schema
-Before exporting, the system SHALL retrieve the target database's property schema from Notion. If the database does not have a title property and at least one text property, the system SHALL return a descriptive error rather than silently creating malformed rows.
+#### Scenario: Target is not a page
+- **WHEN** the `target_id` resolves to a Notion database or other non-page type
+- **THEN** the endpoint returns 422 Unprocessable Entity with `{ "error": "Flashcard export requires a Notion page target, not a database" }`
 
-#### Scenario: Database missing required properties
-- **WHEN** the target Notion database has no text properties available
-- **THEN** the system returns 422 Unprocessable Entity with `{ "error": "Target database must have text properties for Back and Hint" }`
+### Requirement: Export modal filters target picker to pages only
+The Flashcards export modal SHALL open `NotionTargetPicker` with `allowedTypes: ['page']`. The picker SHALL only show and allow selection of Notion pages. The `+ Create new` sub-form SHALL only offer "Page" as a type option when `allowedTypes` excludes databases.
+
+### Requirement: Invalid sticky target shown with warning in Flashcards modal
+If the saved sticky target for (user, course, 'flashcards') has `external_target_type = 'database'`, the export modal SHALL render the target with a warning icon (⚠). On hover, the tooltip SHALL read: "This target is invalid for flashcard exports. Select a Notion page." The export button SHALL be disabled until the user selects a valid page target.
+
+#### Scenario: Sticky target is a database
+- **WHEN** the user opens the flashcards export modal
+- **AND** the saved sticky target is a Notion database
+- **THEN** the target is shown with a warning icon
+- **AND** the export button is disabled
+- **AND** clicking the target opens the picker filtered to pages only
+- **AND** selecting a valid page clears the warning and enables export
 
 ### Requirement: Export result shown in viewer UI
-After a successful export, the Flashcards viewer SHALL display a success banner with a link to the Notion database/page. The "Export to Notion" button SHALL remain available for re-exporting.
+After a successful export, the Flashcards viewer SHALL display a success banner with a link to the Notion page. The "Export to Notion" button SHALL remain available for re-exporting.
 
 #### Scenario: Post-export success state
 - **WHEN** the export API returns success
