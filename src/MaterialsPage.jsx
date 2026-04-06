@@ -545,7 +545,7 @@ export default function MaterialsPage({ courseId, userId }) {
     update({ status: 'uploading' });
 
     try {
-      // 1. Request presigned URL
+      // 1. Request presigned URL(s)
       const r1 = await fetch('/api/material', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -556,19 +556,38 @@ export default function MaterialsPage({ courseId, userId }) {
           filename: item.file.name,
           file_type: item.file.type,
           visibility: 'private',
+          file_size: item.file.size,
         }),
       });
       if (!r1.ok) throw new Error('Failed to get upload URL');
-      const { upload_url, fields, s3_key } = await r1.json();
+      const uploadMeta = await r1.json();
+      const { s3_key } = uploadMeta;
 
-      // 2. Upload directly to S3 via presigned POST
-      const form = new FormData();
-      Object.entries(fields).forEach(([k, v]) => form.append(k, v));
-      form.append('file', item.file); // must be last
-      const r2 = await fetch(upload_url, { method: 'POST', body: form });
-      if (!r2.ok && r2.status !== 204) throw new Error('S3 upload failed');
+      // 2. Upload to S3
+      let confirmExtra = {};
+      if (uploadMeta.multipart) {
+        // Large file: PUT each part, collect ETags
+        const { upload_id, parts, part_size } = uploadMeta;
+        const etags = await Promise.all(
+          parts.map(async ({ part_number, upload_url }) => {
+            const start = (part_number - 1) * part_size;
+            const chunk = item.file.slice(start, start + part_size);
+            const resp = await fetch(upload_url, { method: 'PUT', body: chunk });
+            if (!resp.ok) throw new Error(`Part ${part_number} upload failed`);
+            return { part_number, etag: resp.headers.get('ETag') };
+          })
+        );
+        confirmExtra = { upload_id, parts: etags };
+      } else {
+        // Small file: single presigned POST
+        const form = new FormData();
+        Object.entries(uploadMeta.fields).forEach(([k, v]) => form.append(k, v));
+        form.append('file', item.file); // must be last
+        const r2 = await fetch(uploadMeta.upload_url, { method: 'POST', body: form });
+        if (!r2.ok && r2.status !== 204) throw new Error('S3 upload failed');
+      }
 
-      // 3. Confirm upload — creates DB record (loading banner stops here)
+      // 3. Confirm upload — creates DB record
       const r3 = await fetch('/api/material', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -581,6 +600,7 @@ export default function MaterialsPage({ courseId, userId }) {
           file_type: item.file.type,
           visibility: 'private',
           source_type: item.docType || 'general',
+          ...confirmExtra,
         }),
       });
       if (!r3.ok) throw new Error('Upload confirmation failed');
