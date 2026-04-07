@@ -226,10 +226,15 @@ def _upsert_material(user_id, course_id, page_id, page_title, last_edited_time):
         )).fetchone()
         material_id = row['id']
 
-        # Link material to course
+        # Link material to course via the material_ids JSONB array on courses
         db.execute(
-            "INSERT INTO course_materials (course_id, material_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-            (course_id, material_id)
+            """
+            UPDATE courses
+            SET material_ids = material_ids || %s::jsonb
+            WHERE id = %s
+              AND NOT material_ids @> %s::jsonb
+            """,
+            (json.dumps([material_id]), course_id, json.dumps([material_id]))
         )
         db.execute(
             "INSERT INTO material_embed_jobs (material_id) VALUES (%s) ON CONFLICT DO NOTHING",

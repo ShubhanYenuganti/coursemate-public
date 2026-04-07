@@ -990,18 +990,22 @@ def _resolve_notion_database_id(raw_id: str, token: str) -> str | None:
     2. If 404, GET /blocks/{id}  — a linked-database-view block carries a
        `linked_to.database_id` field pointing to the underlying database.
     """
-    data, err, _ = _notion_api("GET", f"/databases/{raw_id}", token, user_id=None)
+    data, err, err_detail = _notion_api("GET", f"/databases/{raw_id}", token, user_id=None)
     if not err:
         return data.get("id", raw_id)
 
-    block, block_err, _ = _notion_api("GET", f"/blocks/{raw_id}", token, user_id=None)
+    print(f"[notion] _resolve_notion_database_id: /databases/{raw_id} failed: {err} {err_detail}")
+
+    block, block_err, block_err_detail = _notion_api("GET", f"/blocks/{raw_id}", token, user_id=None)
     if block_err:
+        print(f"[notion] _resolve_notion_database_id: /blocks/{raw_id} also failed: {block_err} {block_err_detail}")
         return None
 
     linked_to = block.get("linked_to") or {}
     if linked_to.get("database_id"):
         return linked_to["database_id"]
 
+    print(f"[notion] _resolve_notion_database_id: block {raw_id} has no linked_to.database_id — block type: {block.get('type')}")
     return None
 
 
