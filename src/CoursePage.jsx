@@ -107,7 +107,7 @@ function NotionSourcesPanel({ courseId }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ course_id: courseId, provider: 'notion', external_id: db.id, label: db.title }),
+        body: JSON.stringify({ course_id: courseId, provider: 'notion', external_id: db.id, external_title: db.title }),
       });
       setQuery('');
       setResults([]);
@@ -212,7 +212,7 @@ function NotionSourcesPanel({ courseId }) {
           {sources.map((s) => (
             <div key={s.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors ${s.is_active ? 'border-gray-200 bg-white' : 'border-gray-100 bg-gray-50'}`}>
               <div className="flex-1 min-w-0">
-                <p className={`text-sm font-medium truncate ${s.is_active ? 'text-gray-900' : 'text-gray-400'}`}>{s.label || s.external_id}</p>
+                <p className={`text-sm font-medium truncate ${s.is_active ? 'text-gray-900' : 'text-gray-400'}`}>{s.external_title || s.external_id}</p>
                 <p className="text-[10px] text-gray-400 mt-0.5">Last synced: {formatDate(s.last_synced_at)}</p>
               </div>
               <button

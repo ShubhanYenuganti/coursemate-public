@@ -454,17 +454,30 @@ def _handle_search(handler_self, user_id: int, qs: dict):
 def _extract_title(item: dict) -> str:
     """Extract plain-text title from a Notion page or database object."""
     obj_type = item.get("object")
+
+    # Try top-level title array (standard for databases; also present on some pages)
+    title_arr = item.get("title")
+    if isinstance(title_arr, list) and title_arr:
+        result = "".join(t.get("plain_text", "") for t in title_arr if isinstance(t, dict))
+        if result:
+            return result
+
+    # Try page-style: walk properties for a type="title" property
+    # (used by pages and inline databases surfaced as page objects)
+    props = item.get("properties", {})
+    for prop in props.values():
+        if not isinstance(prop, dict):
+            continue
+        if prop.get("type") == "title":
+            texts = prop.get("title", [])
+            if isinstance(texts, list) and texts:
+                result = "".join(t.get("plain_text", "") for t in texts if isinstance(t, dict))
+                if result:
+                    return result
+
+    # Fallback for pages with no extractable title
     if obj_type == "page":
-        props = item.get("properties", {})
-        for prop in props.values():
-            if prop.get("type") == "title":
-                texts = prop.get("title", [])
-                return "".join(t.get("plain_text", "") for t in texts)
-        # fallback for pages without a title property
         return item.get("url", "")
-    elif obj_type == "database":
-        title_arr = item.get("title", [])
-        return "".join(t.get("plain_text", "") for t in title_arr)
     return ""
 
 
