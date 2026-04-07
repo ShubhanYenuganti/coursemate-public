@@ -982,31 +982,47 @@ def _handle_revoke(handler_self, user_id: int):
 
 
 def _resolve_notion_database_id(raw_id: str, token: str) -> str | None:
-    """
-    Notion search can return linked database view blocks whose IDs are not
-    queryable as databases.  Resolve to the canonical database ID:
-
-    1. GET /databases/{id}  — succeeds immediately for real databases.
-    2. If 404, GET /blocks/{id}  — a linked-database-view block carries a
-       `linked_to.database_id` field pointing to the underlying database.
-    """
     data, err, err_detail = _notion_api("GET", f"/databases/{raw_id}", token, user_id=None)
     if not err:
         return data.get("id", raw_id)
 
-    print(f"[notion] _resolve_notion_database_id: /databases/{raw_id} failed: {err} {err_detail}")
+    print(f"[notion] resolve({raw_id}): /databases/ failed ({err}: {err_detail}), trying /blocks/")
 
     block, block_err, block_err_detail = _notion_api("GET", f"/blocks/{raw_id}", token, user_id=None)
     if block_err:
-        print(f"[notion] _resolve_notion_database_id: /blocks/{raw_id} also failed: {block_err} {block_err_detail}")
+        print(
+            f"[notion] resolve({raw_id}): /blocks/ also failed ({block_err}: {block_err_detail}) — "
+            f"ID is either invalid, not shared with this integration, or a linked database view "
+            f"(which the public API cannot resolve)"
+        )
         return None
 
-    linked_to = block.get("linked_to") or {}
-    if linked_to.get("database_id"):
-        return linked_to["database_id"]
+    block_type = block.get("type")
+    parent = block.get("parent", {})
+    parent_type = parent.get("type")
+    parent_id = parent.get(parent_type) if parent_type else None
+    title_hint = (
+        (block.get("child_database") or {}).get("title")
+        or (block.get("child_page") or {}).get("title")
+        or ""
+    )
+    title_str = f' title={title_hint!r}' if title_hint else ""
 
-    print(f"[notion] _resolve_notion_database_id: block {raw_id} has no linked_to.database_id — block type: {block.get('type')}")
+    if block_type == "child_database":
+        print(
+            f"[notion] resolve({raw_id}): block is a child_database{title_str} "
+            f"(parent {parent_type}={parent_id}) — using block ID as database ID"
+        )
+        return raw_id
+
+    print(
+        f"[notion] resolve({raw_id}): block has type={block_type!r}{title_str} "
+        f"(parent {parent_type}={parent_id}) — this is not a database and cannot be resolved. "
+        f"If this is a linked database view, the public API cannot follow the link; "
+        f"share the original source database with the integration instead."
+    )
     return None
+
 
 
 def _handle_add_source_point(handler_self, user_id: int, body: dict):
