@@ -435,7 +435,6 @@ export default function ReportsViewer({
   // Notion export state
   const courseId = course?.id;
   const [notionConnected, setNotionConnected] = useState(false);
-  const [notionStickyTarget, setNotionStickyTarget] = useState(undefined);
   const [notionPickerOpen, setNotionPickerOpen] = useState(false);
   const [notionBanner, setNotionBanner] = useState(null);
   const [notionExporting, setNotionExporting] = useState(false);
@@ -485,15 +484,7 @@ export default function ReportsViewer({
       .then((r) => r.json())
       .then((d) => setNotionConnected(!!d.connected))
       .catch(() => {});
-    if (courseId && generationId) {
-      fetch(`/api/notion?action=get_target&course_id=${courseId}&generation_type=report`, { credentials: "include" })
-        .then((r) => r.json())
-        .then((d) => setNotionStickyTarget(d.target || null))
-        .catch(() => setNotionStickyTarget(null));
-    } else {
-      setNotionStickyTarget(null);
-    }
-  }, [courseId, generationId]);
+  }, []);
 
   function handleCopy() {
     const text = report?.markdown || report?.content || report?.text || report?.report || title;
@@ -602,15 +593,8 @@ export default function ReportsViewer({
 
   function handleNotionClick() {
     if (!notionConnected) return;
-    const sticky = notionStickyTarget;
-    if (sticky && sticky.type === "page") {
-      handleNotionExport(sticky.id);
-    } else {
-      setNotionPickerOpen(true);
-    }
+    setNotionPickerOpen(true);
   }
-
-  const stickyIsInvalidType = notionStickyTarget && notionStickyTarget.type !== "page";
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-indigo-50 to-blue-50 flex flex-col">
@@ -698,16 +682,10 @@ export default function ReportsViewer({
             {notionConnected && (
               <button
                 type="button"
-                onClick={stickyIsInvalidType ? undefined : handleNotionClick}
-                disabled={notionExporting || stickyIsInvalidType}
-                title={stickyIsInvalidType ? "This target is invalid for report exports. Select a Notion page." : undefined}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs transition-colors ${
-                  stickyIsInvalidType
-                    ? "border-amber-300 text-amber-600 bg-amber-50 cursor-not-allowed"
-                    : "border-gray-200 text-gray-600 hover:bg-gray-50"
-                }`}
+                onClick={handleNotionClick}
+                disabled={notionExporting}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
               >
-                {stickyIsInvalidType ? "⚠" : null}
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
                   <path d="M4 4a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z" opacity=".15"/>
                   <rect x="7" y="7" width="10" height="1.5" rx=".75"/>
@@ -834,11 +812,9 @@ export default function ReportsViewer({
         <NotionTargetPicker
           courseId={courseId}
           generationType="report"
-          allowedTypes={["page"]}
-          onSelect={(target) => {
+          onSelect={({ databaseId }) => {
             setNotionPickerOpen(false);
-            setNotionStickyTarget(target);
-            handleNotionExport(target.id);
+            handleNotionExport(databaseId);
           }}
           onClose={() => setNotionPickerOpen(false)}
         />

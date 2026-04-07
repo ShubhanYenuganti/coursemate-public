@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 
 /**
  * NotionTargetPicker
@@ -14,53 +14,188 @@ import { useState, useEffect } from "react";
  */
 export default function NotionTargetPicker({ courseId, generationType, onSelect, onClose }) {
   const [stickyLoaded, setStickyLoaded] = useState(false);
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState([]);
+  const [sourcesLoaded, setSourcesLoaded] = useState(false);
+  const [sourcePoints, setSourcePoints] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [selected, setSelected] = useState(null);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
+  const [addError, setAddError] = useState("");
 
-  // Pre-populate database from sticky target on mount
+  function normalizeNotionId(rawId) {
+    const cleaned = String(rawId || "").trim().replace(/-/g, "");
+    if (!/^[0-9a-fA-F]{32}$/.test(cleaned)) return String(rawId || "").trim();
+    return `${cleaned.slice(0, 8)}-${cleaned.slice(8, 12)}-${cleaned.slice(12, 16)}-${cleaned.slice(16, 20)}-${cleaned.slice(20)}`.toLowerCase();
+  }
+
+  function extractNotionIdFromUrl(url) {
+    const text = String(url || "").trim();
+    if (!text) return null;
+    const match = text.match(/([0-9a-fA-F]{32})/);
+    if (!match) return null;
+    return normalizeNotionId(match[1]);
+  }
+
+  function parseMetadata(rawMetadata) {
+    if (!rawMetadata) return {};
+    if (typeof rawMetadata === "string") {
+      try {
+        return JSON.parse(rawMetadata);
+      } catch {
+        return {};
+      }
+    }
+    return typeof rawMetadata === "object" ? rawMetadata : {};
+  }
+
+  function sourcePointToTarget(sp) {
+    const meta = parseMetadata(sp?.metadata);
+    const urlDerivedId = extractNotionIdFromUrl(meta.database_url || meta.notion_url || meta.url);
+    const databaseId = normalizeNotionId(urlDerivedId || sp?.external_id || "");
+    return {
+      id: databaseId,
+      title: sp?.external_title || "Untitled",
+      type: "database",
+    };
+  }
+
+  function mapSearchDbToCandidateId(db) {
+    const urlDerivedId = extractNotionIdFromUrl(db?.url);
+    return normalizeNotionId(urlDerivedId || db?.id || "");
+  }
+
+  function loadSourcePoints() {
+    if (!courseId) {
+      setSourcePoints([]);
+      setSourcesLoaded(true);
+      return;
+    }
+
+    setSourcesLoaded(false);
+    fetch(`/api/notion?action=list_source_points&course_id=${courseId}`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((data) => {
+        const points = Array.isArray(data.source_points) ? data.source_points : [];
+        setSourcePoints(points.filter((p) => p?.external_id));
+      })
+      .catch(() => setSourcePoints([]))
+      .finally(() => setSourcesLoaded(true));
+  }
+
+  // Pre-populate sticky target
   useEffect(() => {
-    if (!courseId || !generationType) { setStickyLoaded(true); return; }
+    if (!courseId || !generationType) {
+      setStickyLoaded(true);
+      return;
+    }
+
     fetch(`/api/notion?action=get_target&course_id=${courseId}&generation_type=${generationType}`, {
       credentials: "include",
     })
       .then((r) => r.json())
       .then((data) => {
         const t = data.target;
-        if (t && t.type === "database") setSelected(t);
+        if (t && t.type === "database") {
+          setSelected({ ...t, id: normalizeNotionId(t.id) });
+        }
       })
       .catch(() => {})
       .finally(() => setStickyLoaded(true));
   }, [courseId, generationType]);
 
-  // Debounced database search
+  // Load existing source points immediately (same as CoursePage)
   useEffect(() => {
-    if (query.trim() === "") { setResults([]); return; }
+    loadSourcePoints();
+  }, [courseId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Search Notion databases endpoint (same as CoursePage)
+  useEffect(() => {
+    if (searchQuery.trim() === "") {
+      setSearchResults([]);
+      return;
+    }
+
     const timer = setTimeout(async () => {
       setSearching(true);
       try {
         const res = await fetch(
-          `/api/notion?action=search&q=${encodeURIComponent(query.trim())}&filter_type=database`,
+          `/api/notion?action=search&q=${encodeURIComponent(searchQuery.trim())}&filter_type=database`,
           { credentials: "include" }
         );
         const data = await res.json();
-        setResults(res.ok ? (data.results || []).filter((r) => r.type === "database") : []);
+        setSearchResults(Array.isArray(data.results) ? data.results : []);
       } catch {
-        setResults([]);
+        setSearchResults([]);
       } finally {
         setSearching(false);
       }
     }, 300);
+
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [searchQuery]);
+
+  const sourceTargets = useMemo(
+    () => sourcePoints.map(sourcePointToTarget).filter((t) => t.id),
+    [sourcePoints]
+  );
+
+  async function handleSelectSearchResult(db) {
+    setAddError("");
+    if (!courseId) return;
+
+    const candidateId = mapSearchDbToCandidateId(db);
+    if (!candidateId) {
+      setAddError("Invalid Notion database selection");
+      return;
+    }
+
+    try {
+      // Exact add-source flow from CoursePage: add_source_point then reload source points.
+      const res = await fetch("/api/notion?action=add_source_point", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          course_id: courseId,
+          provider: "notion",
+          external_id: candidateId,
+          external_title: db?.title || "",
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setAddError(data?.error || "Failed to add database source");
+        return;
+      }
+
+      const added = data?.source_point ? sourcePointToTarget(data.source_point) : null;
+      if (added?.id) {
+        setSelected(added);
+      } else {
+        setSelected({
+          id: candidateId,
+          title: db?.title || "Untitled",
+          type: "database",
+        });
+      }
+
+      setSearchQuery("");
+      setSearchResults([]);
+      loadSourcePoints();
+    } catch {
+      setAddError("Failed to add database source");
+    }
+  }
 
   async function handleConfirm() {
     if (!selected || !name.trim()) return;
+    const databaseId = normalizeNotionId(selected.id);
     setSaving(true);
     try {
+      // Persist sticky target into course_export_targets via set_target.
       if (courseId && generationType) {
         await fetch("/api/notion?action=set_target", {
           method: "POST",
@@ -70,13 +205,14 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
             course_id: courseId,
             generation_type: generationType,
             provider: "notion",
-            target_id: selected.id,
+            target_id: databaseId,
             target_title: selected.title,
-            target_type: selected.type,
+            target_type: "database",
           }),
         });
       }
-      onSelect({ databaseId: selected.id, name: name.trim() });
+
+      onSelect({ databaseId, name: name.trim() });
     } finally {
       setSaving(false);
     }
@@ -88,7 +224,6 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
         className="w-full max-w-sm mx-4 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
           <h3 className="text-sm font-semibold text-gray-900">Export to Notion</h3>
           <button
@@ -106,7 +241,6 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
           <div className="px-4 py-6 text-sm text-gray-400">Loading…</div>
         ) : (
           <div className="px-4 py-3 space-y-3">
-            {/* Page name */}
             <div>
               <p className="text-xs text-gray-500 mb-1">Page name</p>
               <input
@@ -120,30 +254,34 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
               />
             </div>
 
-            {/* Database selection */}
             <div>
               <p className="text-xs text-gray-500 mb-1">Parent database</p>
+
               {selected && (
                 <div className="mb-1.5 flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-100">
                   <span className="text-xs text-indigo-700 flex-1 truncate">{selected.title || "Untitled"}</span>
-                  <button type="button" onClick={() => setSelected(null)} className="text-indigo-400 hover:text-indigo-600 text-xs">✕</button>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(null)}
+                    className="text-indigo-400 hover:text-indigo-600 text-xs"
+                  >
+                    ✕
+                  </button>
                 </div>
               )}
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search databases…"
-                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
-              />
-              {searching && <p className="text-xs text-gray-400 mt-1">Searching…</p>}
-              {results.length > 0 && (
-                <div className="mt-1 border border-gray-100 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
-                  {results.map((r) => (
+
+              {/* Existing source points list (immediate) */}
+              <div className="border border-gray-100 rounded-lg overflow-hidden max-h-36 overflow-y-auto">
+                {!sourcesLoaded ? (
+                  <p className="px-3 py-2 text-xs text-gray-400">Loading connected databases…</p>
+                ) : sourceTargets.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-gray-400">No connected course databases yet.</p>
+                ) : (
+                  sourceTargets.map((r) => (
                     <button
                       key={r.id}
                       type="button"
-                      onClick={() => { setSelected(r); setQuery(""); setResults([]); }}
+                      onClick={() => setSelected(r)}
                       className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors ${
                         selected?.id === r.id ? "bg-indigo-50 text-indigo-700" : "text-gray-800"
                       }`}
@@ -151,9 +289,36 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
                       <span className="flex-1 truncate">{r.title || "Untitled"}</span>
                       <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">DB</span>
                     </button>
+                  ))
+                )}
+              </div>
+
+              {/* Search endpoint below source list */}
+              <p className="text-[11px] text-gray-500 mt-2 mb-1">Add from Notion database search</p>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search Notion databases…"
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+              />
+              {searching && <p className="text-xs text-gray-400 mt-1">Searching…</p>}
+              {searchResults.length > 0 && (
+                <div className="mt-1 border border-gray-100 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
+                  {searchResults.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => handleSelectSearchResult(r)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-50 transition-colors"
+                    >
+                      <span className="flex-1 truncate">{r.title || "Untitled"}</span>
+                      <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">DB</span>
+                    </button>
                   ))}
                 </div>
               )}
+              {addError && <p className="text-xs text-red-500 mt-1">{addError}</p>}
             </div>
 
             <div className="flex gap-2 pt-1 border-t border-gray-100">
