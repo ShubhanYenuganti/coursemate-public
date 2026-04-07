@@ -61,6 +61,8 @@ def _notion_post(path, token, body):
         json=body,
         timeout=30,
     )
+    if not resp.ok:
+        print(f"[notion] {resp.status_code} on {path}: {resp.text}")
     resp.raise_for_status()
     return resp.json()
 

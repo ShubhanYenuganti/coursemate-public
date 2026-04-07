@@ -981,6 +981,30 @@ def _handle_revoke(handler_self, user_id: int):
 # ─── source points ───────────────────────────────────────────────────────────
 
 
+def _resolve_notion_database_id(raw_id: str, token: str) -> str | None:
+    """
+    Notion search can return linked database view blocks whose IDs are not
+    queryable as databases.  Resolve to the canonical database ID:
+
+    1. GET /databases/{id}  — succeeds immediately for real databases.
+    2. If 404, GET /blocks/{id}  — a linked-database-view block carries a
+       `linked_to.database_id` field pointing to the underlying database.
+    """
+    data, err, _ = _notion_api("GET", f"/databases/{raw_id}", token, user_id=None)
+    if not err:
+        return data.get("id", raw_id)
+
+    block, block_err, _ = _notion_api("GET", f"/blocks/{raw_id}", token, user_id=None)
+    if block_err:
+        return None
+
+    linked_to = block.get("linked_to") or {}
+    if linked_to.get("database_id"):
+        return linked_to["database_id"]
+
+    return None
+
+
 def _handle_add_source_point(handler_self, user_id: int, body: dict):
     """Insert a Notion database as a course source point."""
     token = _get_notion_token(user_id)
@@ -996,6 +1020,12 @@ def _handle_add_source_point(handler_self, user_id: int, body: dict):
     if not course_id or not external_id:
         send_json(handler_self, 400, {"error": "course_id and external_id required"})
         return
+
+    resolved_id = _resolve_notion_database_id(external_id, token)
+    if not resolved_id:
+        send_json(handler_self, 400, {"error": "Could not resolve a queryable Notion database from the provided ID. Make sure you are selecting a database (not a linked view or page)."})
+        return
+    external_id = resolved_id
 
     with get_db() as conn:
         cur = conn.cursor()
