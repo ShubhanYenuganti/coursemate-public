@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import sys
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -124,8 +125,9 @@ def _notion_api(
 ):
     """
     Make a raw request to the Notion API.
-    Returns (response_dict_or_None, error_code_or_None).
+    Returns (response_dict_or_None, error_code_or_None, error_detail_or_None).
     error_code is 'notion_token_revoked' if the token has been revoked.
+    error_detail is the raw Notion error body for surfacing in API responses.
     """
     url = f"{_NOTION_API_BASE}/{path.lstrip('/')}"
     headers = {
@@ -142,7 +144,6 @@ def _notion_api(
     )
 
     if resp.status_code == 401:
-        # Token revoked externally — clean up stored credentials
         if user_id is not None:
             try:
                 with get_db() as conn:
@@ -154,15 +155,20 @@ def _notion_api(
                     cur.close()
             except Exception:
                 pass
-        return None, "notion_token_revoked"
+        return None, "notion_token_revoked", None
 
     if not resp.ok:
-        return None, f"notion_api_error:{resp.status_code}"
+        err_code = f"notion_api_error:{resp.status_code}"
+        try:
+            err_detail = resp.json()
+        except Exception:
+            err_detail = {"raw": resp.text[:500]}
+        return None, err_code, err_detail
 
     try:
-        return resp.json(), None
+        return resp.json(), None, None
     except ValueError:
-        return {}, None
+        return {}, None, None
 
 
 def _get_user_from_request(handler_self):
@@ -418,12 +424,12 @@ def _handle_search(handler_self, user_id: int, qs: dict):
     if filter_type in ("page", "database"):
         body["filter"] = {"value": filter_type, "property": "object"}
 
-    data, err = _notion_api("POST", "/search", token, body=body, user_id=user_id)
+    data, err, err_detail = _notion_api("POST", "/search", token, body=body, user_id=user_id)
     if err == "notion_token_revoked":
         send_json(handler_self, 401, {"error": "notion_token_revoked"})
         return
     if err:
-        send_json(handler_self, 502, {"error": "Notion search failed"})
+        send_json(handler_self, 502, {"error": "Notion search failed", "code": err, "detail": err_detail})
         return
 
     results = []
@@ -657,11 +663,11 @@ def _export_flashcards(user_id: int, generation_id, target_id: str, token: str) 
         }
 
     # Verify target is a Notion page (not a database)
-    page_data, page_err = _notion_api("GET", f"/pages/{target_id}", token, user_id=user_id)
+    page_data, page_err, page_err_detail = _notion_api("GET", f"/pages/{target_id}", token, user_id=user_id)
     if page_err == "notion_token_revoked":
         return {"status": "error", "error": "notion_token_revoked"}
     if page_err or not page_data:
-        return {"status": "error", "error": "Flashcard export requires a Notion page target, not a database"}
+        return {"status": "error", "error": "Flashcard export requires a Notion page target, not a database", "detail": page_err_detail}
 
     cards = row["cards"] or []
     blocks = [flashcard_to_notion_toggle_block(c) for c in cards if c]
@@ -676,7 +682,7 @@ def _export_flashcards(user_id: int, generation_id, target_id: str, token: str) 
     # Append in batches of 100 (Notion API limit)
     for i in range(0, max(len(blocks), 1), 100):
         batch = blocks[i : i + 100]
-        data, err = _notion_api(
+        data, err, err_detail = _notion_api(
             "PATCH",
             f"/blocks/{target_id}/children",
             token,
@@ -686,7 +692,7 @@ def _export_flashcards(user_id: int, generation_id, target_id: str, token: str) 
         if err == "notion_token_revoked":
             return {"status": "error", "error": "notion_token_revoked"}
         if err:
-            return {"status": "error", "error": f"Notion API error: {err}"}
+            return {"status": "error", "error": f"Notion API error: {err}", "detail": err_detail}
 
     notion_url = f"https://www.notion.so/{target_id.replace('-', '')}"
     return {"status": "success", "exported_count": len(cards), "url": notion_url}
@@ -733,11 +739,11 @@ def _export_quiz(user_id: int, generation_id, target_id: str, token: str) -> dic
         }
 
     # Verify target is a Notion page (not a database)
-    page_data, page_err = _notion_api("GET", f"/pages/{target_id}", token, user_id=user_id)
+    page_data, page_err, page_err_detail = _notion_api("GET", f"/pages/{target_id}", token, user_id=user_id)
     if page_err == "notion_token_revoked":
         return {"status": "error", "error": "notion_token_revoked"}
     if page_err or not page_data:
-        return {"status": "error", "error": "Quiz export requires a Notion page target, not a database"}
+        return {"status": "error", "error": "Quiz export requires a Notion page target, not a database", "detail": page_err_detail}
 
     questions = row["questions"] or []
     blocks = quiz_to_notion_blocks(questions)
@@ -751,7 +757,7 @@ def _export_quiz(user_id: int, generation_id, target_id: str, token: str) -> dic
 
     for i in range(0, max(len(blocks), 1), 100):
         batch = blocks[i : i + 100]
-        data, err = _notion_api(
+        data, err, err_detail = _notion_api(
             "PATCH",
             f"/blocks/{target_id}/children",
             token,
@@ -761,7 +767,7 @@ def _export_quiz(user_id: int, generation_id, target_id: str, token: str) -> dic
         if err == "notion_token_revoked":
             return {"status": "error", "error": "notion_token_revoked"}
         if err:
-            return {"status": "error", "error": f"Notion API error: {err}"}
+            return {"status": "error", "error": f"Notion API error: {err}", "detail": err_detail}
 
     notion_url = f"https://www.notion.so/{target_id.replace('-', '')}"
     return {"status": "success", "exported_count": len(questions), "url": notion_url}
@@ -797,11 +803,11 @@ def _export_report(user_id: int, generation_id, target_id: str, token: str) -> d
         }
 
     # Verify target is a Notion page (not a database)
-    page_data, page_err = _notion_api("GET", f"/pages/{target_id}", token, user_id=user_id)
+    page_data, page_err, page_err_detail = _notion_api("GET", f"/pages/{target_id}", token, user_id=user_id)
     if page_err == "notion_token_revoked":
         return {"status": "error", "error": "notion_token_revoked"}
     if page_err or not page_data:
-        return {"status": "error", "error": "Report export requires a Notion page target, not a database"}
+        return {"status": "error", "error": "Report export requires a Notion page target, not a database", "detail": page_err_detail}
 
     sections = row["sections_json"] or []
     if isinstance(sections, str):
@@ -821,7 +827,7 @@ def _export_report(user_id: int, generation_id, target_id: str, token: str) -> d
 
     for i in range(0, max(len(blocks), 1), 100):
         batch = blocks[i : i + 100]
-        data, err = _notion_api(
+        data, err, err_detail = _notion_api(
             "PATCH",
             f"/blocks/{target_id}/children",
             token,
@@ -831,7 +837,7 @@ def _export_report(user_id: int, generation_id, target_id: str, token: str) -> d
         if err == "notion_token_revoked":
             return {"status": "error", "error": "notion_token_revoked"}
         if err:
-            return {"status": "error", "error": f"Notion API error: {err}"}
+            return {"status": "error", "error": f"Notion API error: {err}", "detail": err_detail}
 
     notion_url = f"https://www.notion.so/{target_id.replace('-', '')}"
     return {"status": "success", "exported_count": len(sections), "url": notion_url}
@@ -870,7 +876,7 @@ def _handle_create_target(handler_self, user_id: int, body: dict):
                 "title": {"title": [{"type": "text", "text": {"content": title}}]}
             },
         }
-        data, err = _notion_api("POST", "/pages", token, body=payload, user_id=user_id)
+        data, err, err_detail = _notion_api("POST", "/pages", token, body=payload, user_id=user_id)
     else:
         # Database — hardcoded flashcard schema
         payload = {
@@ -882,7 +888,7 @@ def _handle_create_target(handler_self, user_id: int, body: dict):
                 "Hint": {"rich_text": {}},
             },
         }
-        data, err = _notion_api(
+        data, err, err_detail = _notion_api(
             "POST", "/databases", token, body=payload, user_id=user_id
         )
 
@@ -891,7 +897,7 @@ def _handle_create_target(handler_self, user_id: int, body: dict):
         return
     if err:
         send_json(
-            handler_self, 502, {"error": f"Failed to create Notion {target_type}"}
+            handler_self, 502, {"error": f"Failed to create Notion {target_type}", "detail": err_detail}
         )
         return
 

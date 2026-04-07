@@ -532,9 +532,11 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
       if (result?.status === "success") {
         setNotionBanner({ ok: true, url: result.url, message: "Exported to Notion" });
       } else {
+        console.error("[Notion] quiz export failed", result);
         setNotionBanner({ ok: false, message: result?.error || "Export failed" });
       }
     } catch (err) {
+      console.error("[Notion] quiz export error", err);
       setNotionBanner({ ok: false, message: err.message || "Export failed" });
     } finally {
       setNotionExporting(false);

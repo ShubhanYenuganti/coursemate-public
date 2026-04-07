@@ -327,9 +327,11 @@ export default function FlashcardViewer({
       if (result?.status === "success") {
         setNotionBanner({ ok: true, url: result.url, message: "Exported to Notion" });
       } else {
+        console.error("[Notion] flashcard export failed", result);
         setNotionBanner({ ok: false, message: result?.error || "Export failed" });
       }
     } catch (err) {
+      console.error("[Notion] flashcard export error", err);
       setNotionBanner({ ok: false, message: err.message || "Export failed" });
     } finally {
       setNotionExporting(false);

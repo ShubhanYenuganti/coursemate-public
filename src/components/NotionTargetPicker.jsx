@@ -54,9 +54,15 @@ export default function NotionTargetPicker({ courseId, generationType, allowedTy
         const url = `/api/notion?action=search&q=${encodeURIComponent(query.trim())}`;
         const res = await fetch(url, { credentials: "include" });
         const data = await res.json();
+        if (!res.ok) {
+          console.error("[Notion] search failed", data);
+          setResults([]);
+          return;
+        }
         const items = (data.results || []).filter((r) => allowedTypes.includes(r.type));
         setResults(items);
-      } catch {
+      } catch (err) {
+        console.error("[Notion] search error", err);
         setResults([]);
       } finally {
         setSearching(false);
@@ -74,8 +80,14 @@ export default function NotionTargetPicker({ courseId, generationType, allowedTy
         const url = `/api/notion?action=search&q=${encodeURIComponent(parentQuery.trim())}&filter_type=page`;
         const res = await fetch(url, { credentials: "include" });
         const data = await res.json();
+        if (!res.ok) {
+          console.error("[Notion] parent search failed", data);
+          setParentResults([]);
+          return;
+        }
         setParentResults(data.results || []);
-      } catch {
+      } catch (err) {
+        console.error("[Notion] parent search error", err);
         setParentResults([]);
       } finally {
         setParentSearching(false);
@@ -131,13 +143,17 @@ export default function NotionTargetPicker({ courseId, generationType, allowedTy
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!res.ok) {
+        console.error("[Notion] create_target failed", data);
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
       // Auto-select the new resource
       const newTarget = { id: data.id, title: data.title, type: data.type };
       setSelected(newTarget);
       setShowCreate(false);
       onSelect(newTarget);
     } catch (err) {
+      console.error("[Notion] create error", err);
       setCreateError(err.message);
     } finally {
       setCreating(false);
