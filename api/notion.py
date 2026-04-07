@@ -1076,7 +1076,7 @@ class handler(BaseHTTPRequestHandler):
             _handle_auth(self)
             return
 
-        if action == "callback":
+        if action == "callback" or (action is None and _qs_get(qs, "code")):
             _handle_callback(self, qs)
             return
 
