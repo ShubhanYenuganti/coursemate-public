@@ -95,6 +95,26 @@ For all three generation modes, the API layer is lightweight and queue-backed:
 - Worker Lambdas (`lambda/quiz_generate`, `lambda/flashcards_generate`, `lambda/reports_generate`) consume SQS jobs, perform the provider calls, normalize output, persist results/versioning, and set status to `ready` or `failed`.
 - The frontend polls `get_generation_status`, then fetches the viewer payload when ready.
 
+## Notion Integration
+
+CourseMate supports a full Notion OAuth + export + ingestion workflow.
+
+- **OAuth connection flow**: users connect from Profile via `GET /api/notion?action=auth`, complete Notion consent, and return to `/profile?notion_connected=1`. CourseMate stores the encrypted access token and workspace metadata per user in `user_integrations`.
+- **Sticky export targets**: each `(user, course, generation_type)` keeps a remembered Notion destination in `course_export_targets`, so repeat exports do not require re-picking each time.
+- **Export capabilities**:
+  - Flashcards export to Notion pages as toggle blocks (front prompt + back/hint children).
+  - Quiz exports to Notion pages with heading + option list + answer toggle structure.
+  - Reports export to Notion pages with heading-based section hierarchy.
+- **Create-new destination support**: the target picker can create a new Notion page directly from the UI and immediately set it as the sticky target.
+- **Notion source points (collaborator-safe)**:
+  - Each collaborator can connect independent Notion databases to the same shared course.
+  - Source points can be disabled and re-enabled without deleting existing ingested materials.
+  - A scheduled poller (~every 2 hours) syncs active source points and feeds changed Notion pages into the existing embedding pipeline.
+- **Material selection persistence**:
+  - Selections are stored per-user and per-context (`chat`, `quiz`, `flashcards`, `report`) in `material_selections`.
+  - Own materials default selected; collaborator public materials default unselected (opt-in).
+  - Collaborator entries include hover metadata (name, full title, email) in source pickers.
+
 ## Future Implementations
 
 Planned next improvements, focused on user experience and sharing:
@@ -113,6 +133,9 @@ Planned next improvements, focused on user experience and sharing:
 | `DATABASE_URL`                    | Yes      | Neon Postgres connection string                       |
 | `SESSION_SECRET`                  | Yes      | Secret for CSRF token signing                         |
 | `ALLOWED_ORIGIN`                  | Yes      | Frontend URL for CORS (e.g., `http://localhost:5173`) |
+| `NOTION_CLIENT_ID`                | Yes*     | Notion OAuth client ID                                |
+| `NOTION_CLIENT_SECRET`            | Yes*     | Notion OAuth client secret                            |
+| `NOTION_REDIRECT_URI`             | Yes*     | OAuth callback URL used by `/api/notion?action=callback` |
 | `RATE_LIMIT_RPM`                  | No       | Max requests per minute per IP (default: 30)          |
 | `QUIZ_GENERATION_QUEUE_URL`       | No*      | SQS queue URL for `quiz_generate` async jobs          |
 | `FLASHCARDS_GENERATION_QUEUE_URL` | No*      | SQS queue URL for `flashcards_generate` async jobs    |
@@ -121,6 +144,8 @@ Planned next improvements, focused on user experience and sharing:
 | `AGENTIC_WEB_SEARCH_ENABLED`      | No       | Enable Tavily-backed web search tool (`true`/`false`) |
 | `AGENTIC_RERANK_ENABLED`          | No       | Enable Voyage rerank tool (`true`/`false`)            |
 | `AGENTIC_LOOP_ENABLED`            | No       | Enable agentic loop in chat (`true`/`false`)          |
+
+`*` Required when enabling Notion integration. Register `NOTION_REDIRECT_URI` in the Notion developer portal for the same integration.
 
 
 ## API Endpoints
@@ -164,4 +189,3 @@ At a high level, production deploy is:
 - **Backend**: Python serverless functions (Vercel)
 - **Database**: PostgreSQL with psycopg3 + connection pooling
 - **Auth**: Google Identity Services (GIS)
-

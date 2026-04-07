@@ -80,11 +80,11 @@ CREATE TABLE course_export_targets (
 
 ### D4: Flashcards → Notion Database rows (not toggle blocks)
 
-**Decision**: Flashcards export to an existing Notion database chosen by the user (must have at least a title property). The exporter adds rows with `Front` (title), `Back` (rich text), `Hint` (rich text) properties. If the chosen target is a page (not a database), the exporter falls back to toggle blocks.
+**Decision**: Flashcards export as toggle blocks appended to a user-selected Notion **page**. Each card becomes one toggle block: the toggle heading = card `front`, the expanded body = card `back` and card `hint`. The picker is filtered to `allowedTypes: ['page']` so databases are never selectable. The backend verifies the target is a page before appending.
 
-**Rationale**: Notion databases are the idiomatic home for flashcard-style Q&A pairs — they support filtering, sorting, and third-party Anki-style integrations. Toggle blocks are the fallback for users who prefer pages.
+**Rationale**: Simplified from the original database-row approach during spec refinement. Toggle blocks on a page keep all three content types (flashcards, quiz, report) consistent — page-only targets — and avoid the complexity of Notion database property schemas and row creation. The backend enforces this with a `GET /pages/{id}` check before export.
 
-**Alternative considered**: Always use toggle blocks for consistency across content types. Rejected because it loses the structural advantage databases offer for flashcards specifically.
+**Alternative previously considered**: Flashcards as database rows (Front/Back/Hint properties) — rejected in favour of toggle blocks for consistency and simpler implementation.
 
 ### D5: Quiz and Reports → Notion pages with block hierarchy
 

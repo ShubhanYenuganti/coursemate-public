@@ -969,9 +969,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
   const [modelListDropdownOpen, setModelListDropdownOpen] = useState(false);
   const [switchBanner, setSwitchBanner] = useState('');
   const [materials, setMaterials] = useState([]);
-  const [selectedMaterials, setSelectedMaterials] = useState(new Set());
-  const [selectAllMaterials, setSelectAllMaterials] = useState(true);
-  const sourcesLoaded = useRef(false);
+  const [materialsLoading, setMaterialsLoading] = useState(true);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState('');
   const [titleSaving, setTitleSaving] = useState(false);
@@ -991,37 +989,17 @@ export default function ChatTab({ course, userData, onAddSource }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // ── selected sources persistence ───────────────────────────────────────────
-
-  useEffect(() => {
-    if (!course?.id) return;
-    sourcesLoaded.current = false;
-    const key = `sources_chat_${course.id}`;
-    try {
-      const saved = JSON.parse(localStorage.getItem(key));
-      if (saved) {
-        setSelectAllMaterials(saved.selectAll ?? true);
-        setSelectedMaterials(new Set(saved.ids ?? []));
-      }
-    } catch {}
-    sourcesLoaded.current = true;
-  }, [course?.id]);
-
-  useEffect(() => {
-    if (!course?.id || !sourcesLoaded.current) return;
-    const key = `sources_chat_${course.id}`;
-    localStorage.setItem(key, JSON.stringify({ selectAll: selectAllMaterials, ids: Array.from(selectedMaterials) }));
-  }, [selectAllMaterials, selectedMaterials, course?.id]);
-
   // Load materials for this course
   useEffect(() => {
     if (!course?.id) return;
-    fetch(`/api/material?course_id=${course.id}`, {
+    setMaterialsLoading(true);
+    fetch(`/api/material?action=selections&course_id=${course.id}&context=chat`, {
       credentials: 'include',
     })
       .then((r) => r.json())
       .then((data) => setMaterials(Array.isArray(data) ? data : (data.materials || [])))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setMaterialsLoading(false));
   }, [course?.id]);
 
   // Load chats for this course
@@ -1126,27 +1104,42 @@ export default function ChatTab({ course, userData, onAddSource }) {
     localStorage.setItem('chat_selected_model_id', modelId);
   }
 
-  function handleSelectAllMaterials() {
-    if (selectAllMaterials) {
-      setSelectAllMaterials(false);
-      setSelectedMaterials(new Set());
-    } else {
-      setSelectAllMaterials(true);
-      setSelectedMaterials(new Set());
-    }
+  async function persistMaterialSelection(material, selected) {
+    if (!course?.id || !material?.id) return;
+    try {
+      await fetch('/api/material', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          action: 'set_selection',
+          material_id: material.id,
+          course_id: course.id,
+          context: 'chat',
+          selected,
+          provider: material.source_type === 'notion' ? 'notion' : null,
+        }),
+      });
+    } catch {}
   }
 
-  function handleToggleMaterial(id) {
-    setSelectAllMaterials(false);
-    setSelectedMaterials((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
+  function handleSelectAllMaterials() {
+    const allOn = materials.length > 0 && materials.every((m) => m.selected);
+    const newVal = !allOn;
+    const nextMaterials = materials.map((m) => ({ ...m, selected: newVal }));
+    setMaterials(nextMaterials);
+    nextMaterials.forEach((m) => {
+      persistMaterialSelection(m, newVal);
     });
   }
 
-  function isMaterialChecked(id) {
-    return selectAllMaterials || selectedMaterials.has(id);
+  function handleToggleMaterial(id) {
+    setMaterials((prev) => prev.map((m) => {
+      if (m.id !== id) return m;
+      const updated = { ...m, selected: !m.selected };
+      persistMaterialSelection(m, updated.selected);
+      return updated;
+    }));
   }
 
   function handleDownloadMaterial(m) {
@@ -1415,9 +1408,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
         setChats((prev) => [chatData.chat, ...prev.filter((c) => c.id !== '__new__')]);
       }
 
-      const contextIds = selectAllMaterials
-        ? materials.map((m) => m.id)
-        : Array.from(selectedMaterials);
+      const contextIds = materials.filter((m) => m.selected).map((m) => m.id);
 
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -1480,9 +1471,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
     const target = messages.find((m) => m.id === messageId);
     if (!target || target.role !== 'user' || typeof target.message_index !== 'number') return;
 
-    const contextIds = selectAllMaterials
-      ? materials.map((m) => m.id)
-      : Array.from(selectedMaterials);
+    const contextIds = materials.filter((m) => m.selected).map((m) => m.id);
 
     const prevMessages = messages;
     const prevMsgChunks = msgChunks;
@@ -1929,37 +1918,76 @@ export default function ChatTab({ course, userData, onAddSource }) {
               {materials.length > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-gray-400 tabular-nums">
-                    {selectAllMaterials ? materials.length : selectedMaterials.size}/{materials.length}
+                    {materials.filter((m) => m.selected).length}/{materials.length}
                   </span>
-                  <MaterialToggle checked={selectAllMaterials} onToggle={handleSelectAllMaterials} />
+                  <MaterialToggle
+                    checked={materials.length > 0 && materials.every((m) => m.selected)}
+                    onToggle={handleSelectAllMaterials}
+                  />
                 </div>
               )}
             </div>
 
             {/* Materials list */}
             <div className="flex-1 overflow-y-auto pb-2">
-              {materials.length === 0 ? (
+              {materialsLoading && (
+                <p className="px-3 py-2 text-[10px] text-gray-400">Loading…</p>
+              )}
+              {!materialsLoading && materials.length === 0 ? (
                 <p className="px-3 py-2 text-[10px] text-gray-400 italic">No materials uploaded yet.</p>
               ) : (
-                <div className="space-y-0.5">
-                  {materials.map((m) => (
-                    <div
-                      key={m.id}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default"
-                    >
-                      <FileTypeBadge name={m.name} />
-                      <span
-                        className="flex-1 truncate min-w-0 hover:underline cursor-pointer"
-                        onClick={() => handleDownloadMaterial(m)}
-                        title={m.name}
-                      >{m.name}</span>
-                      <MaterialToggle
-                        checked={isMaterialChecked(m.id)}
-                        onToggle={() => handleToggleMaterial(m.id)}
-                      />
+                (() => {
+                  const myMats = materials.filter((m) => !m.collaborator);
+                  const collabMats = materials.filter((m) => m.collaborator);
+                  return (
+                    <div className="space-y-0.5">
+                      {myMats.map((m) => (
+                        <div
+                          key={m.id}
+                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
+                            m.selected ? 'border-indigo-400' : 'border-transparent'
+                          }`}
+                        >
+                          <FileTypeBadge name={m.name} />
+                          <span
+                            className="flex-1 truncate min-w-0 hover:underline cursor-pointer"
+                            onClick={() => handleDownloadMaterial(m)}
+                            title={m.name}
+                          >{m.name}</span>
+                          <MaterialToggle checked={m.selected} onToggle={() => handleToggleMaterial(m.id)} />
+                        </div>
+                      ))}
+                      {collabMats.length > 0 && (
+                        <>
+                          <div className="px-3 pt-2 pb-0.5">
+                            <span className="text-[9px] font-semibold text-gray-300 uppercase tracking-wider">From collaborators</span>
+                          </div>
+                          {collabMats.map((m) => (
+                            <div
+                              key={m.id}
+                              className={`relative group w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
+                                m.selected ? 'border-indigo-300' : 'border-transparent'
+                              }`}
+                            >
+                              <FileTypeBadge name={m.name} />
+                              <span
+                                className="flex-1 truncate min-w-0 hover:underline cursor-pointer"
+                                onClick={() => handleDownloadMaterial(m)}
+                                title={m.name}
+                              >{m.name}</span>
+                              <MaterialToggle checked={m.selected} onToggle={() => handleToggleMaterial(m.id)} />
+                              <div className="pointer-events-none absolute left-2 bottom-full mb-1.5 z-10 hidden group-hover:block w-56 rounded-lg bg-gray-800 px-2.5 py-2 shadow-lg">
+                                <p className="text-[10px] font-medium text-white whitespace-normal break-words">{m.collaborator?.name}</p>
+                                <p className="text-[10px] text-gray-300 whitespace-normal break-words">{m.name}</p>
+                                <p className="text-[10px] text-gray-400 whitespace-normal break-words">{m.collaborator?.email}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </>
+                      )}
                     </div>
-                  ))}
-                </div>
+                  );
+                })()
               )}
             </div>
 

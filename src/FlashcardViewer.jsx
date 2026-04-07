@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import NotionTargetPicker from './components/NotionTargetPicker';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -165,9 +166,33 @@ export default function FlashcardViewer({
   const [exportStatus, setExportStatus] = useState('idle');
   const [resolving, setResolving] = useState(false);
 
+  // Notion export state
+  const courseId = course?.id;
+  const [notionConnected, setNotionConnected] = useState(false);
+  const [notionStickyTarget, setNotionStickyTarget] = useState(undefined); // undefined=loading, null=none
+  const [notionPickerOpen, setNotionPickerOpen] = useState(false);
+  const [notionBanner, setNotionBanner] = useState(null); // null | { ok, url, message }
+  const [notionExporting, setNotionExporting] = useState(false);
+
   useEffect(() => {
     setSaveStatus(data?.artifact_material_id ? 'saved' : 'idle');
   }, [data?.artifact_material_id, data?.generation_id]);
+
+  // Fetch Notion connection status + sticky target on mount
+  useEffect(() => {
+    fetch("/api/notion?action=status", { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => setNotionConnected(!!d.connected))
+      .catch(() => {});
+    if (courseId && generationId) {
+      fetch(`/api/notion?action=get_target&course_id=${courseId}&generation_type=flashcards`, { credentials: "include" })
+        .then((r) => r.json())
+        .then((d) => setNotionStickyTarget(d.target || null))
+        .catch(() => setNotionStickyTarget(null));
+    } else {
+      setNotionStickyTarget(null);
+    }
+  }, [courseId, generationId]);
 
   const displayCards = useMemo(() => {
     if (!shuffled) return cards;
@@ -284,6 +309,45 @@ export default function FlashcardViewer({
     }
   }
 
+  async function handleNotionExport(targetId) {
+    if (!generationId || notionExporting) return;
+    setNotionExporting(true);
+    setNotionBanner(null);
+    try {
+      const res = await fetch("/api/notion?action=export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          exports: [{ generation_id: generationId, generation_type: "flashcards", targets: [{ provider: "notion", target_id: targetId }] }],
+        }),
+      });
+      const data = await res.json();
+      const result = data.results?.[0];
+      if (result?.status === "success") {
+        setNotionBanner({ ok: true, url: result.url, message: "Exported to Notion" });
+      } else {
+        setNotionBanner({ ok: false, message: result?.error || "Export failed" });
+      }
+    } catch (err) {
+      setNotionBanner({ ok: false, message: err.message || "Export failed" });
+    } finally {
+      setNotionExporting(false);
+    }
+  }
+
+  function handleNotionClick() {
+    if (!notionConnected) return;
+    const sticky = notionStickyTarget;
+    if (sticky && sticky.type === "page") {
+      handleNotionExport(sticky.id);
+    } else {
+      setNotionPickerOpen(true);
+    }
+  }
+
+  const stickyIsInvalidType = notionStickyTarget && notionStickyTarget.type !== "page";
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-teal-50 flex flex-col">
       {parentGenerationId && (
@@ -368,6 +432,28 @@ export default function FlashcardViewer({
               {exportStatus === 'exporting' ? 'Exporting…' : 'Export Flashcards'}
               <ChevronDownIcon />
             </button>
+            {notionConnected && (
+              <button
+                type="button"
+                onClick={stickyIsInvalidType ? undefined : handleNotionClick}
+                disabled={notionExporting || stickyIsInvalidType}
+                title={stickyIsInvalidType ? "This target is invalid for flashcard exports. Select a Notion page." : undefined}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs transition-colors ${
+                  stickyIsInvalidType
+                    ? "border-amber-300 text-amber-600 bg-amber-50 cursor-not-allowed"
+                    : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                }`}
+              >
+                {stickyIsInvalidType ? "⚠" : null}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+                  <path d="M4 4a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z" opacity=".15"/>
+                  <rect x="7" y="7" width="10" height="1.5" rx=".75"/>
+                  <rect x="7" y="11" width="7" height="1.5" rx=".75"/>
+                  <rect x="7" y="15" width="8" height="1.5" rx=".75"/>
+                </svg>
+                {notionExporting ? "Exporting…" : "Notion"}
+              </button>
+            )}
             <div className="w-px h-5 bg-gray-200 mx-1" />
             <button
               type="button"
@@ -563,6 +649,40 @@ export default function FlashcardViewer({
           <div className="w-px h-6 bg-gray-200" />
           <ToolbarItem icon="💡" label="Generate" onClick={() => onGoToTab('generate')} />
         </div>
+      )}
+
+      {notionBanner && (
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
+          notionBanner.ok ? "bg-gray-900 text-white" : "bg-red-600 text-white"
+        }`}>
+          {notionBanner.ok ? (
+            <>
+              <span>Exported to Notion</span>
+              {notionBanner.url && (
+                <a href={notionBanner.url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 opacity-80 hover:opacity-100">Open</a>
+              )}
+            </>
+          ) : (
+            <span>{notionBanner.message}</span>
+          )}
+          <button type="button" onClick={() => setNotionBanner(null)} className="ml-2 opacity-60 hover:opacity-100">
+            <XIcon />
+          </button>
+        </div>
+      )}
+
+      {notionPickerOpen && (
+        <NotionTargetPicker
+          courseId={courseId}
+          generationType="flashcards"
+          allowedTypes={["page"]}
+          onSelect={(target) => {
+            setNotionPickerOpen(false);
+            setNotionStickyTarget(target);
+            handleNotionExport(target.id);
+          }}
+          onClose={() => setNotionPickerOpen(false)}
+        />
       )}
     </div>
   );
