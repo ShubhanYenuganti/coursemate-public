@@ -422,7 +422,9 @@ def _handle_search(handler_self, user_id: int, qs: dict):
 
     body: dict = {"query": query, "page_size": 20}
     if filter_type in ("page", "database"):
-        body["filter"] = {"value": filter_type, "property": "object"}
+        # Notion API v2026-03-11 renamed "database" filter value to "data_source"
+        api_filter_value = "data_source" if filter_type == "database" else filter_type
+        body["filter"] = {"value": api_filter_value, "property": "object"}
 
     data, err, err_detail = _notion_api("POST", "/search", token, body=body, user_id=user_id)
     if err == "notion_token_revoked":
