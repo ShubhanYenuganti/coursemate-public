@@ -195,14 +195,24 @@ class handler(BaseHTTPRequestHandler):
         is_generated = _delete_generation_for_material(file_url)
 
         if not is_generated:
-            try:
-                delete_file(_s3_key_from_url(file_url))
-            except Exception as e:
-                send_json(self, 500, {"error": "Failed to delete file from S3", "detail": str(e)})
-                return
+            source_type = material.get('source_type', '')
+            if source_type == 'notion':
+                # Best-effort S3 delete for Notion materials — the file may not yet
+                # exist (placeholder URL) or may have already been cleaned up.
+                try:
+                    delete_file(_s3_key_from_url(file_url))
+                except Exception as e:
+                    print(f"[material] S3 delete skipped for Notion material {material_id}: {e}")
+            else:
+                try:
+                    delete_file(_s3_key_from_url(file_url))
+                except Exception as e:
+                    send_json(self, 500, {"error": "Failed to delete file from S3", "detail": str(e)})
+                    return
 
         Course.remove_material(course_id, material_id)
         Material.delete(material_id)
+
         send_json(self, 200, {"success": True})
 
     # --------------------------------------------------------- GET helpers ---

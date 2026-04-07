@@ -235,7 +235,7 @@ def _notion_page_to_pdf(page_id, blocks, token):
 
 # ─── Ingestion helpers ───────────────────────────────────────────────────────
 
-def _upsert_material(user_id, course_id, page_id, page_title, last_edited_time):
+def _upsert_material(user_id, course_id, page_id, page_title, last_edited_time, outsourced_url=None):
     """
     Return (material_id, is_new). Creates or finds the materials row.
     Does NOT upload to S3 or trigger Step Function.
@@ -257,6 +257,11 @@ def _upsert_material(user_id, course_id, page_id, page_title, last_edited_time):
                 or existing_url.startswith('notion/')
                 or not existing_url.startswith('https://')
             )
+            if outsourced_url:
+                db.execute(
+                    "UPDATE materials SET outsourced_url = %s WHERE id = %s",
+                    (outsourced_url, existing['id'])
+                )
             if needs_reingest:
                 print(
                     f'[notion_handler] Existing material requires reingest '
@@ -268,9 +273,9 @@ def _upsert_material(user_id, course_id, page_id, page_title, last_edited_time):
         row = db.execute("""
             INSERT INTO materials (
                 course_id, name, file_url, uploaded_by, file_type,
-                visibility, source_type, external_id, external_last_edited
+                visibility, source_type, external_id, external_last_edited, outsourced_url
             )
-            VALUES (%s, %s, %s, %s, 'application/pdf', 'private', 'notion', %s, %s)
+            VALUES (%s, %s, %s, %s, 'application/pdf', 'private', 'notion', %s, %s, %s)
             RETURNING id
         """, (
             course_id,
@@ -279,6 +284,7 @@ def _upsert_material(user_id, course_id, page_id, page_title, last_edited_time):
             user_id,
             page_id,
             last_edited_time,
+            outsourced_url,
         )).fetchone()
         material_id = row['id']
 
@@ -466,7 +472,8 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
         try:
             print(f'[notion_handler] Ingesting page={page_id} title={title!r}')
             material_id, is_new = _upsert_material(
-                user_id, course_id, page_id, title, last_edited_time
+                user_id, course_id, page_id, title, last_edited_time,
+                outsourced_url=page.get('url'),
             )
 
             # Fetch all blocks for this page
