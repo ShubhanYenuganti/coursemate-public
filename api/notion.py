@@ -69,7 +69,7 @@ _REDIRECT_URI = os.environ.get("NOTION_REDIRECT_URI", "")
 
 _IS_HTTPS = os.environ.get("VERCEL_ENV") in ("production", "preview")
 _AWS_REGION = (
-    os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+    os.environ.get("COURSEMATE_AWS_REGION") or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 )
 _INTEGRATION_POLLER_ARN = os.environ.get("INTEGRATION_POLLER_LAMBDA_ARN", "")
 
@@ -1134,8 +1134,9 @@ def _handle_sync(handler_self, user_id: int, body: dict):
                 {"user_id": user_id, "course_id": int(course_id)}
             ).encode(),
         )
-    except Exception:
-        pass  # Fire-and-forget — always return 202
+    except Exception as e:
+        import traceback
+        print(f"[notion sync] Lambda invoke failed: {e}\n{traceback.format_exc()}")  # visible in Vercel logs
 
     send_json(handler_self, 202, {"message": "Sync triggered"})
 
