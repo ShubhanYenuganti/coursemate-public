@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import sys
 from http.server import BaseHTTPRequestHandler
@@ -410,6 +411,21 @@ def _handle_status(handler_self, user_id: int):
 # ─── target picker ───────────────────────────────────────────────────────────
 
 
+def _canonical_notion_id(item: dict) -> str:
+    """
+    Notion search can return linked-view blocks whose `id` is a view block ID
+    rather than the underlying database's ID.  The canonical database ID is
+    always the 32-hex-char suffix of the item's `url` field.
+    Falls back to `item["id"]` if the URL is absent or unparseable.
+    """
+    url = item.get("url", "")
+    m = re.search(r"([0-9a-f]{32})(?:[?#]|$)", url)
+    if m:
+        raw = m.group(1)
+        return f"{raw[:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:]}"
+    return item.get("id")
+
+
 def _handle_search(handler_self, user_id: int, qs: dict):
     """Search Notion pages/databases."""
     token = _get_notion_token(user_id)
@@ -441,7 +457,7 @@ def _handle_search(handler_self, user_id: int, qs: dict):
         icon = _extract_icon(item)
         results.append(
             {
-                "id": item.get("id"),
+                "id": _canonical_notion_id(item),
                 "title": title,
                 "type": obj_type,
                 "icon": icon,
