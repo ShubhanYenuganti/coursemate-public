@@ -268,19 +268,53 @@ def _handle_callback(handler_self, qs: dict):
         "bot_id": token_data.get("bot_id"),
     }
 
-    # Need user_id — require session
+    # Need user_id — require session.
+    # SameSite=Strict on the session cookie means it is NOT sent on cross-site redirects
+    # (notion.com → our domain). Stash the token in a short-lived encrypted cookie and
+    # let the profile page finalize via a same-site fetch that will carry the session cookie.
     google_id, _ = authenticate_request(handler_self)
     if not google_id:
-        # OAuth callback may not carry session cookie in all browsers during redirect;
-        # store token in a temporary session-less flow is not supported — require sign-in
-        _redirect(handler_self, "/signin?redirect=/api/notion?action=auth")
+        pending_payload = json.dumps({"token": access_token, "metadata": metadata})
+        encrypted_pending = encrypt_api_key(pending_payload)
+        pending_cookie_attrs = [
+            f"notion_pending_token={encrypted_pending}",
+            "HttpOnly",
+            "Max-Age=300",
+            "Path=/api/notion",
+        ]
+        if _IS_HTTPS:
+            pending_cookie_attrs += ["Secure", "SameSite=Lax"]
+        else:
+            pending_cookie_attrs.append("SameSite=Lax")
+        clear_state = "notion_oauth_state=; HttpOnly; Max-Age=0; Path=/api/notion"
+        handler_self.send_response(302)
+        for k, v in get_cors_headers().items():
+            handler_self.send_header(k, v)
+        handler_self.send_header("Set-Cookie", "; ".join(pending_cookie_attrs))
+        handler_self.send_header("Set-Cookie", clear_state)
+        handler_self.send_header("Location", "/profile?notion_pending=1")
+        handler_self.end_headers()
         return
+
     user = User.get_by_google_id(google_id)
     if not user:
         send_json(handler_self, 404, {"error": "User not found"})
         return
     user_id = user["id"]
 
+    _upsert_notion_integration(user_id, access_token, metadata)
+
+    # Clear state cookie and redirect to profile
+    clear_cookie = "notion_oauth_state=; HttpOnly; Max-Age=0; Path=/api/notion"
+    handler_self.send_response(302)
+    for k, v in get_cors_headers().items():
+        handler_self.send_header(k, v)
+    handler_self.send_header("Set-Cookie", clear_cookie)
+    handler_self.send_header("Location", "/profile?notion_connected=1")
+    handler_self.end_headers()
+
+
+def _upsert_notion_integration(user_id: int, access_token: str, metadata: dict):
     encrypted = encrypt_api_key(access_token)
     with get_db() as conn:
         cur = conn.cursor()
@@ -297,14 +331,38 @@ def _handle_callback(handler_self, qs: dict):
         )
         cur.close()
 
-    # Clear state cookie and redirect to profile
-    clear_cookie = "notion_oauth_state=; HttpOnly; Max-Age=0; Path=/api/notion"
-    handler_self.send_response(302)
+
+def _handle_finalize_connection(handler_self, user_id: int):
+    """Complete a pending Notion OAuth connection using the stashed pending cookie."""
+    cookie_header = handler_self.headers.get("Cookie", "")
+    encrypted_pending = _parse_cookie(cookie_header, "notion_pending_token")
+    if not encrypted_pending:
+        send_json(handler_self, 400, {"error": "No pending Notion connection"})
+        return
+
+    try:
+        payload = json.loads(decrypt_api_key(encrypted_pending))
+        access_token = payload["token"]
+        metadata = payload["metadata"]
+    except Exception:
+        send_json(handler_self, 400, {"error": "Invalid or expired pending token"})
+        return
+
+    _upsert_notion_integration(user_id, access_token, metadata)
+
+    clear_pending = "notion_pending_token=; HttpOnly; Max-Age=0; Path=/api/notion"
+    handler_self.send_response(200)
     for k, v in get_cors_headers().items():
         handler_self.send_header(k, v)
-    handler_self.send_header("Set-Cookie", clear_cookie)
-    handler_self.send_header("Location", "/profile?notion_connected=1")
+    handler_self.send_header("Content-Type", "application/json")
+    handler_self.send_header("Set-Cookie", clear_pending)
     handler_self.end_headers()
+    handler_self.wfile.write(json.dumps({
+        "connected": True,
+        "workspace_name": metadata.get("workspace_name"),
+        "workspace_icon": metadata.get("workspace_icon"),
+        "workspace_id": metadata.get("workspace_id"),
+    }).encode())
 
 
 def _redirect(handler_self, location: str):
@@ -1087,6 +1145,8 @@ class handler(BaseHTTPRequestHandler):
 
         if action == "status":
             _handle_status(self, user_id)
+        elif action == "finalize_connection":
+            _handle_finalize_connection(self, user_id)
         elif action == "search":
             _handle_search(self, user_id, qs)
         elif action == "get_target":

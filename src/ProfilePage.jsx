@@ -330,16 +330,23 @@ function ApiKeysSection() {
   );
 }
 
-function NotionConnectionSection() {
+function NotionConnectionSection({ pending = false }) {
   const [status, setStatus] = useState(null); // null = loading, { connected, workspace_name, workspace_icon } = loaded
   const [revoking, setRevoking] = useState(false);
 
   useEffect(() => {
-    fetch("/api/notion?action=status", { credentials: "include" })
-      .then((r) => r.json())
-      .then((data) => setStatus(data))
-      .catch(() => setStatus({ connected: false }));
-  }, []);
+    if (pending) {
+      fetch("/api/notion?action=finalize_connection", { credentials: "include" })
+        .then((r) => r.json())
+        .then((data) => setStatus(data))
+        .catch(() => setStatus({ connected: false }));
+    } else {
+      fetch("/api/notion?action=status", { credentials: "include" })
+        .then((r) => r.json())
+        .then((data) => setStatus(data))
+        .catch(() => setStatus({ connected: false }));
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleDisconnect() {
     setRevoking(true);
@@ -420,9 +427,11 @@ export default function ProfilePage({ userData, csrfToken, onSignOut, onUserUpda
   const navigate = useNavigate();
   const location = useLocation();
 
+  const notionPending = new URLSearchParams(location.search).get("notion_pending") === "1";
+
   const [notionToast, setNotionToast] = useState(() => {
     const params = new URLSearchParams(location.search);
-    return params.get("notion_connected") === "1";
+    return params.get("notion_connected") === "1" || params.get("notion_pending") === "1";
   });
 
   useEffect(() => {
@@ -601,7 +610,7 @@ export default function ProfilePage({ userData, csrfToken, onSignOut, onUserUpda
           <div className="border-t border-gray-100" />
 
           {/* Connected apps section */}
-          <NotionConnectionSection />
+          <NotionConnectionSection pending={notionPending} />
 
           <div className="border-t border-gray-100" />
 
