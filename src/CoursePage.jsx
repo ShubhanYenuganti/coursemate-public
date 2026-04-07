@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { formatDateTime } from './utils/dateUtils';
 import { useNavigate } from 'react-router-dom';
 import CreateCourseModal from './CreateCourseModal.jsx';
 import SharingAccessModal from './SharingAccessModal.jsx';
@@ -57,7 +58,7 @@ function ToolbarItem({ icon, label, active, onClick }) {
 
 // ─── Notion Sources Panel ─────────────────────────────────────────────────────
 
-function NotionSourcesPanel({ courseId }) {
+function NotionSourcesPanel({ courseId, onSync }) {
   const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
@@ -124,6 +125,7 @@ function NotionSourcesPanel({ courseId }) {
 
       if (data?.sync_triggered) {
         setSyncMsg('Source added, initial sync started');
+        onSync?.();
       } else {
         setSyncMsg('Source added; initial sync was not triggered. Use Sync Now.');
       }
@@ -158,13 +160,14 @@ function NotionSourcesPanel({ courseId }) {
       await fetch(`/api/notion?action=sync&course_id=${courseId}`, { method: 'POST', credentials: 'include' });
       setSyncMsg('Sync started');
       setTimeout(() => setSyncMsg(''), 3000);
+      onSync?.();
     } catch { setSyncMsg('Sync failed'); }
     finally { setSyncing(false); }
   }
 
   function formatDate(ts) {
     if (!ts) return 'Never';
-    return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return formatDateTime(ts);
   }
 
   if (!notionConnected) return null;
@@ -278,6 +281,7 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
       return saved;
     }
   );
+  const [syncVersion, setSyncVersion] = useState(0);
 
   function handleTabChange(tab) {
     localStorage.setItem(storageKey, tab);
@@ -433,7 +437,7 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
               isOwner={isOwner}
             />
           )}
-          <NotionSourcesPanel courseId={course?.id} />
+          <NotionSourcesPanel courseId={course?.id} onSync={() => setSyncVersion(v => v + 1)} />
           </div>
         )}
 
@@ -442,6 +446,7 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
             <MaterialsPage
               courseId={course?.id}
               userId={userData?.db_id}
+              syncVersion={syncVersion}
             />
           </div>
         )}

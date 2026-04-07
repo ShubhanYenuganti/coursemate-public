@@ -535,13 +535,15 @@ function FilterBar({ ownerFilter, setOwnerFilter, typeFilter, setTypeFilter }) {
 
 // ─── main component ───────────────────────────────────────────────────────────
 
-export default function MaterialsPage({ courseId, userId }) {
+export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
   const [materials, setMaterials]       = useState([]);
   const [loadingMats, setLoadingMats]   = useState(true);
   const [stagingItems, setStagingItems] = useState([]);
   const [uploadItems, setUploadItems]   = useState([]);
   const [ownerFilter, setOwnerFilter]   = useState('all');
   const [typeFilter,  setTypeFilter]    = useState('all');
+  const [syncPolling, setSyncPolling]   = useState(false);
+  const prevSyncVersion                 = useRef(0);
 
   // ── fetch existing materials ──────────────────────────────────────────────
   const fetchMaterials = useCallback(async () => {
@@ -561,15 +563,27 @@ export default function MaterialsPage({ courseId, userId }) {
 
   useEffect(() => { fetchMaterials(); }, [fetchMaterials]);
 
-  // ── poll while any material is still being indexed ────────────────────────
+  // ── enter a polling window whenever a sync is triggered ───────────────────
   useEffect(() => {
-    const hasActive = materials.some(
-      m => m.embed_status === 'pending' || m.embed_status === 'processing'
+    if (syncVersion <= prevSyncVersion.current) return;
+    prevSyncVersion.current = syncVersion;
+    fetchMaterials();
+    setSyncPolling(true);
+    const t = setTimeout(() => setSyncPolling(false), 90_000);
+    return () => clearTimeout(t);
+  }, [syncVersion, fetchMaterials]);
+
+  // ── poll while any material is in a non-terminal state ────────────────────
+  useEffect(() => {
+    const hasActive = syncPolling || materials.some(
+      m => m.embed_status === 'pending'
+        || m.embed_status === 'processing'
+        || (m.source_type === 'notion' && !m.embed_status)
     );
     if (!hasActive) return;
     const timer = setTimeout(fetchMaterials, 5000);
     return () => clearTimeout(timer);
-  }, [materials, fetchMaterials]);
+  }, [materials, fetchMaterials, syncPolling]);
 
   // ── upload one file ──────────────────────────────────────────────────────
   const uploadOne = useCallback(async (item) => {
