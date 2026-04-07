@@ -618,8 +618,9 @@ def _handle_export(handler_self, user_id: int, body: dict):
                 )
                 continue
 
+            name = tgt.get("name", "").strip()
             result = _dispatch_export(
-                user_id, generation_id, generation_type, target_id, token
+                user_id, generation_id, generation_type, target_id, token, name
             )
             result["generation_id"] = generation_id
             result["generation_type"] = generation_type
@@ -643,15 +644,15 @@ def _handle_export(handler_self, user_id: int, body: dict):
 
 
 def _dispatch_export(
-    user_id: int, generation_id, generation_type: str, target_id: str, token: str
+    user_id: int, generation_id, generation_type: str, target_id: str, token: str, name: str = ""
 ) -> dict:
     """Route to the appropriate export handler. Returns a result entry dict."""
     if generation_type == "flashcards":
-        return _export_flashcards(user_id, generation_id, target_id, token)
+        return _export_flashcards(user_id, generation_id, target_id, token, name)
     elif generation_type == "quiz":
-        return _export_quiz(user_id, generation_id, target_id, token)
+        return _export_quiz(user_id, generation_id, target_id, token, name)
     elif generation_type == "report":
-        return _export_report(user_id, generation_id, target_id, token)
+        return _export_report(user_id, generation_id, target_id, token, name)
     else:
         return {
             "status": "error",
@@ -659,7 +660,39 @@ def _dispatch_export(
         }
 
 
-def _export_flashcards(user_id: int, generation_id, target_id: str, token: str) -> dict:
+def _create_page_in_database(database_id: str, name: str, token: str, user_id: int):
+    """Create a new page in a Notion database. Returns (page_id, page_url, error)."""
+    db_data, db_err, _ = _notion_api("GET", f"/databases/{database_id}", token, user_id=user_id)
+    if db_err == "notion_token_revoked":
+        return None, None, "notion_token_revoked"
+    if db_err or not db_data:
+        return None, None, db_err or "Failed to fetch database"
+
+    title_prop = next(
+        (k for k, v in (db_data.get("properties") or {}).items() if v.get("type") == "title"),
+        None,
+    )
+    if not title_prop:
+        return None, None, "Database has no title property"
+
+    payload = {
+        "parent": {"database_id": database_id},
+        "properties": {
+            title_prop: {"title": [{"type": "text", "text": {"content": name or "Untitled"}}]}
+        },
+    }
+    page_data, page_err, _ = _notion_api("POST", "/pages", token, body=payload, user_id=user_id)
+    if page_err == "notion_token_revoked":
+        return None, None, "notion_token_revoked"
+    if page_err:
+        return None, None, page_err
+
+    page_id = page_data.get("id", "")
+    page_url = page_data.get("url") or f"https://www.notion.so/{page_id.replace('-', '')}"
+    return page_id, page_url, None
+
+
+def _export_flashcards(user_id: int, generation_id, target_id: str, token: str, name: str = "") -> dict:
     """Export flashcards as toggle blocks appended to a Notion page."""
     with get_db() as conn:
         cur = conn.cursor()
@@ -693,29 +726,25 @@ def _export_flashcards(user_id: int, generation_id, target_id: str, token: str) 
             "error": f"Generation not ready (status={row['status']})",
         }
 
-    # Verify target is a Notion page (not a database)
-    page_data, page_err, page_err_detail = _notion_api("GET", f"/pages/{target_id}", token, user_id=user_id)
-    if page_err == "notion_token_revoked":
+    # Create a new page in the database
+    page_id, page_url, create_err = _create_page_in_database(target_id, name, token, user_id)
+    if create_err == "notion_token_revoked":
         return {"status": "error", "error": "notion_token_revoked"}
-    if page_err or not page_data:
-        return {"status": "error", "error": "Flashcard export requires a Notion page target, not a database", "detail": page_err_detail}
+    if create_err:
+        return {"status": "error", "error": f"Failed to create page: {create_err}"}
 
     cards = row["cards"] or []
     blocks = [flashcard_to_notion_toggle_block(c) for c in cards if c]
 
     if not blocks:
-        return {
-            "status": "success",
-            "exported_count": 0,
-            "url": f"https://www.notion.so/{target_id.replace('-', '')}",
-        }
+        return {"status": "success", "exported_count": 0, "url": page_url}
 
     # Append in batches of 100 (Notion API limit)
     for i in range(0, max(len(blocks), 1), 100):
         batch = blocks[i : i + 100]
         data, err, err_detail = _notion_api(
             "PATCH",
-            f"/blocks/{target_id}/children",
+            f"/blocks/{page_id}/children",
             token,
             body={"children": batch},
             user_id=user_id,
@@ -725,11 +754,10 @@ def _export_flashcards(user_id: int, generation_id, target_id: str, token: str) 
         if err:
             return {"status": "error", "error": f"Notion API error: {err}", "detail": err_detail}
 
-    notion_url = f"https://www.notion.so/{target_id.replace('-', '')}"
-    return {"status": "success", "exported_count": len(cards), "url": notion_url}
+    return {"status": "success", "exported_count": len(cards), "url": page_url}
 
 
-def _export_quiz(user_id: int, generation_id, target_id: str, token: str) -> dict:
+def _export_quiz(user_id: int, generation_id, target_id: str, token: str, name: str = "") -> dict:
     """Export quiz as heading/toggle blocks on a Notion page."""
     with get_db() as conn:
         cur = conn.cursor()
@@ -769,28 +797,24 @@ def _export_quiz(user_id: int, generation_id, target_id: str, token: str) -> dic
             "error": f"Generation not ready (status={row['status']})",
         }
 
-    # Verify target is a Notion page (not a database)
-    page_data, page_err, page_err_detail = _notion_api("GET", f"/pages/{target_id}", token, user_id=user_id)
-    if page_err == "notion_token_revoked":
+    # Create a new page in the database
+    page_id, page_url, create_err = _create_page_in_database(target_id, name, token, user_id)
+    if create_err == "notion_token_revoked":
         return {"status": "error", "error": "notion_token_revoked"}
-    if page_err or not page_data:
-        return {"status": "error", "error": "Quiz export requires a Notion page target, not a database", "detail": page_err_detail}
+    if create_err:
+        return {"status": "error", "error": f"Failed to create page: {create_err}"}
 
     questions = row["questions"] or []
     blocks = quiz_to_notion_blocks(questions)
 
     if not blocks:
-        return {
-            "status": "success",
-            "exported_count": 0,
-            "url": f"https://www.notion.so/{target_id.replace('-', '')}",
-        }
+        return {"status": "success", "exported_count": 0, "url": page_url}
 
     for i in range(0, max(len(blocks), 1), 100):
         batch = blocks[i : i + 100]
         data, err, err_detail = _notion_api(
             "PATCH",
-            f"/blocks/{target_id}/children",
+            f"/blocks/{page_id}/children",
             token,
             body={"children": batch},
             user_id=user_id,
@@ -800,11 +824,10 @@ def _export_quiz(user_id: int, generation_id, target_id: str, token: str) -> dic
         if err:
             return {"status": "error", "error": f"Notion API error: {err}", "detail": err_detail}
 
-    notion_url = f"https://www.notion.so/{target_id.replace('-', '')}"
-    return {"status": "success", "exported_count": len(questions), "url": notion_url}
+    return {"status": "success", "exported_count": len(questions), "url": page_url}
 
 
-def _export_report(user_id: int, generation_id, target_id: str, token: str) -> dict:
+def _export_report(user_id: int, generation_id, target_id: str, token: str, name: str = "") -> dict:
     """Export report sections as Notion blocks on a page."""
     with get_db() as conn:
         cur = conn.cursor()
@@ -833,12 +856,12 @@ def _export_report(user_id: int, generation_id, target_id: str, token: str) -> d
             "error": f"Generation not ready (status={row['status']})",
         }
 
-    # Verify target is a Notion page (not a database)
-    page_data, page_err, page_err_detail = _notion_api("GET", f"/pages/{target_id}", token, user_id=user_id)
-    if page_err == "notion_token_revoked":
+    # Create a new page in the database
+    page_id, page_url, create_err = _create_page_in_database(target_id, name, token, user_id)
+    if create_err == "notion_token_revoked":
         return {"status": "error", "error": "notion_token_revoked"}
-    if page_err or not page_data:
-        return {"status": "error", "error": "Report export requires a Notion page target, not a database", "detail": page_err_detail}
+    if create_err:
+        return {"status": "error", "error": f"Failed to create page: {create_err}"}
 
     sections = row["sections_json"] or []
     if isinstance(sections, str):
@@ -850,17 +873,13 @@ def _export_report(user_id: int, generation_id, target_id: str, token: str) -> d
     blocks = report_to_notion_blocks(sections)
 
     if not blocks:
-        return {
-            "status": "success",
-            "exported_count": 0,
-            "url": f"https://www.notion.so/{target_id.replace('-', '')}",
-        }
+        return {"status": "success", "exported_count": 0, "url": page_url}
 
     for i in range(0, max(len(blocks), 1), 100):
         batch = blocks[i : i + 100]
         data, err, err_detail = _notion_api(
             "PATCH",
-            f"/blocks/{target_id}/children",
+            f"/blocks/{page_id}/children",
             token,
             body={"children": batch},
             user_id=user_id,
@@ -870,8 +889,7 @@ def _export_report(user_id: int, generation_id, target_id: str, token: str) -> d
         if err:
             return {"status": "error", "error": f"Notion API error: {err}", "detail": err_detail}
 
-    notion_url = f"https://www.notion.so/{target_id.replace('-', '')}"
-    return {"status": "success", "exported_count": len(sections), "url": notion_url}
+    return {"status": "success", "exported_count": len(sections), "url": page_url}
 
 
 # ─── create target ───────────────────────────────────────────────────────────
