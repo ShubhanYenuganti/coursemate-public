@@ -1089,7 +1089,53 @@ def _handle_add_source_point(handler_self, user_id: int, body: dict):
             raise
         cur.close()
 
-    send_json(handler_self, 201, {"source_point": dict(row) if row else None})
+    sync_triggered = False
+    sync_error = None
+
+    if _INTEGRATION_POLLER_ARN and row:
+        try:
+            import boto3
+
+            lmbd = boto3.client("lambda", region_name=_AWS_REGION)
+            lmbd.invoke(
+                FunctionName=_INTEGRATION_POLLER_ARN,
+                InvocationType="Event",
+                Payload=json.dumps(
+                    {
+                        "source_point_id": int(row["id"]),
+                        "user_id": user_id,
+                        "course_id": int(course_id),
+                        "force_full_sync": True,
+                    }
+                ).encode(),
+            )
+            sync_triggered = True
+            print(
+                f"[notion add_source_point] initial sync invoked "
+                f"source_point_id={row['id']} course_id={course_id} user_id={user_id}"
+            )
+        except Exception as exc:
+            sync_error = str(exc)
+            print(
+                f"[notion add_source_point] initial sync invoke failed "
+                f"source_point_id={row['id']} course_id={course_id} user_id={user_id}: {exc}"
+            )
+    elif not _INTEGRATION_POLLER_ARN:
+        sync_error = "INTEGRATION_POLLER_LAMBDA_ARN not configured"
+        print(
+            f"[notion add_source_point] initial sync skipped: "
+            f"missing INTEGRATION_POLLER_LAMBDA_ARN source_point_id={row['id'] if row else None}"
+        )
+
+    send_json(
+        handler_self,
+        201,
+        {
+            "source_point": dict(row) if row else None,
+            "sync_triggered": sync_triggered,
+            "sync_error": sync_error,
+        },
+    )
 
 
 def _handle_list_source_points(handler_self, user_id: int, qs: dict):

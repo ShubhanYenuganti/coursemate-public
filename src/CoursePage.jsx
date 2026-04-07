@@ -103,12 +103,31 @@ function NotionSourcesPanel({ courseId }) {
 
   async function handleAdd(db) {
     try {
-      await fetch('/api/notion?action=add_source_point', {
+      const res = await fetch('/api/notion?action=add_source_point', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ course_id: courseId, provider: 'notion', external_id: db.id, external_title: db.title }),
       });
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+      if (!res.ok) {
+        const msg = data?.error || 'Failed to add source';
+        setSyncMsg(msg);
+        setTimeout(() => setSyncMsg(''), 4000);
+        return;
+      }
+
+      if (data?.sync_triggered) {
+        setSyncMsg('Source added, initial sync started');
+      } else {
+        setSyncMsg('Source added; initial sync was not triggered. Use Sync Now.');
+      }
+      setTimeout(() => setSyncMsg(''), 4000);
       setQuery('');
       setResults([]);
       loadSources();
