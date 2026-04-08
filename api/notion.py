@@ -668,15 +668,40 @@ def _create_page_in_database(database_id: str, name: str, token: str, user_id: i
     if db_err or not db_data:
         return None, None, db_err or "Failed to fetch database"
 
-    title_prop = next(
-        (k for k, v in (db_data.get("properties") or {}).items() if v.get("type") == "title"),
-        None,
-    )
+    ds_id = None
+    ds_items = db_data.get("data_sources") or []
+    if ds_items:
+        ds_id = (ds_items[0] or {}).get("id")
+
+    title_prop = None
+    if ds_id:
+        ds_data, ds_err, _ = _notion_api("GET", f"/data_sources/{ds_id}", token, user_id=user_id)
+        if ds_err == "notion_token_revoked":
+            return None, None, "notion_token_revoked"
+        if not ds_err and ds_data:
+            title_prop = next(
+                (k for k, v in (ds_data.get("properties") or {}).items() if v.get("type") == "title"),
+                None,
+            )
+
+    # Legacy fallback for workspaces/databases without data_sources
+    if not title_prop:
+        title_prop = next(
+            (k for k, v in (db_data.get("properties") or {}).items() if v.get("type") == "title"),
+            None,
+        )
+
     if not title_prop:
         return None, None, "Database has no title property"
 
+    parent = (
+        {"type": "data_source_id", "data_source_id": ds_id}
+        if ds_id
+        else {"database_id": database_id}
+    )
+
     payload = {
-        "parent": {"database_id": database_id},
+        "parent": parent,
         "properties": {
             title_prop: {"title": [{"type": "text", "text": {"content": name or "Untitled"}}]}
         },
@@ -740,7 +765,7 @@ def _export_flashcards(user_id: int, generation_id, target_id: str, token: str, 
         return {"status": "success", "exported_count": 0, "url": page_url}
 
     # Append in batches of 100 (Notion API limit)
-    for i in range(0, max(len(blocks), 1), 100):
+    for i in range(0, len(blocks), 100):
         batch = blocks[i : i + 100]
         data, err, err_detail = _notion_api(
             "PATCH",
@@ -810,7 +835,7 @@ def _export_quiz(user_id: int, generation_id, target_id: str, token: str, name: 
     if not blocks:
         return {"status": "success", "exported_count": 0, "url": page_url}
 
-    for i in range(0, max(len(blocks), 1), 100):
+    for i in range(0, len(blocks), 100):
         batch = blocks[i : i + 100]
         data, err, err_detail = _notion_api(
             "PATCH",
@@ -875,7 +900,7 @@ def _export_report(user_id: int, generation_id, target_id: str, token: str, name
     if not blocks:
         return {"status": "success", "exported_count": 0, "url": page_url}
 
-    for i in range(0, max(len(blocks), 1), 100):
+    for i in range(0, len(blocks), 100):
         batch = blocks[i : i + 100]
         data, err, err_detail = _notion_api(
             "PATCH",
@@ -1156,6 +1181,52 @@ def _handle_add_source_point(handler_self, user_id: int, body: dict):
     )
 
 
+def _handle_resolve_database_target(handler_self, user_id: int, body: dict):
+    """
+    Resolve and normalize a Notion database ID using the exact same resolver
+    as add_source_point, but without writing to integration_source_points.
+    """
+    token = _get_notion_token(user_id)
+    if not token:
+        send_json(handler_self, 403, {"error": "Notion not connected"})
+        return
+
+    external_id = body.get("external_id", "").strip()
+    external_title = body.get("external_title", "").strip()
+    if not external_id:
+        send_json(handler_self, 400, {"error": "external_id required"})
+        return
+
+    resolved_id = _resolve_notion_database_id(external_id, token)
+    if not resolved_id:
+        send_json(
+            handler_self,
+            400,
+            {
+                "error": "Could not resolve a queryable Notion database from the provided ID. Make sure you are selecting a database (not a linked view or page)."
+            },
+        )
+        return
+
+    # Optional title backfill from resolved database
+    db_data, db_err, _ = _notion_api("GET", f"/databases/{resolved_id}", token, user_id=user_id)
+    resolved_title = external_title or _extract_title(db_data or {}) or "Untitled"
+    if db_err:
+        resolved_title = external_title or "Untitled"
+
+    send_json(
+        handler_self,
+        200,
+        {
+            "target": {
+                "id": resolved_id,
+                "title": resolved_title,
+                "type": "database",
+            }
+        },
+    )
+
+
 def _handle_list_source_points(handler_self, user_id: int, qs: dict):
     """List all source points for the user in a course (active and disabled)."""
     course_id = _qs_get(qs, "course_id")
@@ -1328,6 +1399,8 @@ class handler(BaseHTTPRequestHandler):
             _handle_create_target(self, user_id, body)
         elif action == "add_source_point":
             _handle_add_source_point(self, user_id, body)
+        elif action == "resolve_database_target":
+            _handle_resolve_database_target(self, user_id, body)
         elif action == "sync":
             _handle_sync(self, user_id, body)
         else:

@@ -151,43 +151,15 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
       return;
     }
 
-    try {
-      // Exact add-source flow from CoursePage: add_source_point then reload source points.
-      const res = await fetch("/api/notion?action=add_source_point", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          course_id: courseId,
-          provider: "notion",
-          external_id: candidateId,
-          external_title: db?.title || "",
-        }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setAddError(data?.error || "Failed to add database source");
-        return;
-      }
-
-      const added = data?.source_point ? sourcePointToTarget(data.source_point) : null;
-      if (added?.id) {
-        setSelected(added);
-      } else {
-        setSelected({
-          id: candidateId,
-          title: db?.title || "Untitled",
-          type: "database",
-        });
-      }
-
-      setSearchQuery("");
-      setSearchResults([]);
-      loadSourcePoints();
-    } catch {
-      setAddError("Failed to add database source");
-    }
+    // Search selection is transient for export targeting only.
+    // It must not create/update integration_source_points.
+    setSelected({
+      id: candidateId,
+      title: db?.title || "Untitled",
+      type: "database",
+    });
+    setSearchQuery("");
+    setSearchResults([]);
   }
 
   async function handleConfirm() {
