@@ -202,6 +202,10 @@ export default function FlashcardViewer({
   const hint = card.hint || (back ? back.split(' ').slice(0, 4).join(' ') + '…' : '');
   const courseName = course?.name || course?.title || 'Flashcards';
 
+  const actionButtonClass =
+    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+  const actionIconClass = "text-gray-500";
+
   function goNext() {
     if (currentIndex < total - 1) {
       if (trackProgress) setSeen((prev) => new Set(prev).add(currentIndex));
@@ -374,23 +378,22 @@ export default function FlashcardViewer({
 
       {/* ── Header ── */}
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-gray-100 px-8 py-3">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <span className="text-lg font-bold text-gray-900">{courseName}</span>
+        <div className="max-w-6xl mx-auto relative flex items-center justify-center">
+          <div className="flex items-center gap-10">
+            <div className="text-center">
+              <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">
+                {currentIndex + 1} / {total}
+              </p>
+              <p className="text-[10px] text-gray-400 mt-0.5">Flashcards Progress</p>
+            </div>
 
-          <div className="text-center">
-            <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">
-              {currentIndex + 1} / {total}
-            </p>
-            <p className="text-[10px] text-gray-400 mt-0.5">{courseName} Flashcards</p>
-          </div>
-
-          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => onRegenerate?.(data)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-colors"
+              className={actionButtonClass}
             >
-              <RefreshIcon />
+              <span className={actionIconClass}><RefreshIcon /></span>
               Regenerate
             </button>
             <button
@@ -405,27 +408,27 @@ export default function FlashcardViewer({
                     : 'border-gray-200 text-gray-600 hover:bg-gray-50'
               }`}
             >
-              <BookmarkIcon />
-              {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved ✓' : saveStatus === 'error' ? 'Retry Save' : 'Save Flashcards'}
+              <span className={actionIconClass}><BookmarkIcon /></span>
+              {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved ✓' : saveStatus === 'error' ? 'Retry Save' : 'Save'}
             </button>
             <button
               type="button"
               onClick={handleExportPdf}
               disabled={!generationId || exportStatus === 'exporting'}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+              className={actionButtonClass}
             >
-              <DownloadIcon />
-              {exportStatus === 'exporting' ? 'Exporting…' : 'Export Flashcards'}
-              <ChevronDownIcon />
+              <span className={actionIconClass}><DownloadIcon /></span>
+              {exportStatus === 'exporting' ? 'Exporting…' : 'Export'}
+              <span className={actionIconClass}><ChevronDownIcon /></span>
             </button>
             {notionConnected && (
               <button
                 type="button"
                 onClick={handleNotionClick}
                 disabled={notionExporting}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                className={actionButtonClass}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className={`shrink-0 ${actionIconClass}`}>
                   <path d="M4 4a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z" opacity=".15"/>
                   <rect x="7" y="7" width="10" height="1.5" rx=".75"/>
                   <rect x="7" y="11" width="7" height="1.5" rx=".75"/>
@@ -434,21 +437,16 @@ export default function FlashcardViewer({
                 {notionExporting ? "Exporting…" : "Notion"}
               </button>
             )}
-            <div className="w-px h-5 bg-gray-200 mx-1" />
-            <button
-              type="button"
-              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-            >
-              <SettingsIcon />
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-            >
-              <XIcon />
-            </button>
+            </div>
           </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+          >
+            <XIcon />
+          </button>
         </div>
       </header>
 

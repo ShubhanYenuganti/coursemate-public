@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 
 /**
  * NotionTargetPicker
@@ -23,6 +23,8 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [addError, setAddError] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerContainerRef = useRef(null);
 
   function normalizeNotionId(rawId) {
     const cleaned = String(rawId || "").trim().replace(/-/g, "");
@@ -105,6 +107,17 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
       .finally(() => setStickyLoaded(true));
   }, [courseId, generationType]);
 
+  // Suggest a default page name (user can edit)
+  useEffect(() => {
+    if (name.trim()) return;
+    const typeLabel =
+      generationType === "quiz" ? "Quiz" : generationType === "flashcards" ? "Flashcards" : "Report";
+    const date = new Date();
+    const dateStr = date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
+    setName(`${typeLabel} — ${dateStr}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generationType]);
+
   // Load existing source points immediately (same as CoursePage)
   useEffect(() => {
     loadSourcePoints();
@@ -141,6 +154,12 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
     [sourcePoints]
   );
 
+  const filteredSourceTargets = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return sourceTargets;
+    return sourceTargets.filter((t) => String(t.title || "").toLowerCase().includes(q));
+  }, [sourceTargets, searchQuery]);
+
   async function handleSelectSearchResult(db) {
     setAddError("");
     if (!courseId) return;
@@ -160,6 +179,7 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
     });
     setSearchQuery("");
     setSearchResults([]);
+    setPickerOpen(false);
   }
 
   async function handleConfirm() {
@@ -190,10 +210,31 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
     }
   }
 
+  useEffect(() => {
+    if (!pickerOpen) return;
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") setPickerOpen(false);
+    };
+
+    const onPointerDown = (e) => {
+      const container = pickerContainerRef.current;
+      if (!container) return;
+      if (!container.contains(e.target)) setPickerOpen(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [pickerOpen]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="w-full max-w-sm mx-4 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden"
+        className="w-full max-w-md mx-4 bg-white rounded-2xl shadow-xl border border-gray-200 max-h-[85vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
@@ -212,7 +253,7 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
         {!stickyLoaded ? (
           <div className="px-4 py-6 text-sm text-gray-400">Loading…</div>
         ) : (
-          <div className="px-4 py-3 space-y-3">
+          <div className="px-4 py-3 space-y-4 overflow-y-auto">
             <div>
               <p className="text-xs text-gray-500 mb-1">Page name</p>
               <input
@@ -221,7 +262,7 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleConfirm()}
-                placeholder="e.g. Week 3 Flashcards"
+                placeholder={`e.g. Week 3 ${generationType === "quiz" ? "Quiz" : generationType === "flashcards" ? "Flashcards" : "Report"}`}
                 className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
               />
             </div>
@@ -230,8 +271,13 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
               <p className="text-xs text-gray-500 mb-1">Parent database</p>
 
               {selected && (
-                <div className="mb-1.5 flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-100">
-                  <span className="text-xs text-indigo-700 flex-1 truncate">{selected.title || "Untitled"}</span>
+                <div className="mb-2 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-100 w-full">
+                  <span className="text-xs text-indigo-700 flex-1 truncate">
+                    {selected.title || "Untitled"}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">
+                    DB
+                  </span>
                   <button
                     type="button"
                     onClick={() => setSelected(null)}
@@ -242,54 +288,91 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
                 </div>
               )}
 
-              {/* Existing source points list (immediate) */}
-              <div className="border border-gray-100 rounded-lg overflow-hidden max-h-36 overflow-y-auto">
-                {!sourcesLoaded ? (
-                  <p className="px-3 py-2 text-xs text-gray-400">Loading connected databases…</p>
-                ) : sourceTargets.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-gray-400">No connected course databases yet.</p>
-                ) : (
-                  sourceTargets.map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => setSelected(r)}
-                      className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors ${
-                        selected?.id === r.id ? "bg-indigo-50 text-indigo-700" : "text-gray-800"
-                      }`}
-                    >
-                      <span className="flex-1 truncate">{r.title || "Untitled"}</span>
-                      <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">DB</span>
-                    </button>
-                  ))
+              <div ref={pickerContainerRef}>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setAddError("");
+                    setSearchQuery(e.target.value);
+                    setPickerOpen(true);
+                  }}
+                  onFocus={() => setPickerOpen(true)}
+                  placeholder={selected ? "Change parent database…" : "Search Notion databases…"}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+                />
+
+                {(pickerOpen || searching) && (
+                  <div className="mt-1 w-full border border-gray-200 bg-white rounded-lg shadow-sm overflow-hidden">
+                    <div className="max-h-52 overflow-y-auto">
+                      {sourceTargets.length > 0 && (
+                        <div className="px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">
+                          CourseMate Databases
+                        </div>
+                      )}
+                      {!sourcesLoaded ? (
+                        <div className="px-3 pb-2 text-xs text-gray-400">Loading…</div>
+                      ) : sourceTargets.length > 0 && filteredSourceTargets.length === 0 ? (
+                        <div className="px-3 pb-2 text-xs text-gray-400">No matches.</div>
+                      ) : (
+                        filteredSourceTargets.map((r) => (
+                          <button
+                            key={r.id}
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setSelected(r);
+                              setSearchQuery("");
+                              setSearchResults([]);
+                              setPickerOpen(false);
+                            }}
+                            className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors ${
+                              selected?.id === r.id ? "bg-indigo-50 text-indigo-700" : "text-gray-800"
+                            }`}
+                          >
+                            <span className="flex-1 truncate">{r.title || "Untitled"}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">DB</span>
+                          </button>
+                        ))
+                      )}
+
+                      <div className={`px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-widest ${sourceTargets.length > 0 ? "border-t border-gray-100" : ""}`}>
+                        Notion Databases
+                      </div>
+                      {searchQuery.trim() === "" ? (
+                        <div className="px-3 pb-2 text-xs text-gray-400">Start typing to search Notion databases…</div>
+                      ) : searching ? (
+                        <div className="px-3 pb-2 text-xs text-gray-400">Searching…</div>
+                      ) : searchResults.length === 0 ? (
+                        <div className="px-3 pb-2 text-xs text-gray-400">No results.</div>
+                      ) : (
+                        searchResults.map((r) => (
+                          <button
+                            key={r.id}
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => handleSelectSearchResult(r)}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-50 transition-colors"
+                          >
+                            <span className="flex-1 truncate">{r.title || "Untitled"}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">DB</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
 
-              {/* Search endpoint below source list */}
-              <p className="text-[11px] text-gray-500 mt-2 mb-1">Add from Notion database search</p>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search Notion databases…"
-                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
-              />
-              {searching && <p className="text-xs text-gray-400 mt-1">Searching…</p>}
-              {searchResults.length > 0 && (
-                <div className="mt-1 border border-gray-100 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
-                  {searchResults.map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => handleSelectSearchResult(r)}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-50 transition-colors"
-                    >
-                      <span className="flex-1 truncate">{r.title || "Untitled"}</span>
-                      <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">DB</span>
-                    </button>
-                  ))}
+              {sourcesLoaded && sourceTargets.length === 0 && (
+                <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                  <p className="text-[11px] font-medium text-gray-700">Add from Notion database search</p>
+                  <p className="text-[11px] text-gray-500 mt-0.5">
+                    You don’t have any saved databases yet. Search Notion above and pick a database to export into.
+                  </p>
                 </div>
               )}
+
               {addError && <p className="text-xs text-red-500 mt-1">{addError}</p>}
             </div>
 

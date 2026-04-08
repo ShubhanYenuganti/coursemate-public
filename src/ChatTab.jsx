@@ -210,9 +210,30 @@ const FILE_TYPE_MAP = {
   txt:  { label: 'TXT', bg: 'bg-gray-100',   text: 'text-gray-500'   },
 };
 
-function FileTypeBadge({ name }) {
+function NotionBadgeIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+      <path d="M4 4a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z" opacity=".15"/>
+      <rect x="7" y="7" width="10" height="1.5" rx=".75"/>
+      <rect x="7" y="11" width="7" height="1.5" rx=".75"/>
+      <rect x="7" y="15" width="8" height="1.5" rx=".75"/>
+    </svg>
+  );
+}
+
+function FileTypeBadge({ name, sourceType }) {
   const ext = (name || '').split('.').pop().toLowerCase();
-  const style = FILE_TYPE_MAP[ext] || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-gray-100', text: 'text-gray-500' };
+  const mapped = FILE_TYPE_MAP[ext];
+
+  if (!mapped && sourceType === 'notion') {
+    return (
+      <span className="flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded bg-gray-100 text-gray-600">
+        <NotionBadgeIcon />
+      </span>
+    );
+  }
+
+  const style = mapped || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-gray-100', text: 'text-gray-500' };
   return (
     <span className={`flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded text-[7px] font-bold tracking-tight ${style.bg} ${style.text}`}>
       {style.label}
@@ -985,6 +1006,68 @@ export default function ChatTab({ course, userData, onAddSource }) {
   const bannerTimerRef = useRef(null);
   const sendingRef = useRef(false);
 
+  // Sidebar resize / collapse
+  const SIDEBAR_DEFAULT_WIDTH = 280;
+  const SIDEBAR_MIN_WIDTH = 220;
+  const SIDEBAR_MAX_WIDTH = 360;
+  const SIDEBAR_COLLAPSE_THRESHOLD = 160;
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarLastExpandedWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
+  const sidebarIsDraggingRef = useRef(false);
+  const sidebarDragStartXRef = useRef(0);
+  const sidebarDragStartWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
+
+  function handleSidebarRestore() {
+    setSidebarCollapsed(false);
+    // Restore in two steps: snap to min width then animate to last width
+    const target = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, sidebarLastExpandedWidthRef.current || SIDEBAR_DEFAULT_WIDTH));
+    setSidebarWidth(SIDEBAR_MIN_WIDTH);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => setSidebarWidth(target));
+    });
+  }
+
+  function startSidebarDrag(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    sidebarIsDraggingRef.current = true;
+    sidebarDragStartXRef.current = e.clientX;
+    sidebarDragStartWidthRef.current = sidebarWidth;
+
+    const onMove = (ev) => {
+      if (!sidebarIsDraggingRef.current) return;
+      const dx = ev.clientX - sidebarDragStartXRef.current;
+      const next = sidebarDragStartWidthRef.current + dx;
+
+      if (next <= SIDEBAR_COLLAPSE_THRESHOLD) {
+        setSidebarCollapsed(true);
+        return;
+      }
+
+      setSidebarCollapsed(false);
+      const clamped = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, next));
+      sidebarLastExpandedWidthRef.current = clamped;
+      setSidebarWidth(clamped);
+    };
+
+    const onUp = () => {
+      sidebarIsDraggingRef.current = false;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+
+      // If we ended collapsed, remember last expanded width and hide sidebar
+      if (sidebarCollapsed) {
+        sidebarLastExpandedWidthRef.current = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, sidebarWidth));
+      }
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  }
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -1130,6 +1213,14 @@ export default function ChatTab({ course, userData, onAddSource }) {
     setMaterials(nextMaterials);
     nextMaterials.forEach((m) => {
       persistMaterialSelection(m, newVal);
+    });
+  }
+
+  function setAllMaterialsSelected(selected) {
+    const nextMaterials = materials.map((m) => ({ ...m, selected }));
+    setMaterials(nextMaterials);
+    nextMaterials.forEach((m) => {
+      persistMaterialSelection(m, selected);
     });
   }
 
@@ -1774,7 +1865,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
   const { today, lastWeek, older } = groupChatsByDate(chats);
 
   return (
-    <div className="relative flex rounded-2xl overflow-hidden border border-gray-200 bg-white shadow-sm" style={{ height: '68vh', minHeight: '520px' }}>
+    <div className="relative flex gap-4" style={{ height: '68vh', minHeight: '520px' }}>
 
       {/* Switched-to banner — centred over the full modal */}
       {switchBanner && (
@@ -1784,30 +1875,46 @@ export default function ChatTab({ course, userData, onAddSource }) {
       )}
 
       {/* ── Sidebar ── */}
-      <div className="w-[280px] flex-shrink-0 bg-gray-50/80 flex flex-col overflow-hidden">
-        {/* Logo / title */}
-        <div className="px-4 pt-5 pb-3">
-          <div className="flex items-center gap-2 mb-4">
-            <span className="font-bold text-gray-900 text-sm">Course Chat</span>
+      {!sidebarCollapsed ? (
+        <div
+          className={`flex-shrink-0 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden relative ${
+            sidebarIsDraggingRef.current ? '' : 'transition-[width] duration-200'
+          }`}
+          style={{ width: sidebarWidth }}
+        >
+          {/* Drag handle (right edge) */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            title="Drag to resize"
+            onPointerDown={startSidebarDrag}
+            className="absolute top-2 bottom-2 -right-2 w-4 cursor-col-resize z-20"
+          >
+            <div className="absolute right-2 top-0 bottom-0 w-px bg-gray-200" />
           </div>
-          <div className="flex items-center gap-2">
+        {/* Logo / title */}
+        <div className="px-4 py-3 border-b border-gray-100">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-gray-900 text-sm">Course Chat</span>
             <button
               type="button"
-              onClick={handleNewChat}
-              className="flex-1 flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-full bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-colors shadow-sm"
-            >
-              <PlusIcon />
-              New chat
-            </button>
-            <button
-              type="button"
-              className="flex-shrink-0 p-1.5 text-gray-800 hover:text-indigo-600 transition-colors"
+              className="flex-shrink-0 p-1.5 text-gray-600 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-colors"
               title="Search"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="11" cy="11" r="8" />
                 <line x1="21" y1="21" x2="16.65" y2="16.65" />
               </svg>
+            </button>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleNewChat}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-colors shadow-sm"
+            >
+              <PlusIcon />
+              New chat
             </button>
           </div>
         </div>
@@ -1880,14 +1987,23 @@ export default function ChatTab({ course, userData, onAddSource }) {
               <button
                 type="button"
                 onClick={() => setArchivedOpen((o) => !o)}
-                className="w-full flex items-center gap-1.5 px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider hover:text-gray-600 transition-colors"
+                className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-600 transition-colors rounded-lg hover:bg-gray-50"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24"
-                  fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                  style={{ transform: archivedOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
+                <span>Archived</span>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ transform: archivedOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}
+                >
                   <polyline points="9 18 15 12 9 6" />
                 </svg>
-                Archived
               </button>
               {archivedOpen && (
                 <div className="space-y-0.5 mt-0.5">
@@ -1913,17 +2029,27 @@ export default function ChatTab({ course, userData, onAddSource }) {
           {/* Materials */}
           <div className="flex-1 min-h-0 flex flex-col border-t border-gray-200 pt-2">
             {/* Header row */}
-            <div className="px-3 py-1 flex items-center justify-between">
-              <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Your Materials</span>
+            <div className="px-3 py-2 flex items-center justify-between">
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Your Materials</span>
               {materials.length > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-gray-400 tabular-nums">
-                    {materials.filter((m) => m.selected).length}/{materials.length}
+                    {materials.filter((m) => m.selected).length} selected
                   </span>
-                  <MaterialToggle
-                    checked={materials.length > 0 && materials.every((m) => m.selected)}
-                    onToggle={handleSelectAllMaterials}
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setAllMaterialsSelected(true)}
+                    className="text-[10px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors"
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAllMaterialsSelected(false)}
+                    className="text-[10px] font-medium text-gray-500 hover:text-gray-700 transition-colors"
+                  >
+                    Clear
+                  </button>
                 </div>
               )}
             </div>
@@ -1944,17 +2070,20 @@ export default function ChatTab({ course, userData, onAddSource }) {
                       {myMats.map((m) => (
                         <div
                           key={m.id}
-                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
+                          className={`relative group w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
                             m.selected ? 'border-indigo-400' : 'border-transparent'
                           }`}
                         >
-                          <FileTypeBadge name={m.name} />
+                          <FileTypeBadge name={m.name} sourceType={m.source_type} />
                           <span
                             className="flex-1 truncate min-w-0 hover:underline cursor-pointer"
                             onClick={() => handleDownloadMaterial(m)}
                             title={m.name}
                           >{m.name}</span>
                           <MaterialToggle checked={m.selected} onToggle={() => handleToggleMaterial(m.id)} />
+                          <div className="pointer-events-none absolute left-2 top-full mt-1.5 z-10 hidden group-hover:block w-56 rounded-lg bg-gray-800 px-2.5 py-2 shadow-lg">
+                            <p className="text-[10px] text-gray-200 whitespace-normal break-words">{m.name}</p>
+                          </div>
                         </div>
                       ))}
                       {collabMats.length > 0 && (
@@ -1969,17 +2098,15 @@ export default function ChatTab({ course, userData, onAddSource }) {
                                 m.selected ? 'border-indigo-300' : 'border-transparent'
                               }`}
                             >
-                              <FileTypeBadge name={m.name} />
+                              <FileTypeBadge name={m.name} sourceType={m.source_type} />
                               <span
                                 className="flex-1 truncate min-w-0 hover:underline cursor-pointer"
                                 onClick={() => handleDownloadMaterial(m)}
                                 title={m.name}
                               >{m.name}</span>
                               <MaterialToggle checked={m.selected} onToggle={() => handleToggleMaterial(m.id)} />
-                              <div className="pointer-events-none absolute left-2 bottom-full mb-1.5 z-10 hidden group-hover:block w-56 rounded-lg bg-gray-800 px-2.5 py-2 shadow-lg">
-                                <p className="text-[10px] font-medium text-white whitespace-normal break-words">{m.collaborator?.name}</p>
-                                <p className="text-[10px] text-gray-300 whitespace-normal break-words">{m.name}</p>
-                                <p className="text-[10px] text-gray-400 whitespace-normal break-words">{m.collaborator?.email}</p>
+                              <div className="pointer-events-none absolute left-2 top-full mt-1.5 z-10 hidden group-hover:block w-56 rounded-lg bg-gray-800 px-2.5 py-2 shadow-lg">
+                                <p className="text-[10px] text-gray-200 whitespace-normal break-words">{m.name}</p>
                               </div>
                             </div>
                           ))}
@@ -1992,11 +2119,11 @@ export default function ChatTab({ course, userData, onAddSource }) {
             </div>
 
             {/* Add Source button */}
-            <div className="px-3 pb-3 flex-shrink-0">
+            <div className="px-3 pb-3 pt-2 flex-shrink-0 border-t border-gray-100 bg-white">
               <button
                 type="button"
                 onClick={onAddSource}
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-gray-300 text-xs text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
               >
                 <PlusIcon />
                 Add Source
@@ -2019,10 +2146,20 @@ export default function ChatTab({ course, userData, onAddSource }) {
             <span className="text-xs text-gray-700 font-medium truncate">{userData.name || userData.username}</span>
           </div>
         )}
-      </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={handleSidebarRestore}
+          className="flex-shrink-0 w-3 rounded-2xl border border-gray-200 bg-white shadow-sm hover:bg-gray-50 transition-colors relative"
+          title="Show sidebar"
+        >
+          <span className="absolute inset-y-2 left-1/2 -translate-x-1/2 w-px bg-gray-300" />
+        </button>
+      )}
 
       {/* ── Main chat ── */}
-      <div className="flex-1 flex flex-col min-w-0 relative overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 relative overflow-hidden bg-white rounded-2xl border border-gray-200 shadow-sm">
 
         {/* Chat title header */}
         {activeConv && activeConv !== '__new__' && (() => {

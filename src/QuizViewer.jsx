@@ -41,7 +41,7 @@ function ChevronDownIcon() {
   );
 }
 
-function SettingsIcon() {
+function SettingsIcon() { // removed soon
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
@@ -539,6 +539,10 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
     setNotionPickerOpen(true);
   }
 
+  const actionButtonClass =
+    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+  const actionIconClass = "text-gray-500";
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-blue-50 flex flex-col">
       {parentGenerationId && (
@@ -578,139 +582,129 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
       )}
       {/* Header */}
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-gray-100 px-8 py-3">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <span className="text-lg font-bold text-gray-900">CourseMate</span>
+        <div className="max-w-5xl mx-auto relative flex items-center justify-center">
+          <div className="flex items-center gap-10">
+            <div className="text-center">
+              {viewMode === 'quiz' ? (
+                <>
+                  <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">{answeredCount} / {total}</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">Quiz Progress</p>
+                </>
+              ) : viewMode === 'attempts' ? (
+                <>
+                  <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">{attemptsList.length}</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">Attempts</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">
+                    {selectedAttempt ? `${(selectedAttempt.score_percent ?? 0).toFixed(0)}%` : '—'}
+                  </p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">Score</p>
+                </>
+              )}
+            </div>
 
-          <div className="text-center">
-            {viewMode === 'quiz' ? (
-              <>
-                <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">{answeredCount} / {total}</p>
-                <p className="text-[10px] text-gray-400 mt-0.5">Quiz Progress</p>
-              </>
-            ) : viewMode === 'attempts' ? (
-              <>
-                <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">{attemptsList.length}</p>
-                <p className="text-[10px] text-gray-400 mt-0.5">Attempts</p>
-              </>
-            ) : (
-              <>
-                <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">
-                  {selectedAttempt ? `${(selectedAttempt.score_percent ?? 0).toFixed(0)}%` : '—'}
-                </p>
-                <p className="text-[10px] text-gray-400 mt-0.5">Score</p>
-              </>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2">
-            {viewMode !== 'quiz' ? (
-              <button
-                type="button"
-                onClick={backToQuiz}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-              >
-                <ArrowLeftIcon />
-                Back to Quiz
-              </button>
-            ) : (
-              <>
+            <div className="flex items-center gap-2">
+              {viewMode !== 'quiz' ? (
                 <button
                   type="button"
-                  onClick={() => onRegenerate?.(quiz)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-colors"
+                  onClick={backToQuiz}
+                  className={actionButtonClass}
                 >
-                  <RefreshIcon />
-                  Regenerate
+                  <span className={actionIconClass}><ArrowLeftIcon /></span>
+                  Back to Quiz
                 </button>
-
-                <button
-                  type="button"
-                  onClick={handleSubmitAttempt}
-                  disabled={attemptStatus === 'submitting' || !generationId}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    attemptStatus === 'submitted'
-                      ? 'border border-green-200 bg-green-50 text-green-700 cursor-default'
-                      : attemptStatus === 'error'
-                        ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-50'
-                        : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  {attemptStatus === 'submitting' ? 'Grading…' : 'Submit Attempt'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={saveStatus === 'saving' || saveStatus === 'saved'}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                    saveStatus === 'saved'
-                      ? 'border-green-300 text-green-700 bg-green-50 cursor-default'
-                      : saveStatus === 'error'
-                        ? 'border-red-300 text-red-600 hover:bg-red-50'
-                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                  }`}
-                >
-                  <BookmarkIcon />
-                  {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved ✓' : saveStatus === 'error' ? 'Retry Save' : 'Save Quiz'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleExportPdf}
-                  disabled={!generationId || exportStatus === 'exporting'}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <DownloadIcon />
-                  {exportStatus === 'exporting' ? 'Exporting…' : 'Export Quiz'}
-                  <ChevronDownIcon />
-                </button>
-                {notionConnected && (
+              ) : (
+                <>
                   <button
                     type="button"
-                    onClick={handleNotionClick}
-                    disabled={notionExporting}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                    onClick={() => onRegenerate?.(quiz)}
+                    className={actionButtonClass}
                   >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
-                      <path d="M4 4a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z" opacity=".15"/>
-                      <rect x="7" y="7" width="10" height="1.5" rx=".75"/>
-                      <rect x="7" y="11" width="7" height="1.5" rx=".75"/>
-                      <rect x="7" y="15" width="8" height="1.5" rx=".75"/>
-                    </svg>
-                    {notionExporting ? "Exporting…" : "Notion"}
+                    <span className={actionIconClass}><RefreshIcon /></span>
+                    Regenerate
                   </button>
-                )}
-              </>
-            )}
 
-            <button
-              type="button"
-              onClick={showAttempts}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                viewMode !== 'quiz'
-                  ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                  : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              <ClockIcon />
-              Attempts
-            </button>
+                  <button
+                    type="button"
+                    onClick={handleSubmitAttempt}
+                    disabled={attemptStatus === 'submitting' || !generationId}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      attemptStatus === 'submitted'
+                        ? 'border border-green-200 bg-green-50 text-green-700 cursor-default'
+                        : attemptStatus === 'error'
+                          ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-50'
+                          : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                    } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  >
+                    <span className={actionIconClass}><ClockIcon /></span>
+                    {attemptStatus === 'submitting' ? 'Grading…' : 'Submit Attempt'}
+                  </button>
 
-            <div className="w-px h-5 bg-gray-200 mx-1" />
-            <button
-              type="button"
-              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-            >
-              <SettingsIcon />
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-            >
-              <XIcon />
-            </button>
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={saveStatus === 'saving' || saveStatus === 'saved'}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                      saveStatus === 'saved'
+                        ? 'border-green-300 text-green-700 bg-green-50 cursor-default'
+                        : saveStatus === 'error'
+                          ? 'border-red-300 text-red-600 hover:bg-red-50'
+                          : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className={actionIconClass}><BookmarkIcon /></span>
+                    {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved ✓' : saveStatus === 'error' ? 'Retry Save' : 'Save'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleExportPdf}
+                    disabled={!generationId || exportStatus === 'exporting'}
+                    className={actionButtonClass}
+                  >
+                    <span className={actionIconClass}><DownloadIcon /></span>
+                    {exportStatus === 'exporting' ? 'Exporting…' : 'Export'}
+                    <span className={actionIconClass}><ChevronDownIcon /></span>
+                  </button>
+                  {notionConnected && (
+                    <button
+                      type="button"
+                      onClick={handleNotionClick}
+                      disabled={notionExporting}
+                      className={actionButtonClass}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className={`shrink-0 ${actionIconClass}`}>
+                        <path d="M4 4a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z" opacity=".15"/>
+                        <rect x="7" y="7" width="10" height="1.5" rx=".75"/>
+                        <rect x="7" y="11" width="7" height="1.5" rx=".75"/>
+                        <rect x="7" y="15" width="8" height="1.5" rx=".75"/>
+                      </svg>
+                      {notionExporting ? "Exporting…" : "Notion"}
+                    </button>
+                  )}
+                </>
+              )}
+
+              <button
+                type="button"
+                onClick={showAttempts}
+                className={actionButtonClass}
+              >
+                <span className={actionIconClass}><ClockIcon /></span>
+                Attempts
+              </button>
+            </div>
           </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+          >
+            <XIcon />
+          </button>
         </div>
       </header>
 

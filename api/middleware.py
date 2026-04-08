@@ -136,6 +136,12 @@ def authenticate_request(handler):
     Extract and validate session token from HttpOnly cookie.
     Returns (google_id, session_token) tuple, or (None, None) if invalid.
     """
+    # Local dev bypass: skip cookie/DB checks entirely
+    if os.environ.get('DEV_BYPASS_AUTH') == 'true':
+        google_id = os.environ.get('DEV_USER_GOOGLE_ID')
+        session_token = os.environ.get('DEV_SESSION_TOKEN', 'dev-bypass-session')
+        return google_id, session_token
+
     # Primary: HttpOnly cookie
     session_token = _parse_cookie(handler.headers.get('Cookie', ''), 'cm_session')
     if not session_token:

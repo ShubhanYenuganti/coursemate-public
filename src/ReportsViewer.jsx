@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
+import DOMPurify from 'dompurify';
 import NotionTargetPicker from './components/NotionTargetPicker';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
@@ -60,67 +61,13 @@ function CopyIcon() {
   );
 }
 
-const SAFE_HTML_TAGS = new Set([
-  'a', 'abbr', 'b', 'blockquote', 'br', 'code', 'div', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-  'hr', 'i', 'img', 'li', 'ol', 'p', 'pre', 'section', 'span', 'strong', 'sub', 'sup', 'table',
-  'tbody', 'td', 'th', 'thead', 'tr', 'u', 'ul',
-]);
-
-const SAFE_HTML_ATTRS = new Set([
-  'alt', 'aria-label', 'aria-hidden', 'class', 'colspan', 'href', 'rel', 'role', 'rowspan', 'scope',
-  'src', 'target', 'title',
-]);
-
 function sanitizeHtml(html) {
   if (!html) return '';
   if (typeof document === 'undefined') return '';
-
-  const template = document.createElement('template');
-  template.innerHTML = html;
-
-  const sanitizeNode = (root) => {
-    for (const child of Array.from(root.querySelectorAll('*'))) {
-      if (!child.isConnected) continue;
-
-      const tagName = child.tagName.toLowerCase();
-      if (!SAFE_HTML_TAGS.has(tagName)) {
-        child.replaceWith(...Array.from(child.childNodes));
-        continue;
-      }
-
-      for (const attr of Array.from(child.attributes)) {
-        const attrName = attr.name.toLowerCase();
-        const attrValue = attr.value || '';
-        const isEventHandler = attrName.startsWith('on');
-        const isStyleAttr = attrName === 'style';
-        const isAllowed = SAFE_HTML_ATTRS.has(attrName) || attrName.startsWith('data-');
-        if (isEventHandler || isStyleAttr || !isAllowed) {
-          child.removeAttribute(attr.name);
-          continue;
-        }
-        if (attrName === 'href' || attrName === 'src') {
-          const trimmed = attrValue.trim();
-          const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed);
-          const scheme = hasScheme ? trimmed.split(':', 1)[0].toLowerCase() : '';
-          const isSafeUrl =
-            (!hasScheme && (trimmed.startsWith('/') || trimmed.startsWith('./') || trimmed.startsWith('../') || trimmed.startsWith('#'))) ||
-            scheme === 'http' ||
-            scheme === 'https' ||
-            scheme === 'mailto' ||
-            scheme === 'tel';
-          if (!isSafeUrl) {
-            child.removeAttribute(attr.name);
-          }
-        }
-        if (tagName === 'a' && attrName === 'target' && attrValue === '_blank') {
-          child.setAttribute('rel', 'noopener noreferrer');
-        }
-      }
-    }
-  };
-
-  sanitizeNode(template.content);
-  return template.innerHTML;
+  return DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    ADD_ATTR: ['target', 'rel'],
+  });
 }
 
 // ─── File type badge (same palette as rest of app) ─────────────────────────────
@@ -132,9 +79,30 @@ const FILE_TYPE_MAP = {
   txt:  { label: 'TXT', bg: 'bg-gray-100',   text: 'text-gray-500'   },
 };
 
-function FileTypeBadge({ name }) {
+function NotionBadgeIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+      <path d="M4 4a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z" opacity=".15"/>
+      <rect x="7" y="7" width="10" height="1.5" rx=".75"/>
+      <rect x="7" y="11" width="7" height="1.5" rx=".75"/>
+      <rect x="7" y="15" width="8" height="1.5" rx=".75"/>
+    </svg>
+  );
+}
+
+function FileTypeBadge({ name, sourceType }) {
   const ext = (name || '').split('.').pop().toLowerCase();
-  const style = FILE_TYPE_MAP[ext] || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-gray-100', text: 'text-gray-500' };
+  const mapped = FILE_TYPE_MAP[ext];
+
+  if (!mapped && sourceType === 'notion') {
+    return (
+      <span className="flex-shrink-0 inline-flex items-center justify-center w-[34px] h-[21px] rounded bg-gray-100 text-gray-600">
+        <NotionBadgeIcon />
+      </span>
+    );
+  }
+
+  const style = mapped || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-gray-100', text: 'text-gray-500' };
   return (
     <span className={`flex-shrink-0 inline-flex items-center justify-center w-[34px] h-[21px] rounded text-[8px] font-bold tracking-tight ${style.bg} ${style.text}`}>
       {style.label}
@@ -447,6 +415,10 @@ export default function ReportsViewer({
     [report?.selected_material_ids],
   );
 
+  const actionButtonClass =
+    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+  const actionIconClass = "text-gray-500";
+
   // Page count hint from the report
   const pageCount = report?.page_count || report?.pages || null;
 
@@ -469,8 +441,8 @@ export default function ReportsViewer({
     saveStatus === 'saving' || !generationId ? 'opacity-70 cursor-not-allowed' : '',
   ].join(' ');
   const exportButtonClasses = [
-    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium transition-colors',
-    exportStatus === 'exporting' || !generationId ? 'opacity-70 cursor-not-allowed' : 'hover:bg-indigo-700',
+    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 transition-colors',
+    exportStatus === 'exporting' || !generationId ? 'opacity-70 cursor-not-allowed' : 'hover:bg-gray-50',
   ].join(' ');
 
   useEffect(() => {
@@ -638,26 +610,20 @@ export default function ReportsViewer({
 
       {/* ── Header ── */}
       <header className="sticky top-0 z-10 bg-white border-b border-gray-100 px-6 py-3">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-lg font-bold text-gray-900">{courseName}</span>
-            <span className="px-2.5 py-0.5 rounded-full border border-indigo-200 text-xs font-medium text-indigo-600 bg-white">
-              {templateLabel}
-            </span>
+        <div className="max-w-7xl mx-auto relative flex items-center justify-center">
+          <div className="flex items-center gap-10">
+            <div className="flex items-center gap-2">
             {generationError ? (
               <span className="px-2 py-0.5 rounded-md border border-red-200 bg-red-50 text-[11px] text-red-700">
                 {generationError}
               </span>
             ) : null}
-          </div>
-
-          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => onRegenerate?.({ parent_generation_id: report?.generation_id })}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-colors"
+              className={actionButtonClass}
             >
-              <RefreshIcon />
+              <span className={actionIconClass}><RefreshIcon /></span>
               Regenerate
             </button>
             <button
@@ -667,8 +633,8 @@ export default function ReportsViewer({
               className={saveButtonClasses}
               title={saveStatus === 'error' ? saveError : undefined}
             >
-              <BookmarkIcon />
-              {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved ✓' : saveStatus === 'error' ? 'Retry Save' : 'Save Report'}
+              <span className={actionIconClass}><BookmarkIcon /></span>
+              {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved ✓' : saveStatus === 'error' ? 'Retry Save' : 'Save'}
             </button>
             <button
               type="button"
@@ -676,17 +642,17 @@ export default function ReportsViewer({
               disabled={!generationId || exportStatus === 'exporting'}
               className={exportButtonClasses}
             >
-              <DownloadIcon />
-              {exportStatus === 'exporting' ? 'Exporting…' : exportStatus === 'error' ? 'Retry Export' : 'Export as PDF'}
+              <span className={actionIconClass}><DownloadIcon /></span>
+              {exportStatus === 'exporting' ? 'Exporting…' : exportStatus === 'error' ? 'Retry Export' : 'Export'}
             </button>
             {notionConnected && (
               <button
                 type="button"
                 onClick={handleNotionClick}
                 disabled={notionExporting}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+                className={actionButtonClass}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className={`shrink-0 ${actionIconClass}`}>
                   <path d="M4 4a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z" opacity=".15"/>
                   <rect x="7" y="7" width="10" height="1.5" rx=".75"/>
                   <rect x="7" y="11" width="7" height="1.5" rx=".75"/>
@@ -695,21 +661,16 @@ export default function ReportsViewer({
                 {notionExporting ? "Exporting…" : "Notion"}
               </button>
             )}
-            <div className="w-px h-5 bg-gray-200 mx-1" />
-            <button
-              type="button"
-              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-            >
-              <SettingsIcon />
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-            >
-              <XIcon />
-            </button>
+            </div>
           </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+          >
+            <XIcon />
+          </button>
         </div>
       </header>
 
@@ -734,7 +695,7 @@ export default function ReportsViewer({
               const name = src.name || src.filename || src.title || String(src);
               return (
                 <div key={i} className="flex items-center gap-2.5 px-4 py-2.5 hover:bg-gray-50 transition-colors">
-                  <FileTypeBadge name={name} />
+                  <FileTypeBadge name={name} sourceType={src?.source_type || src?.sourceType || null} />
                   <span className="flex-1 min-w-0 text-xs text-gray-600 truncate" title={name}>{name}</span>
                 </div>
               );

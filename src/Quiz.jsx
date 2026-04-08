@@ -68,9 +68,30 @@ const FILE_TYPE_MAP = {
   txt:  { label: 'TXT', bg: 'bg-gray-100',   text: 'text-gray-500'   },
 };
 
-function FileTypeBadge({ name }) {
+function NotionBadgeIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+      <path d="M4 4a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z" opacity=".15"/>
+      <rect x="7" y="7" width="10" height="1.5" rx=".75"/>
+      <rect x="7" y="11" width="7" height="1.5" rx=".75"/>
+      <rect x="7" y="15" width="8" height="1.5" rx=".75"/>
+    </svg>
+  );
+}
+
+function FileTypeBadge({ name, sourceType }) {
   const ext = (name || '').split('.').pop().toLowerCase();
-  const style = FILE_TYPE_MAP[ext] || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-gray-100', text: 'text-gray-500' };
+  const mapped = FILE_TYPE_MAP[ext];
+
+  if (!mapped && sourceType === 'notion') {
+    return (
+      <span className="flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded bg-gray-100 text-gray-600">
+        <NotionBadgeIcon />
+      </span>
+    );
+  }
+
+  const style = mapped || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-gray-100', text: 'text-gray-500' };
   return (
     <span className={`flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded text-[7px] font-bold tracking-tight ${style.bg} ${style.text}`}>
       {style.label}
@@ -423,6 +444,25 @@ export default function Quiz({ course, onAddSource }) {
     });
   }
 
+  function setAllMaterialsSelected(selected) {
+    setMaterials((prev) => prev.map((m) => ({ ...m, selected })));
+    materials.forEach((m) => {
+      fetch('/api/material', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          action: 'set_selection',
+          material_id: m.id,
+          course_id: course.id,
+          context: 'quiz',
+          selected,
+          provider: m.source_type === 'notion' ? 'notion' : null,
+        }),
+      }).catch(() => {});
+    });
+  }
+
   const selectedCount = materials.filter((m) => m.selected).length;
   const allSelected = materials.length > 0 && materials.every((m) => m.selected);
   const totalQuestions = tfCount + saCount + laCount + mcqCount;
@@ -641,14 +681,28 @@ export default function Quiz({ course, onAddSource }) {
 
       {/* ── Sources sidebar ── */}
       <div className="w-[220px] flex-shrink-0 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden" style={{ minHeight: '520px' }}>
-        <div className="px-4 pt-4 pb-2">
-          <div className="flex items-center justify-between mb-0.5">
+        <div className="px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
             <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Sources</span>
-            <span className="text-[10px] text-gray-400 tabular-nums">{selectedCount}/{materials.length}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <p className="text-[10px] text-gray-400 leading-snug">Select sources to include in generation</p>
-            <SourceToggle checked={allSelected} onToggle={toggleSelectAll} />
+            {materials.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-gray-400 tabular-nums whitespace-nowrap">{selectedCount} selected</span>
+                <button
+                  type="button"
+                  onClick={() => setAllMaterialsSelected(true)}
+                  className="text-[10px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors whitespace-nowrap"
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAllMaterialsSelected(false)}
+                  className="text-[10px] font-medium text-gray-500 hover:text-gray-700 transition-colors whitespace-nowrap"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -667,13 +721,16 @@ export default function Quiz({ course, onAddSource }) {
                 {myMats.map((m) => (
                   <div
                     key={m.id}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-50 transition-colors cursor-default border-l-2 ${
+                    className={`relative group flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
                       m.selected ? 'border-indigo-400' : 'border-transparent'
                     }`}
                   >
-                    <FileTypeBadge name={m.name} />
+                    <FileTypeBadge name={m.name} sourceType={m.source_type} />
                     <span className="flex-1 truncate min-w-0 text-xs" title={m.name}>{m.name}</span>
                     <SourceToggle checked={m.selected} onToggle={() => toggleSource(m.id)} />
+                    <div className="pointer-events-none absolute left-2 top-full mt-1.5 z-10 hidden group-hover:block w-56 rounded-lg bg-gray-800 px-2.5 py-2 shadow-lg">
+                      <p className="text-[10px] text-gray-200 whitespace-normal break-words">{m.name}</p>
+                    </div>
                   </div>
                 ))}
                 {collabMats.length > 0 && (
@@ -684,18 +741,15 @@ export default function Quiz({ course, onAddSource }) {
                     {collabMats.map((m) => (
                       <div
                         key={m.id}
-                        className={`relative group flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-50 transition-colors cursor-default border-l-2 ${
+                        className={`relative group flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
                           m.selected ? 'border-indigo-300' : 'border-transparent'
                         }`}
                       >
-                        <FileTypeBadge name={m.name} />
+                        <FileTypeBadge name={m.name} sourceType={m.source_type} />
                         <span className="flex-1 truncate min-w-0 text-xs">{m.name}</span>
                         <SourceToggle checked={m.selected} onToggle={() => toggleSource(m.id)} />
-                        {/* Collaborator tooltip */}
-                        <div className="pointer-events-none absolute left-2 bottom-full mb-1.5 z-10 hidden group-hover:block w-56 rounded-lg bg-gray-800 px-2.5 py-2 shadow-lg">
-                          <p className="text-[10px] font-medium text-white whitespace-normal break-words">{m.collaborator?.name}</p>
-                          <p className="text-[10px] text-gray-300 whitespace-normal break-words">{m.name}</p>
-                          <p className="text-[10px] text-gray-400 whitespace-normal break-words">{m.collaborator?.email}</p>
+                        <div className="pointer-events-none absolute left-2 top-full mt-1.5 z-10 hidden group-hover:block w-56 rounded-lg bg-gray-800 px-2.5 py-2 shadow-lg">
+                          <p className="text-[10px] text-gray-200 whitespace-normal break-words">{m.name}</p>
                         </div>
                       </div>
                     ))}
@@ -706,11 +760,11 @@ export default function Quiz({ course, onAddSource }) {
           })()}
         </div>
 
-        <div className="px-3 py-3 flex-shrink-0 border-t border-gray-100">
+        <div className="px-3 pb-3 pt-2 flex-shrink-0 border-t border-gray-100 bg-white">
           <button
             type="button"
             onClick={onAddSource}
-            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-gray-300 text-xs text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
           >
             <PlusIcon />
             Add Source

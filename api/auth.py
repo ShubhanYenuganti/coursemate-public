@@ -47,6 +47,23 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 401, {"error": "Unauthorized", "message": "Invalid or expired session"})
             return
 
+        # Dev bypass: return user from DB (or a minimal stub if DB is unavailable)
+        if os.environ.get('DEV_BYPASS_AUTH') == 'true':
+            try:
+                user = User.get_by_google_id(google_id)
+            except Exception:
+                user = None
+            if not user:
+                send_json(self, 401, {"error": "Unauthorized", "message": "Dev user not found in DB"})
+                return
+            csrf_token = generate_csrf_token(session_token)
+            send_json(self, 200, {
+                "success": True,
+                "user": _build_user_response(user),
+                "csrf_token": csrf_token,
+            })
+            return
+
         try:
             user = User.get_by_google_id(google_id)
             if not user:
