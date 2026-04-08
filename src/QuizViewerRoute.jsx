@@ -253,6 +253,7 @@ export default function QuizViewerRoute() {
     <>
       <QuizViewer
         quiz={quiz}
+        courseId={courseId}
         generationId={generationId}
         parentGenerationId={parentGenerationId}
         onClose={() => navigate(`/course/${courseId}`)}

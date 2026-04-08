@@ -306,9 +306,38 @@ function StagingItemRow({ item, onDocTypeChange, onUpload, onRemove }) {
   );
 }
 
+// ─── source type badge ───────────────────────────────────────────────────────
+
+const SOURCE_TYPE_META = {
+  notion:    { label: 'Notion',    className: 'text-purple-600 bg-purple-50 border-purple-200' },
+  upload:    { label: 'Upload',    className: 'text-blue-500 bg-blue-50 border-blue-200' },
+  generated: { label: 'Generated', className: 'text-indigo-600 bg-indigo-50 border-indigo-200' },
+};
+
+function SourceTypeBadge({ sourceType }) {
+  const meta = SOURCE_TYPE_META[sourceType];
+  if (!meta) return null;
+  return (
+    <span className={`inline-flex items-center text-[10px] font-medium border rounded-full px-1.5 py-0.5 leading-none ${meta.className}`}>
+      {meta.label}
+    </span>
+  );
+}
+
 // ─── embed status badge ───────────────────────────────────────────────────────
 
-function EmbedStatusBadge({ status }) {
+function EmbedStatusBadge({ status, sourceType }) {
+  // Integration-sourced material with no embed job yet: the poller is still
+  // generating + uploading before it can enqueue the embed step.
+  if (!status && sourceType === 'notion') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-full px-1.5 py-0.5 leading-none">
+        <Spinner size={9} className="text-purple-500" />
+        Syncing…
+      </span>
+    );
+  }
+
   if (!status || status === 'done') return null;
 
   if (status === 'pending' || status === 'processing') {
@@ -387,7 +416,11 @@ function MaterialCard({ material, courseId, onVisibilityChange, onDelete, isOwne
           </button>
         ) : (
           <a
-            href={material.download_url}
+            href={
+              material.source_type !== 'upload' && material.outsourced_url
+                ? material.outsourced_url
+                : material.download_url
+            }
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug"
@@ -400,7 +433,8 @@ function MaterialCard({ material, courseId, onVisibilityChange, onDelete, isOwne
             {getMeta(material.file_type).label}
             {material.visibility === 'public' ? ' · Public' : ' · Private'}
           </p>
-          <EmbedStatusBadge status={material.embed_status} />
+          <SourceTypeBadge sourceType={material.source_type} />
+          <EmbedStatusBadge status={material.embed_status} sourceType={material.source_type} />
         </div>
       </div>
 
@@ -501,13 +535,15 @@ function FilterBar({ ownerFilter, setOwnerFilter, typeFilter, setTypeFilter }) {
 
 // ─── main component ───────────────────────────────────────────────────────────
 
-export default function MaterialsPage({ courseId, userId }) {
+export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
   const [materials, setMaterials]       = useState([]);
   const [loadingMats, setLoadingMats]   = useState(true);
   const [stagingItems, setStagingItems] = useState([]);
   const [uploadItems, setUploadItems]   = useState([]);
   const [ownerFilter, setOwnerFilter]   = useState('all');
   const [typeFilter,  setTypeFilter]    = useState('all');
+  const [syncPolling, setSyncPolling]   = useState(false);
+  const prevSyncVersion                 = useRef(0);
 
   // ── fetch existing materials ──────────────────────────────────────────────
   const fetchMaterials = useCallback(async () => {
@@ -527,15 +563,27 @@ export default function MaterialsPage({ courseId, userId }) {
 
   useEffect(() => { fetchMaterials(); }, [fetchMaterials]);
 
-  // ── poll while any material is still being indexed ────────────────────────
+  // ── enter a polling window whenever a sync is triggered ───────────────────
   useEffect(() => {
-    const hasActive = materials.some(
-      m => m.embed_status === 'pending' || m.embed_status === 'processing'
+    if (syncVersion <= prevSyncVersion.current) return;
+    prevSyncVersion.current = syncVersion;
+    fetchMaterials();
+    setSyncPolling(true);
+    const t = setTimeout(() => setSyncPolling(false), 90_000);
+    return () => clearTimeout(t);
+  }, [syncVersion, fetchMaterials]);
+
+  // ── poll while any material is in a non-terminal state ────────────────────
+  useEffect(() => {
+    const hasActive = syncPolling || materials.some(
+      m => m.embed_status === 'pending'
+        || m.embed_status === 'processing'
+        || (m.source_type === 'notion' && !m.embed_status)
     );
     if (!hasActive) return;
     const timer = setTimeout(fetchMaterials, 5000);
     return () => clearTimeout(timer);
-  }, [materials, fetchMaterials]);
+  }, [materials, fetchMaterials, syncPolling]);
 
   // ── upload one file ──────────────────────────────────────────────────────
   const uploadOne = useCallback(async (item) => {

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { formatDateTime } from './utils/dateUtils';
 import { useNavigate } from 'react-router-dom';
 import CreateCourseModal from './CreateCourseModal.jsx';
 import SharingAccessModal from './SharingAccessModal.jsx';
@@ -55,6 +56,219 @@ function ToolbarItem({ icon, label, active, onClick }) {
   );
 }
 
+// ─── Notion Sources Panel ─────────────────────────────────────────────────────
+
+function NotionSourcesPanel({ courseId, onSync }) {
+  const [sources, setSources] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState('');
+  const [confirmRemoveId, setConfirmRemoveId] = useState(null);
+  const [notionConnected, setNotionConnected] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/notion?action=status', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((d) => setNotionConnected(!!d.connected))
+      .catch(() => {});
+    loadSources();
+  }, [courseId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function loadSources() {
+    if (!courseId) return;
+    setLoading(true);
+    fetch(`/api/notion?action=list_source_points&course_id=${courseId}`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((d) => setSources(d.source_points || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }
+
+  // Debounced DB search
+  useEffect(() => {
+    if (query.trim() === '') { setResults([]); return; }
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await fetch(`/api/notion?action=search&q=${encodeURIComponent(query.trim())}&filter_type=database`, { credentials: 'include' });
+        const data = await res.json();
+        setResults(data.results || []);
+      } catch { setResults([]); }
+      finally { setSearching(false); }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  async function handleAdd(db) {
+    try {
+      const res = await fetch('/api/notion?action=add_source_point', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ course_id: courseId, provider: 'notion', external_id: db.id, external_title: db.title }),
+      });
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+      if (!res.ok) {
+        const msg = data?.error || 'Failed to add source';
+        setSyncMsg(msg);
+        setTimeout(() => setSyncMsg(''), 4000);
+        return;
+      }
+
+      if (data?.sync_triggered) {
+        setSyncMsg('Source added, initial sync started');
+        onSync?.();
+      } else {
+        setSyncMsg('Source added; initial sync was not triggered. Use Sync Now.');
+      }
+      setTimeout(() => setSyncMsg(''), 4000);
+      setQuery('');
+      setResults([]);
+      loadSources();
+    } catch { /* ignore */ }
+  }
+
+  async function handleToggle(id) {
+    try {
+      const res = await fetch(`/api/notion?action=toggle_source_point&id=${id}`, { method: 'PATCH', credentials: 'include' });
+      const data = await res.json();
+      setSources((prev) => prev.map((s) => s.id === id ? { ...s, is_active: data.is_active } : s));
+    } catch { /* ignore */ }
+  }
+
+  async function handleRemove(id) {
+    try {
+      await fetch(`/api/notion?action=remove_source_point&id=${id}`, { method: 'DELETE', credentials: 'include' });
+      setSources((prev) => prev.filter((s) => s.id !== id));
+    } catch { /* ignore */ }
+    finally { setConfirmRemoveId(null); }
+  }
+
+  async function handleSync() {
+    if (syncing) return;
+    setSyncing(true);
+    setSyncMsg('');
+    try {
+      await fetch(`/api/notion?action=sync&course_id=${courseId}`, { method: 'POST', credentials: 'include' });
+      setSyncMsg('Sync started');
+      setTimeout(() => setSyncMsg(''), 3000);
+      onSync?.();
+    } catch { setSyncMsg('Sync failed'); }
+    finally { setSyncing(false); }
+  }
+
+  function formatDate(ts) {
+    if (!ts) return 'Never';
+    return formatDateTime(ts);
+  }
+
+  if (!notionConnected) return null;
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="text-gray-500">
+            <path d="M4 4a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z" opacity=".15"/>
+            <rect x="7" y="7" width="10" height="1.5" rx=".75"/>
+            <rect x="7" y="11" width="7" height="1.5" rx=".75"/>
+            <rect x="7" y="15" width="8" height="1.5" rx=".75"/>
+          </svg>
+          <span className="text-sm font-semibold text-gray-900">Notion Sources</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {syncMsg && <span className="text-xs text-gray-500">{syncMsg}</span>}
+          <button
+            type="button"
+            onClick={handleSync}
+            disabled={syncing || sources.filter((s) => s.is_active).length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40"
+          >
+            {syncing ? 'Syncing…' : 'Sync Now'}
+          </button>
+        </div>
+      </div>
+
+      {/* Search to add */}
+      <div>
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search Notion databases to add…"
+          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+        />
+        {searching && <p className="text-xs text-gray-400 mt-1">Searching…</p>}
+        {results.length > 0 && (
+          <div className="mt-1 border border-gray-100 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
+            {results.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => handleAdd(r)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-50 transition-colors"
+              >
+                <span className="flex-1 truncate">{r.title || 'Untitled'}</span>
+                <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">DB</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Source list */}
+      {loading ? (
+        <p className="text-xs text-gray-400">Loading…</p>
+      ) : sources.length === 0 ? (
+        <p className="text-xs text-gray-400 italic">No Notion databases connected. Search above to add one.</p>
+      ) : (
+        <div className="space-y-2">
+          {sources.map((s) => (
+            <div key={s.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors ${s.is_active ? 'border-gray-200 bg-white' : 'border-gray-100 bg-gray-50'}`}>
+              <div className="flex-1 min-w-0">
+                <p className={`text-sm font-medium truncate ${s.is_active ? 'text-gray-900' : 'text-gray-400'}`}>{s.external_title || s.external_id}</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">Last synced: {formatDate(s.last_synced_at)}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleToggle(s.id)}
+                className={`text-xs px-2.5 py-1 rounded-lg border font-medium transition-colors ${
+                  s.is_active
+                    ? 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    : 'border-indigo-200 text-indigo-600 bg-indigo-50 hover:bg-indigo-100'
+                }`}
+              >
+                {s.is_active ? 'Disable' : 'Enable'}
+              </button>
+              {confirmRemoveId === s.id ? (
+                <div className="flex items-center gap-1">
+                  <button type="button" onClick={() => handleRemove(s.id)} className="text-xs px-2 py-1 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 transition-colors">Delete</button>
+                  <button type="button" onClick={() => setConfirmRemoveId(null)} className="text-xs px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setConfirmRemoveId(s.id)} className="text-gray-300 hover:text-red-500 transition-colors p-1">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>
+                    <path d="M9 6V4h6v2"/>
+                  </svg>
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── main component ───────────────────────────────────────────────────────────
 
 export default function CoursePage({ course, userData, csrfToken, onSignOut, onCourseUpdate }) {
@@ -64,9 +278,10 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
   const [activeTab, setActiveTab] = useState(
     () => {
       const saved = localStorage.getItem(storageKey) || 'home';
-      return saved === 'home' && !isOwner ? 'materials' : saved;
+      return saved;
     }
   );
+  const [syncVersion, setSyncVersion] = useState(0);
 
   function handleTabChange(tab) {
     localStorage.setItem(storageKey, tab);
@@ -222,6 +437,7 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
               isOwner={isOwner}
             />
           )}
+          <NotionSourcesPanel courseId={course?.id} onSync={() => setSyncVersion(v => v + 1)} />
           </div>
         )}
 
@@ -230,6 +446,7 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
             <MaterialsPage
               courseId={course?.id}
               userId={userData?.db_id}
+              syncVersion={syncVersion}
             />
           </div>
         )}
@@ -253,12 +470,10 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
 
       {/* Floating toolbar */}
       <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-gray-200 shadow-lg">
-        {isOwner && (
-          <>
-            <ToolbarItem icon="🏠" label="Overview" active={activeTab === 'home'} onClick={() => handleTabChange('home')} />
-            <div className="w-px h-6 bg-gray-200" />
-          </>
-        )}
+        <>
+          <ToolbarItem icon="🏠" label="Overview" active={activeTab === 'home'} onClick={() => handleTabChange('home')} />
+          <div className="w-px h-6 bg-gray-200" />
+        </>
         <ToolbarItem icon="📄" label="Materials" active={activeTab === 'materials'} onClick={() => handleTabChange('materials')} />
         <div className="w-px h-6 bg-gray-200" />
         <ToolbarItem icon="💬" label="Chat"      active={activeTab === 'chat'}      onClick={() => handleTabChange('chat')} />

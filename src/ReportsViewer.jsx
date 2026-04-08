@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
+import NotionTargetPicker from './components/NotionTargetPicker';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -431,6 +432,13 @@ export default function ReportsViewer({
   const [exportStatus, setExportStatus] = useState('idle');
   const [resolving, setResolving] = useState(false);
 
+  // Notion export state
+  const courseId = course?.id;
+  const [notionConnected, setNotionConnected] = useState(false);
+  const [notionPickerOpen, setNotionPickerOpen] = useState(false);
+  const [notionBanner, setNotionBanner] = useState(null);
+  const [notionExporting, setNotionExporting] = useState(false);
+
   const courseName = course?.name || course?.title || 'Report';
   const title = report?.title || courseName;
   const generationId = report?.generation_id || null;
@@ -470,6 +478,13 @@ export default function ReportsViewer({
     setSaveError('');
     setExportStatus('idle');
   }, [report?.artifact_material_id, report?.generation_id]);
+
+  useEffect(() => {
+    fetch("/api/notion?action=status", { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => setNotionConnected(!!d.connected))
+      .catch(() => {});
+  }, []);
 
   function handleCopy() {
     const text = report?.markdown || report?.content || report?.text || report?.report || title;
@@ -545,6 +560,40 @@ export default function ReportsViewer({
     } finally {
       setResolving(false);
     }
+  }
+
+  async function handleNotionExport(targetId) {
+    if (!generationId || notionExporting) return;
+    setNotionExporting(true);
+    setNotionBanner(null);
+    try {
+      const res = await fetch("/api/notion?action=export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          exports: [{ generation_id: generationId, generation_type: "report", targets: [{ provider: "notion", target_id: targetId }] }],
+        }),
+      });
+      const data = await res.json();
+      const result = data.results?.[0];
+      if (result?.status === "success") {
+        setNotionBanner({ ok: true, url: result.url, message: "Exported to Notion" });
+      } else {
+        console.error("[Notion] report export failed", result);
+        setNotionBanner({ ok: false, message: result?.error || "Export failed" });
+      }
+    } catch (err) {
+      console.error("[Notion] report export error", err);
+      setNotionBanner({ ok: false, message: err.message || "Export failed" });
+    } finally {
+      setNotionExporting(false);
+    }
+  }
+
+  function handleNotionClick() {
+    if (!notionConnected) return;
+    setNotionPickerOpen(true);
   }
 
   return (
@@ -630,6 +679,22 @@ export default function ReportsViewer({
               <DownloadIcon />
               {exportStatus === 'exporting' ? 'Exporting…' : exportStatus === 'error' ? 'Retry Export' : 'Export as PDF'}
             </button>
+            {notionConnected && (
+              <button
+                type="button"
+                onClick={handleNotionClick}
+                disabled={notionExporting}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+                  <path d="M4 4a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V4z" opacity=".15"/>
+                  <rect x="7" y="7" width="10" height="1.5" rx=".75"/>
+                  <rect x="7" y="11" width="7" height="1.5" rx=".75"/>
+                  <rect x="7" y="15" width="8" height="1.5" rx=".75"/>
+                </svg>
+                {notionExporting ? "Exporting…" : "Notion"}
+              </button>
+            )}
             <div className="w-px h-5 bg-gray-200 mx-1" />
             <button
               type="button"
@@ -722,6 +787,38 @@ export default function ReportsViewer({
         </div>
 
       </div>
+
+      {notionBanner && (
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
+          notionBanner.ok ? "bg-gray-900 text-white" : "bg-red-600 text-white"
+        }`}>
+          {notionBanner.ok ? (
+            <>
+              <span>Exported to Notion</span>
+              {notionBanner.url && (
+                <a href={notionBanner.url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 opacity-80 hover:opacity-100">Open</a>
+              )}
+            </>
+          ) : (
+            <span>{notionBanner.message}</span>
+          )}
+          <button type="button" onClick={() => setNotionBanner(null)} className="ml-2 opacity-60 hover:opacity-100">
+            <XIcon />
+          </button>
+        </div>
+      )}
+
+      {notionPickerOpen && (
+        <NotionTargetPicker
+          courseId={courseId}
+          generationType="report"
+          onSelect={({ databaseId }) => {
+            setNotionPickerOpen(false);
+            handleNotionExport(databaseId);
+          }}
+          onClose={() => setNotionPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 
 function BackIcon() {
   return (
@@ -330,8 +330,116 @@ function ApiKeysSection() {
   );
 }
 
+function NotionConnectionSection({ pending = false }) {
+  const [status, setStatus] = useState(null); // null = loading, { connected, workspace_name, workspace_icon } = loaded
+  const [revoking, setRevoking] = useState(false);
+
+  useEffect(() => {
+    if (pending) {
+      fetch("/api/notion?action=finalize_connection", { credentials: "include" })
+        .then((r) => r.json())
+        .then((data) => setStatus(data))
+        .catch(() => setStatus({ connected: false }));
+    } else {
+      fetch("/api/notion?action=status", { credentials: "include" })
+        .then((r) => r.json())
+        .then((data) => setStatus(data))
+        .catch(() => setStatus({ connected: false }));
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleDisconnect() {
+    setRevoking(true);
+    try {
+      await fetch("/api/notion?action=revoke", { method: "DELETE", credentials: "include" });
+      setStatus({ connected: false });
+    } finally {
+      setRevoking(false);
+    }
+  }
+
+  function handleConnect() {
+    window.location.href = "/api/notion?action=auth";
+  }
+
+  if (status === null) {
+    return (
+      <div className="px-8 py-6">
+        <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-1">Connected Apps</h2>
+        <p className="text-sm text-gray-400">Loading…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-8 py-6">
+      <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-1">Connected Apps</h2>
+      <p className="text-xs text-gray-500 mb-4">Connect third-party apps to import and export course content.</p>
+
+      <div className="border border-gray-100 rounded-xl overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-3 bg-white">
+          {/* Notion logo */}
+          <div className="w-8 h-8 rounded-lg bg-gray-900 flex items-center justify-center shrink-0">
+            <svg width="16" height="16" viewBox="0 0 100 100" fill="white" xmlns="http://www.w3.org/2000/svg">
+              <path d="M6 7.6C9.7 10.6 11 10.4 18.2 9.9L88.2 5.6C89.6 5.6 88.5 4.2 87.9 4L77.1 0.4C74.8 -0.3 72.1 0.1 69.7 0.4L2.4 5.7C0.3 6 0 7.3 1.1 8.2L6 7.6ZM8.5 18.1V91.6C8.5 95.4 10.5 96.7 14.9 96.4L91.5 92C95.9 91.7 96.4 89.3 96.4 86.3V13.1C96.4 10 95 8.4 92 8.7L12.1 13C9 13.3 8.5 14.9 8.5 18.1ZM84.5 21.4C85 23.9 84.5 26.4 82 26.7L77.5 27.4V87.5L82 87.2C84.5 87 85 84.5 85 82V21.4ZM22.3 29.3C22.3 26.8 20.7 25.9 18.5 26.1L14.5 26.4V86.2C14.5 88.7 16.5 90.1 18.8 89.9L22.3 89.6V29.3ZM67 22.7L35.5 24.4C33.5 24.5 33 25.5 33 27.2V88.1C33 89.8 33.8 90.8 35.5 90.7L67.5 88.9C69.3 88.8 70 87.8 70 86.1V25.2C70 23.5 69 22.6 67 22.7Z" />
+            </svg>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-gray-900">Notion</p>
+            {status.connected ? (
+              <p className="text-xs text-gray-500 truncate">
+                {status.workspace_icon && (
+                  <span className="mr-1">{status.workspace_icon}</span>
+                )}
+                {status.workspace_name || "Connected"}
+              </p>
+            ) : (
+              <p className="text-xs text-gray-400">Not connected</p>
+            )}
+          </div>
+
+          {status.connected ? (
+            <button
+              type="button"
+              onClick={handleDisconnect}
+              disabled={revoking}
+              className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors shrink-0"
+            >
+              {revoking ? "Disconnecting…" : "Disconnect"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleConnect}
+              className="px-3 py-1.5 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-700 transition-colors shrink-0"
+            >
+              Connect
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ProfilePage({ userData, csrfToken, onSignOut, onUserUpdate }) {
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const notionPending = new URLSearchParams(location.search).get("notion_pending") === "1";
+
+  const [notionToast, setNotionToast] = useState(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get("notion_connected") === "1" || params.get("notion_pending") === "1";
+  });
+
+  useEffect(() => {
+    if (notionToast) {
+      const t = setTimeout(() => setNotionToast(false), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [notionToast]);
 
   const [usernameInput, setUsernameInput] = useState(userData?.username || userData?.name || "");
   const [usernameStatus, setUsernameStatus] = useState(null); // null | 'saving' | 'saved' | 'error'
@@ -397,6 +505,14 @@ export default function ProfilePage({ userData, csrfToken, onSignOut, onUserUpda
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
+      {/* Notion connected toast */}
+      {notionToast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-xl bg-gray-900 text-white text-sm shadow-lg">
+          <span>Notion connected successfully.</span>
+          <button type="button" onClick={() => setNotionToast(false)} className="ml-2 text-gray-400 hover:text-white transition-colors">✕</button>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -490,6 +606,11 @@ export default function ProfilePage({ userData, csrfToken, onSignOut, onUserUpda
 
           {/* API Keys section */}
           <ApiKeysSection />
+
+          <div className="border-t border-gray-100" />
+
+          {/* Connected apps section */}
+          <NotionConnectionSection pending={notionPending} />
 
           <div className="border-t border-gray-100" />
 

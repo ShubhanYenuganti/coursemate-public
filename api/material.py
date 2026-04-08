@@ -89,6 +89,12 @@ class handler(BaseHTTPRequestHandler):
 
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
+        action = params.get('action', [None])[0]
+
+        if action == 'selections':
+            self._get_selections(google_id, params)
+            return
+
         course_id_raw = params.get('course_id', [None])[0]
 
         if not course_id_raw or not course_id_raw.isdigit():
@@ -138,6 +144,8 @@ class handler(BaseHTTPRequestHandler):
             self._confirm_upload(google_id, data)
         elif action == 'update_visibility':
             self._update_visibility(google_id, data)
+        elif action == 'set_selection':
+            self._set_selection(google_id, data)
         else:
             send_json(self, 400, {"error": f"Unknown action '{action}'"})
 
@@ -187,17 +195,144 @@ class handler(BaseHTTPRequestHandler):
         is_generated = _delete_generation_for_material(file_url)
 
         if not is_generated:
-            try:
-                delete_file(_s3_key_from_url(file_url))
-            except Exception as e:
-                send_json(self, 500, {"error": "Failed to delete file from S3", "detail": str(e)})
-                return
+            source_type = material.get('source_type', '')
+            if source_type == 'notion':
+                # Best-effort S3 delete for Notion materials — the file may not yet
+                # exist (placeholder URL) or may have already been cleaned up.
+                try:
+                    delete_file(_s3_key_from_url(file_url))
+                except Exception as e:
+                    print(f"[material] S3 delete skipped for Notion material {material_id}: {e}")
+            else:
+                try:
+                    delete_file(_s3_key_from_url(file_url))
+                except Exception as e:
+                    send_json(self, 500, {"error": "Failed to delete file from S3", "detail": str(e)})
+                    return
 
         Course.remove_material(course_id, material_id)
         Material.delete(material_id)
+
         send_json(self, 200, {"success": True})
 
+    # --------------------------------------------------------- GET helpers ---
+
+    def _get_selections(self, google_id, params):
+        course_id_raw = params.get('course_id', [None])[0]
+        context = params.get('context', [None])[0]
+
+        if not course_id_raw or not course_id_raw.isdigit():
+            send_json(self, 400, {"error": "course_id query parameter is required"})
+            return
+        if not context:
+            send_json(self, 400, {"error": "context query parameter is required"})
+            return
+
+        course_id = int(course_id_raw)
+
+        user = User.get_by_google_id(google_id)
+        if not user:
+            send_json(self, 404, {"error": "User not found"})
+            return
+
+        if not Course.verify_access(course_id, user['id']):
+            send_json(self, 403, {"error": "Access denied to this course"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            # Fetch all accessible materials (own + public collaborator) with selection state.
+            # Default: own materials → selected=true, collaborator materials → selected=false.
+            cursor.execute("""
+                SELECT
+                    m.id,
+                    m.name,
+                    m.file_url,
+                    m.file_type,
+                    m.visibility,
+                    m.uploaded_by,
+                    m.source_type,
+                    COALESCE(ms.selected, (m.uploaded_by = %s)) AS selected,
+                    ms.provider AS selection_provider,
+                    CASE WHEN m.uploaded_by != %s THEN u.name  ELSE NULL END AS collaborator_name,
+                    CASE WHEN m.uploaded_by != %s THEN u.email ELSE NULL END AS collaborator_email
+                FROM materials m
+                LEFT JOIN material_selections ms
+                    ON ms.material_id = m.id
+                    AND ms.user_id = %s
+                    AND ms.context = %s
+                LEFT JOIN users u ON u.id = m.uploaded_by
+                WHERE m.course_id = %s
+                  AND (m.visibility = 'public' OR m.uploaded_by = %s)
+                ORDER BY (m.uploaded_by = %s) DESC, m.id
+            """, (
+                user['id'], user['id'], user['id'],  # CASE expressions
+                user['id'], context,                  # material_selections join
+                course_id,                            # WHERE course_id
+                user['id'], user['id'],               # WHERE visibility / ORDER
+            ))
+            rows = cursor.fetchall()
+            cursor.close()
+
+        materials = []
+        for row in rows:
+            m = dict(row)
+            collaborator_name = m.pop('collaborator_name', None)
+            collaborator_email = m.pop('collaborator_email', None)
+            m.pop('selection_provider', None)
+            try:
+                m['download_url'] = generate_download_presigned_url(_s3_key_from_url(m['file_url']))
+            except Exception:
+                m['download_url'] = None
+            if collaborator_name or collaborator_email:
+                m['collaborator'] = {'name': collaborator_name, 'email': collaborator_email}
+            else:
+                m['collaborator'] = None
+            materials.append(m)
+
+        send_json(self, 200, {"materials": materials})
+
     # --------------------------------------------------------- POST helpers --
+
+    def _set_selection(self, google_id, data):
+        material_id = data.get('material_id')
+        course_id = data.get('course_id')
+        context = data.get('context')
+        selected = data.get('selected')
+        provider = data.get('provider')  # optional
+
+        if not material_id or not course_id or not context or selected is None:
+            send_json(self, 400, {"error": "material_id, course_id, context, and selected are required"})
+            return
+
+        if not isinstance(selected, bool):
+            send_json(self, 400, {"error": "selected must be a boolean"})
+            return
+
+        user = User.get_by_google_id(google_id)
+        if not user:
+            send_json(self, 404, {"error": "User not found"})
+            return
+
+        if not Course.verify_access(course_id, user['id']):
+            send_json(self, 403, {"error": "Access denied to this course"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO material_selections (user_id, course_id, material_id, context, provider, selected, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id, course_id, material_id, context)
+                DO UPDATE SET selected = EXCLUDED.selected,
+                              provider = EXCLUDED.provider,
+                              updated_at = CURRENT_TIMESTAMP
+                RETURNING *
+            """, (user['id'], course_id, material_id, context, provider, selected))
+            row = cursor.fetchone()
+            cursor.close()
+
+        send_json(self, 200, {"selection": dict(row)})
 
     def _request_upload(self, google_id, data):
         course_id = data.get('course_id')

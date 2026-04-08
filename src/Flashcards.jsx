@@ -156,10 +156,7 @@ const MODEL_LABELS = { gemini: 'Gemini', openai: 'GPT', claude: 'Claude' };
 
 export default function Flashcards({ course, onAddSource }) {
   const [materials, setMaterials] = useState([]);
-  const [selectedSources, setSelectedSources] = useState(new Set());
-  const [selectAll, setSelectAll] = useState(true);
   const [materialsLoading, setMaterialsLoading] = useState(true);
-  const sourcesLoaded = useRef(false);
 
   const [topic, setTopic] = useState('');
   const [cardCount, setCardCount] = useState(20);
@@ -206,32 +203,10 @@ export default function Flashcards({ course, onAddSource }) {
     return () => document.removeEventListener('mousedown', onOutsideClick);
   }, [providerDropdownOpen]);
 
-  // ── selected sources persistence ───────────────────────────────────────────
-
-  useEffect(() => {
-    if (!course?.id) return;
-    sourcesLoaded.current = false;
-    const key = `sources_flashcards_${course.id}`;
-    try {
-      const saved = JSON.parse(localStorage.getItem(key));
-      if (saved) {
-        setSelectAll(saved.selectAll ?? true);
-        setSelectedSources(new Set(saved.ids ?? []));
-      }
-    } catch {}
-    sourcesLoaded.current = true;
-  }, [course?.id]);
-
-  useEffect(() => {
-    if (!course?.id || !sourcesLoaded.current) return;
-    const key = `sources_flashcards_${course.id}`;
-    localStorage.setItem(key, JSON.stringify({ selectAll, ids: Array.from(selectedSources) }));
-  }, [selectAll, selectedSources, course?.id]);
-
   useEffect(() => {
     if (!course?.id) return;
     setMaterialsLoading(true);
-    fetch(`/api/material?course_id=${course.id}`, {
+    fetch(`/api/material?action=selections&course_id=${course.id}&context=flashcards`, {
       credentials: 'include',
     })
       .then((r) => r.json())
@@ -412,7 +387,7 @@ export default function Flashcards({ course, onAddSource }) {
 
       const contextIds = Array.isArray(overrides?.material_ids)
         ? overrides.material_ids
-        : (selectAll ? materials.map((m) => m.id) : Array.from(selectedSources));
+        : materials.filter((m) => m.selected).map((m) => m.id);
 
       const topicToUse = overrides?.topic ?? topic;
       const cardCountToUse = overrides?.card_count ?? cardCount;
@@ -521,30 +496,49 @@ export default function Flashcards({ course, onAddSource }) {
     }
   }
 
-  function isSourceSelected(id) {
-    return selectAll || selectedSources.has(id);
-  }
-
   function toggleSource(id) {
-    setSelectAll(false);
-    setSelectedSources((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+    const mat = materials.find((m) => m.id === id);
+    if (!mat) return;
+    const newSelected = !mat.selected;
+    setMaterials((prev) => prev.map((m) => m.id === id ? { ...m, selected: newSelected } : m));
+    fetch('/api/material', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        action: 'set_selection',
+        material_id: id,
+        course_id: course.id,
+        context: 'flashcards',
+        selected: newSelected,
+        provider: mat.source_type === 'notion' ? 'notion' : null,
+      }),
+    }).catch(() => {});
   }
 
   function toggleSelectAll() {
-    if (selectAll) {
-      setSelectAll(false);
-      setSelectedSources(new Set());
-    } else {
-      setSelectAll(true);
-      setSelectedSources(new Set());
-    }
+    const allOn = materials.length > 0 && materials.every((m) => m.selected);
+    const newVal = !allOn;
+    setMaterials((prev) => prev.map((m) => ({ ...m, selected: newVal })));
+    materials.forEach((m) => {
+      fetch('/api/material', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          action: 'set_selection',
+          material_id: m.id,
+          course_id: course.id,
+          context: 'flashcards',
+          selected: newVal,
+          provider: m.source_type === 'notion' ? 'notion' : null,
+        }),
+      }).catch(() => {});
+    });
   }
 
-  const selectedCount = selectAll ? materials.length : selectedSources.size;
+  const selectedCount = materials.filter((m) => m.selected).length;
+  const allSelected = materials.length > 0 && materials.every((m) => m.selected);
   const activeDepth = DEPTH_OPTIONS.find((d) => d.id === depth);
 
   function applyFlashcardsPreset(preset, parentId = null) {
@@ -573,18 +567,9 @@ export default function Flashcards({ course, onAddSource }) {
       : [];
 
     if (selectedIds.length === 0) {
-      setSelectAll(true);
-      setSelectedSources(new Set());
-    } else if (
-      materials.length > 0 &&
-      selectedIds.length === materials.length &&
-      materials.every((m) => selectedIds.includes(Number(m.id)))
-    ) {
-      setSelectAll(true);
-      setSelectedSources(new Set());
+      setMaterials((prev) => prev.map((m) => ({ ...m, selected: true })));
     } else {
-      setSelectAll(false);
-      setSelectedSources(new Set(selectedIds));
+      setMaterials((prev) => prev.map((m) => ({ ...m, selected: selectedIds.includes(Number(m.id)) })));
     }
 
     const normalizedParentId =
@@ -655,7 +640,7 @@ export default function Flashcards({ course, onAddSource }) {
           </div>
           <div className="flex items-center justify-between">
             <p className="text-[10px] text-gray-400 leading-snug">Select sources to include in generation</p>
-            <SourceToggle checked={selectAll} onToggle={toggleSelectAll} />
+            <SourceToggle checked={allSelected} onToggle={toggleSelectAll} />
           </div>
         </div>
 
@@ -664,21 +649,50 @@ export default function Flashcards({ course, onAddSource }) {
           {!materialsLoading && materials.length === 0 && (
             <p className="px-3 py-2 text-[10px] text-gray-400 italic">No materials yet.</p>
           )}
-          {materials.map((m) => {
-            const on = isSourceSelected(m.id);
+          {(() => {
+            const myMats = materials.filter((m) => !m.collaborator);
+            const collabMats = materials.filter((m) => m.collaborator);
             return (
-              <div
-                key={m.id}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-50 transition-colors cursor-default border-l-2 ${
-                  on ? 'border-indigo-400' : 'border-transparent'
-                }`}
-              >
-                <FileTypeBadge name={m.name} />
-                <span className="flex-1 truncate min-w-0 text-xs" title={m.name}>{m.name}</span>
-                <SourceToggle checked={on} onToggle={() => toggleSource(m.id)} />
-              </div>
+              <>
+                {myMats.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-50 transition-colors cursor-default border-l-2 ${
+                      m.selected ? 'border-indigo-400' : 'border-transparent'
+                    }`}
+                  >
+                    <FileTypeBadge name={m.name} />
+                    <span className="flex-1 truncate min-w-0 text-xs" title={m.name}>{m.name}</span>
+                    <SourceToggle checked={m.selected} onToggle={() => toggleSource(m.id)} />
+                  </div>
+                ))}
+                {collabMats.length > 0 && (
+                  <>
+                    <div className="px-3 pt-2 pb-0.5">
+                      <span className="text-[9px] font-semibold text-gray-300 uppercase tracking-wider">From collaborators</span>
+                    </div>
+                    {collabMats.map((m) => (
+                      <div
+                        key={m.id}
+                        className={`relative group flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-50 transition-colors cursor-default border-l-2 ${
+                          m.selected ? 'border-indigo-300' : 'border-transparent'
+                        }`}
+                      >
+                        <FileTypeBadge name={m.name} />
+                        <span className="flex-1 truncate min-w-0 text-xs">{m.name}</span>
+                        <SourceToggle checked={m.selected} onToggle={() => toggleSource(m.id)} />
+                        <div className="pointer-events-none absolute left-2 bottom-full mb-1.5 z-10 hidden group-hover:block w-56 rounded-lg bg-gray-800 px-2.5 py-2 shadow-lg">
+                          <p className="text-[10px] font-medium text-white whitespace-normal break-words">{m.collaborator?.name}</p>
+                          <p className="text-[10px] text-gray-300 whitespace-normal break-words">{m.name}</p>
+                          <p className="text-[10px] text-gray-400 whitespace-normal break-words">{m.collaborator?.email}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </>
             );
-          })}
+          })()}
         </div>
 
         <div className="px-3 py-3 flex-shrink-0 border-t border-gray-100">
