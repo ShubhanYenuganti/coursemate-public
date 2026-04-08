@@ -211,9 +211,34 @@ def _build_estimate_prompt(template_id: str, material_context: str, custom_promp
     )
 
 
+def _run_generation_locally(generation_id: int) -> None:
+    """Dev-only: run the Lambda generation logic in-process via a background thread."""
+    import importlib
+    import sys
+    import threading
+
+    _lambda_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "lambda", "reports_generate",
+    )
+    if _lambda_dir not in sys.path:
+        sys.path.insert(0, _lambda_dir)
+
+    handler_mod = importlib.import_module("handler")
+
+    def _run():
+        try:
+            handler_mod._process_generation(generation_id)
+        except Exception as exc:
+            print(f"[dev] report generation {generation_id} failed: {exc}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _enqueue_reports_generation_job(generation_id: int, user_id: int):
     if not _REPORTS_QUEUE_URL:
-        raise ValueError("REPORTS_GENERATION_QUEUE_URL env var is not set")
+        _run_generation_locally(generation_id)
+        return
 
     sqs = boto3.client("sqs", region_name=_AWS_REGION)
     sqs.send_message(

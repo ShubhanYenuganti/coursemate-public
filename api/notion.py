@@ -881,8 +881,9 @@ def _export_report(user_id: int, generation_id, target_id: str, token: str, name
             "error": f"Generation not ready (status={row['status']})",
         }
 
-    # Create a new page in the database
-    page_id, page_url, create_err = _create_page_in_database(target_id, name, token, user_id)
+    # Use the report's generated title as the page name if the caller didn't supply one.
+    page_name = name or str(row.get("title") or "").strip() or "Report"
+    page_id, page_url, create_err = _create_page_in_database(target_id, page_name, token, user_id)
     if create_err == "notion_token_revoked":
         return {"status": "error", "error": "notion_token_revoked"}
     if create_err:

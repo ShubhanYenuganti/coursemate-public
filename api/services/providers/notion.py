@@ -90,43 +90,113 @@ def quiz_to_blocks(questions: list) -> list:
 
 def report_to_blocks(sections: list) -> list:
     """
-    Convert a list of report section dicts to Notion blocks.
-    Each section: heading_2 for the section title, paragraphs for content,
-    heading_3 for sub-sections.
+    Convert a flat list of typed report block dicts to Notion blocks.
+    Handles all VALID_BLOCK_TYPES: heading, subheading, paragraph, bullet_list,
+    callout, equation, display_equation, table, page_break, list, section, subsection.
     """
     blocks = []
-    for section in sections:
-        title = section.get("title") or section.get("heading") or ""
-        content = section.get("content") or section.get("text") or ""
-        sub_sections = section.get("sub_sections") or section.get("subsections") or []
+    for block in sections:
+        btype = str(block.get("type") or "paragraph").lower().strip()
+        content = str(block.get("content") or block.get("text") or "").strip()
+        items = block.get("items") or block.get("lines") or []
+        if not isinstance(items, list):
+            items = []
 
-        if title:
-            blocks.append({
-                "object": "block",
-                "type": "heading_2",
-                "heading_2": {"rich_text": rich_text(title)},
-            })
-
-        if content:
-            # Split long content into 2000-char paragraph chunks (Notion API limit per rich_text block)
-            for chunk in _chunk_text(content, 2000):
+        if btype in ("heading", "section"):
+            if content:
                 blocks.append({
                     "object": "block",
-                    "type": "paragraph",
-                    "paragraph": {"rich_text": rich_text(chunk)},
+                    "type": "heading_2",
+                    "heading_2": {"rich_text": rich_text(content)},
                 })
 
-        for sub in sub_sections:
-            sub_title = sub.get("title") or sub.get("heading") or ""
-            sub_content = sub.get("content") or sub.get("text") or ""
-            if sub_title:
+        elif btype in ("subheading", "subsection"):
+            if content:
                 blocks.append({
                     "object": "block",
                     "type": "heading_3",
-                    "heading_3": {"rich_text": rich_text(sub_title)},
+                    "heading_3": {"rich_text": rich_text(content)},
                 })
-            if sub_content:
-                for chunk in _chunk_text(sub_content, 2000):
+
+        elif btype in ("equation", "display_equation"):
+            # LLM emits LaTeX in a `lines` array; fall back to `content` if absent.
+            # Join multiple lines with a newline so multi-line expressions render correctly.
+            lines_val = block.get("lines")
+            if isinstance(lines_val, list) and lines_val:
+                expr = "\n".join(str(l) for l in lines_val if str(l).strip())
+            else:
+                expr = content
+            if expr:
+                blocks.append({
+                    "object": "block",
+                    "type": "equation",
+                    "equation": {"expression": expr},
+                })
+
+        elif btype in ("bullet_list", "list"):
+            for item in items:
+                item_str = str(item).strip()
+                if not item_str:
+                    continue
+                for chunk in _chunk_text(item_str, 2000):
+                    blocks.append({
+                        "object": "block",
+                        "type": "bulleted_list_item",
+                        "bulleted_list_item": {"rich_text": rich_text(chunk)},
+                    })
+            # If no items but content exists, fall back to a paragraph.
+            if not items and content:
+                for chunk in _chunk_text(content, 2000):
+                    blocks.append({
+                        "object": "block",
+                        "type": "paragraph",
+                        "paragraph": {"rich_text": rich_text(chunk)},
+                    })
+
+        elif btype == "callout":
+            if content:
+                blocks.append({
+                    "object": "block",
+                    "type": "callout",
+                    "callout": {
+                        "rich_text": rich_text(content),
+                        "icon": {"type": "emoji", "emoji": "💡"},
+                        "color": "default",
+                    },
+                })
+
+        elif btype == "table":
+            # Notion tables require pre-structured rows. The LLM emits unstructured
+            # data, so render items as bulleted rows; fall back to paragraph.
+            if items:
+                for item in items:
+                    item_str = str(item).strip()
+                    if item_str:
+                        blocks.append({
+                            "object": "block",
+                            "type": "bulleted_list_item",
+                            "bulleted_list_item": {"rich_text": rich_text(item_str)},
+                        })
+            elif content:
+                for chunk in _chunk_text(content, 2000):
+                    blocks.append({
+                        "object": "block",
+                        "type": "paragraph",
+                        "paragraph": {"rich_text": rich_text(chunk)},
+                    })
+
+        elif btype == "page_break":
+            # Notion has no page_break; use a divider as the closest equivalent.
+            blocks.append({
+                "object": "block",
+                "type": "divider",
+                "divider": {},
+            })
+
+        else:
+            # paragraph (default) — split into 2000-char chunks per Notion API limit.
+            if content:
+                for chunk in _chunk_text(content, 2000):
                     blocks.append({
                         "object": "block",
                         "type": "paragraph",
