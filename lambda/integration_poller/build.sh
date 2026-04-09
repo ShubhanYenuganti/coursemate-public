@@ -79,24 +79,24 @@ fi
 echo "   Done."
 echo ""
 
-# ─── Step 5: Update env vars (GDRIVE credentials) ────────────────────────
-echo "5. Updating Lambda environment variables with GDRIVE credentials..."
-if [[ -n "${GDRIVE_CLIENT_ID:-}" && -n "${GDRIVE_CLIENT_SECRET:-}" ]]; then
-  # Fetch current env vars and merge with GDRIVE additions
-  CURRENT_VARS=$(aws lambda get-function-configuration \
-    --function-name integration_poller --region "${AWS_REGION}" \
-    --query 'Environment.Variables' --output json 2>/dev/null || echo '{}')
-  UPDATED_VARS=$(echo "${CURRENT_VARS}" | \
-    python3 -c "import json,sys; d=json.load(sys.stdin); d.update({'GDRIVE_CLIENT_ID':'${GDRIVE_CLIENT_ID}','GDRIVE_CLIENT_SECRET':'${GDRIVE_CLIENT_SECRET}'}); print(json.dumps({'Variables':d}))")
-  aws lambda update-function-configuration \
-    --function-name integration_poller \
-    --environment "${UPDATED_VARS}" \
-    --region "${AWS_REGION}"
-  echo "   GDRIVE credentials set."
-else
-  echo "   GDRIVE_CLIENT_ID / GDRIVE_CLIENT_SECRET not set in shell — skipping. Set them in Lambda console."
-fi
-echo ""
+# # ─── Step 5: Update env vars (GDRIVE credentials) ────────────────────────
+# echo "5. Updating Lambda environment variables with GDRIVE credentials..."
+# if [[ -n "${GDRIVE_CLIENT_ID:-}" && -n "${GDRIVE_CLIENT_SECRET:-}" ]]; then
+#   # Fetch current env vars and merge with GDRIVE additions
+#   CURRENT_VARS=$(aws lambda get-function-configuration \
+#     --function-name integration_poller --region "${AWS_REGION}" \
+#     --query 'Environment.Variables' --output json 2>/dev/null || echo '{}')
+#   UPDATED_VARS=$(echo "${CURRENT_VARS}" | \
+#     python3 -c "import json,sys; d=json.load(sys.stdin); d.update({'GDRIVE_CLIENT_ID':'${GDRIVE_CLIENT_ID}','GDRIVE_CLIENT_SECRET':'${GDRIVE_CLIENT_SECRET}'}); print(json.dumps({'Variables':d}))")
+#   aws lambda update-function-configuration \
+#     --function-name integration_poller \
+#     --environment "${UPDATED_VARS}" \
+#     --region "${AWS_REGION}"
+#   echo "   GDRIVE credentials set."
+# else
+#   echo "   GDRIVE_CLIENT_ID / GDRIVE_CLIENT_SECRET not set in shell — skipping. Set them in Lambda console."
+# fi
+# echo ""
 
 # ─── Step 6: Create EventBridge Scheduler rule (if it doesn't exist) ───────
 echo "6. Ensuring EventBridge Scheduler rule exists..."

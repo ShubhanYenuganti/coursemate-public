@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import time
 from http.server import BaseHTTPRequestHandler
@@ -105,6 +106,38 @@ def _parse_qs_from_path(handler_self) -> dict:
 def _qs_get(qs: dict, key: str) -> str | None:
     vals = qs.get(key, [])
     return vals[0] if vals else None
+
+
+_DRIVE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,}$")
+
+
+def _extract_drive_folder_id(raw: str) -> str | None:
+    """Accept a Drive folder ID or URL and return the folder ID."""
+    value = (raw or "").strip()
+    if not value:
+        return None
+    if _DRIVE_ID_RE.fullmatch(value):
+        return value
+
+    parsed = urlparse(value)
+    host = (parsed.netloc or "").lower()
+    if not host:
+        return None
+    if not (host.endswith("drive.google.com") or host.endswith("docs.google.com")):
+        return None
+
+    parts = [p for p in parsed.path.split("/") if p]
+    if "folders" in parts:
+        idx = parts.index("folders")
+        if idx + 1 < len(parts):
+            candidate = parts[idx + 1].strip()
+            if _DRIVE_ID_RE.fullmatch(candidate):
+                return candidate
+
+    candidate = _qs_get(parse_qs(parsed.query), "id")
+    if candidate and _DRIVE_ID_RE.fullmatch(candidate.strip()):
+        return candidate.strip()
+    return None
 
 
 def _redirect(handler_self, location: str):
@@ -915,11 +948,15 @@ def _handle_add_source_point(handler_self, user_id: int, body: dict):
         return
 
     course_id = body.get("course_id")
-    external_id = body.get("external_id", "").strip()
+    raw_external_id = body.get("external_id", "").strip()
+    external_id = _extract_drive_folder_id(raw_external_id)
     external_title = body.get("external_title", "").strip()
 
-    if not course_id or not external_id:
+    if not course_id or not raw_external_id:
         send_json(handler_self, 400, {"error": "course_id and external_id required"})
+        return
+    if not external_id:
+        send_json(handler_self, 400, {"error": "external_id must be a valid Drive folder ID or URL"})
         return
 
     # Validate folder is accessible
@@ -934,6 +971,9 @@ def _handle_add_source_point(handler_self, user_id: int, body: dict):
         return
     if err:
         send_json(handler_self, 502, {"error": f"Could not verify folder: {err}"})
+        return
+    if (folder_data or {}).get("mimeType") != "application/vnd.google-apps.folder":
+        send_json(handler_self, 400, {"error": "external_id must reference a Drive folder"})
         return
 
     # Use the folder's actual name if no title provided

@@ -6,11 +6,7 @@ sync_source_point(source_point, token):
   - Exports/downloads each file as PDF (Drive export API for native Google types, direct download for PDFs)
   - Uploads each file to S3 and upserts into `materials`
   - Triggers the embed_materials Step Function per file
-  - Marks previously ingested files as removed when they are no longer present
   - Updates last_synced_at on success
-
-NOTE: If you need to track removed files in the DB, run this migration first:
-  ALTER TABLE materials ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
 """
 import io
 import json
@@ -162,37 +158,6 @@ def _delete_old_chunks(material_id):
         db.execute("DELETE FROM documents WHERE material_id = %s", (material_id,))
 
 
-def _materials_has_is_active_column():
-    with get_db() as db:
-        row = db.execute(
-            """
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_name = 'materials' AND column_name = 'is_active'
-            LIMIT 1
-            """
-        ).fetchone()
-    return bool(row)
-
-
-def _set_material_active_state(course_id, external_ids, is_active):
-    if not external_ids:
-        return
-    if not _materials_has_is_active_column():
-        return
-
-    with get_db() as db:
-        for external_id in external_ids:
-            db.execute(
-                """
-                UPDATE materials
-                SET is_active = %s
-                WHERE course_id = %s AND source_type = 'gdrive' AND external_id = %s
-                """,
-                (is_active, course_id, external_id),
-            )
-
-
 def _upload_pdf_to_s3(file_id, pdf_bytes):
     """Upload PDF bytes to S3 and return the S3 key."""
     if not BUCKET:
@@ -269,7 +234,8 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
     current_file_ids = {f['id'] for f in current_files}
     print(f'[gdrive_handler] Folder {folder_id} contains {len(current_files)} files')
 
-    # Log files that were previously ingested but are no longer in the folder
+    # Log files that were previously ingested but are no longer in the folder.
+    # We intentionally do not mark them inactive; all synced files remain wanted by default.
     with get_db() as db:
         ingested_rows = db.execute(
             """
@@ -282,11 +248,7 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
     ingested_ids = {r['external_id'] for r in ingested_rows}
     removed_ids = ingested_ids - current_file_ids
     if removed_ids:
-        _set_material_active_state(course_id, removed_ids, False)
-        print(f'[gdrive_handler] Marked {len(removed_ids)} removed file(s) inactive: {removed_ids}')
-
-    # Reactivate currently present files (covers re-added files).
-    _set_material_active_state(course_id, current_file_ids, True)
+        print(f'[gdrive_handler] {len(removed_ids)} previously ingested file(s) no longer present in folder: {removed_ids}')
 
     # Process each current file
     files_processed = 0

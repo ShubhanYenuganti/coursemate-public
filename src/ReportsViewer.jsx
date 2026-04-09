@@ -577,7 +577,7 @@ export default function ReportsViewer({
     setNotionPickerOpen(true);
   }
 
-  async function handleGDriveExport(folderId) {
+  async function handleGDriveExport(folderId, name) {
     if (!generationId || gdriveExporting) return;
     setGdriveExporting(true);
     setGdriveBanner(null);
@@ -587,7 +587,7 @@ export default function ReportsViewer({
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          exports: [{ generation_id: generationId, generation_type: "report", targets: [{ provider: "gdrive", target_id: folderId }] }],
+          exports: [{ generation_id: generationId, generation_type: "report", targets: [{ provider: "gdrive", target_id: folderId, name }] }],
         }),
       });
       const data = await res.json();
@@ -864,9 +864,9 @@ export default function ReportsViewer({
         <GDriveTargetPicker
           courseId={courseId}
           generationType="report"
-          onSelect={({ folderId }) => {
+          onSelect={({ folderId, name }) => {
             setGdrivePickerOpen(false);
-            handleGDriveExport(folderId);
+            handleGDriveExport(folderId, name);
           }}
           onClose={() => setGdrivePickerOpen(false)}
         />

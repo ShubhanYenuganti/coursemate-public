@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 
 /**
  * GDriveTargetPicker
@@ -9,18 +9,58 @@ import { useState, useEffect, useRef } from "react";
  * Props:
  *   courseId       — current course id (for sticky target persistence)
  *   generationType — 'flashcards' | 'quiz' | 'report'
- *   onSelect({ folderId, folderName }) — called when user confirms
+ *   onSelect({ folderId, folderName, name }) — called when user confirms
  *   onClose()      — called when picker is dismissed without selection
  */
 export default function GDriveTargetPicker({ courseId, generationType, onSelect, onClose }) {
   const [stickyLoaded, setStickyLoaded] = useState(false);
+  const [sourcesLoaded, setSourcesLoaded] = useState(false);
+  const [sourcePoints, setSourcePoints] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [selected, setSelected] = useState(null); // { id, name }
+  const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
   const pickerContainerRef = useRef(null);
+
+  function loadSourcePoints() {
+    if (!courseId) {
+      setSourcePoints([]);
+      setSourcesLoaded(true);
+      return;
+    }
+
+    setSourcesLoaded(false);
+    fetch(`/api/gdrive?action=list_source_points&course_id=${courseId}`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((data) => {
+        const points = Array.isArray(data.source_points) ? data.source_points : [];
+        setSourcePoints(points.filter((p) => p?.external_id));
+      })
+      .catch(() => setSourcePoints([]))
+      .finally(() => setSourcesLoaded(true));
+  }
+
+  const sourceTargets = useMemo(() => {
+    return sourcePoints
+      .map((sp) => ({
+        id: sp?.external_id,
+        name: sp?.external_title || "Untitled folder",
+      }))
+      .filter((t) => t.id);
+  }, [sourcePoints]);
+
+  const filteredSourceTargets = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return sourceTargets;
+    return sourceTargets.filter((t) => String(t.name || "").toLowerCase().includes(q));
+  }, [sourceTargets, searchQuery]);
+
+  // Load existing source points immediately (same behavior as Notion picker)
+  useEffect(() => {
+    loadSourcePoints();
+  }, [courseId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load sticky target on mount
   useEffect(() => {
@@ -42,15 +82,30 @@ export default function GDriveTargetPicker({ courseId, generationType, onSelect,
       .finally(() => setStickyLoaded(true));
   }, [courseId, generationType]);
 
+  // Suggest a default document name (user can edit)
+  useEffect(() => {
+    if (name.trim()) return;
+    const typeLabel =
+      generationType === "quiz" ? "Quiz" : generationType === "flashcards" ? "Flashcards" : "Report";
+    const date = new Date();
+    const dateStr = date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
+    setName(`${typeLabel} — ${dateStr}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generationType]);
+
   // Debounced folder search
   useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearching(false);
+      setSearchResults([]);
+      return;
+    }
+
     const timer = setTimeout(async () => {
       setSearching(true);
       try {
-        const q = searchQuery.trim();
-        const url = q
-          ? `/api/gdrive?action=search&q=${encodeURIComponent(q)}`
-          : `/api/gdrive?action=search`;
+        const url = `/api/gdrive?action=search&q=${encodeURIComponent(q)}`;
         const res = await fetch(url, { credentials: "include" });
         const data = await res.json();
         setSearchResults(Array.isArray(data.results) ? data.results : []);
@@ -64,23 +119,8 @@ export default function GDriveTargetPicker({ courseId, generationType, onSelect,
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Close picker dropdown on outside click / Escape
-  useEffect(() => {
-    if (!pickerOpen) return;
-    const onKeyDown = (e) => { if (e.key === "Escape") setPickerOpen(false); };
-    const onPointerDown = (e) => {
-      if (!pickerContainerRef.current?.contains(e.target)) setPickerOpen(false);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("pointerdown", onPointerDown);
-    };
-  }, [pickerOpen]);
-
   async function handleConfirm() {
-    if (!selected) return;
+    if (!selected || !name.trim()) return;
     setSaving(true);
     try {
       if (courseId && generationType) {
@@ -96,7 +136,7 @@ export default function GDriveTargetPicker({ courseId, generationType, onSelect,
           }),
         });
       }
-      onSelect({ folderId: selected.id, folderName: selected.name });
+      onSelect({ folderId: selected.id, folderName: selected.name, name: name.trim() });
     } finally {
       setSaving(false);
     }
@@ -140,6 +180,16 @@ export default function GDriveTargetPicker({ courseId, generationType, onSelect,
         ) : (
           <div className="px-4 py-3 space-y-4 overflow-y-auto">
             <div>
+              <p className="text-xs text-gray-500 mb-1">Document name</p>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={`e.g. Week 3 ${generationType === "quiz" ? "Quiz" : generationType === "flashcards" ? "Flashcards" : "Report"}`}
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+              />
+            </div>
+            <div>
               <p className="text-xs text-gray-500 mb-1">Destination folder</p>
 
               {selected && (
@@ -169,36 +219,69 @@ export default function GDriveTargetPicker({ courseId, generationType, onSelect,
                   value={searchQuery}
                   onChange={(e) => {
                     setSearchQuery(e.target.value);
-                    setPickerOpen(true);
                   }}
-                  onFocus={() => setPickerOpen(true)}
-                  placeholder="Search folders or leave blank to see recent…"
+                  placeholder="Search folders…"
                   className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
                 />
+                {searchQuery.trim() !== "" && (
+                  <div className="mt-1 border border-gray-100 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
+                  {sourceTargets.length > 0 && (
+                    <div className="px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">
+                      CourseMate Folders
+                    </div>
+                  )}
 
-                {pickerOpen && (
-                  <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
-                    {searching && (
-                      <p className="px-3 py-2 text-xs text-gray-400">Searching…</p>
-                    )}
-                    {!searching && searchResults.length === 0 && (
-                      <p className="px-3 py-2 text-xs text-gray-400">No folders found</p>
-                    )}
-                    {!searching && searchResults.map((folder) => (
+                  {!sourcesLoaded ? (
+                    <p className="px-3 pb-2 text-xs text-gray-400">Loading…</p>
+                  ) : sourceTargets.length > 0 && filteredSourceTargets.length === 0 ? (
+                    <p className="px-3 pb-2 text-xs text-gray-400">No matches.</p>
+                  ) : (
+                    filteredSourceTargets.map((folder) => (
                       <button
                         key={folder.id}
                         type="button"
                         onClick={() => {
                           setSelected({ id: folder.id, name: folder.name });
                           setSearchQuery("");
-                          setPickerOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 flex items-center gap-2 ${
+                          selected?.id === folder.id ? "bg-indigo-50 text-indigo-700" : "text-gray-800"
+                        }`}
+                      >
+                        <span className="text-gray-400">📁</span>
+                        <span className="truncate">{folder.name}</span>
+                      </button>
+                    ))
+                  )}
+
+                  <div
+                    className={`px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-widest ${
+                      sourceTargets.length > 0 ? "border-t border-gray-100" : ""
+                    }`}
+                  >
+                    Google Drive Folders
+                  </div>
+
+                  {searching ? (
+                    <p className="px-3 pb-2 text-xs text-gray-400">Searching…</p>
+                  ) : searchResults.length === 0 ? (
+                    <p className="px-3 pb-2 text-xs text-gray-400">No folders found</p>
+                  ) : (
+                    searchResults.map((folder) => (
+                      <button
+                        key={folder.id}
+                        type="button"
+                        onClick={() => {
+                          setSelected({ id: folder.id, name: folder.name });
+                          setSearchQuery("");
                         }}
                         className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-indigo-50 flex items-center gap-2"
                       >
                         <span className="text-gray-400">📁</span>
                         <span className="truncate">{folder.name}</span>
                       </button>
-                    ))}
+                    ))
+                  )}
                   </div>
                 )}
               </div>
@@ -218,7 +301,7 @@ export default function GDriveTargetPicker({ courseId, generationType, onSelect,
           <button
             type="button"
             onClick={handleConfirm}
-            disabled={!selected || saving}
+            disabled={!selected || !name.trim() || saving}
             className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
           >
             {saving ? "Saving…" : "Export"}

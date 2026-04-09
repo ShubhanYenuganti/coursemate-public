@@ -610,7 +610,7 @@ export default function ProfilePage({ userData, csrfToken, onSignOut, onUserUpda
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => navigate(-1)}
+              onClick={() => navigate('/dashboard')}
               className="p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
               title="Go back"
               aria-label="Go back"

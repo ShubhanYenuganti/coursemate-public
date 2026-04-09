@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Define Google Drive export behavior for generated study content, including folder selection, sticky export targets, and Drive folder search.
+
+## Requirements
 
 ### Requirement: User can export generated content to Google Drive
 The system SHALL allow users to export flashcards, quizzes, and reports as Google Docs to a selected Google Drive folder. Each export SHALL create a new Google Doc using the Google Docs API.
@@ -41,6 +45,6 @@ The system SHALL provide a Drive folder picker that allows users to search their
 - **WHEN** user types in the Drive target picker search box
 - **THEN** the system queries the Drive API for folders matching the search term and displays results with folder names
 
-#### Scenario: Empty search shows recent folders
+#### Scenario: Empty search shows no results
 - **WHEN** user opens the Drive target picker with no search term
-- **THEN** the system displays a list of the user's recently modified Drive folders
+- **THEN** the system does not show folder results until the user enters a search term

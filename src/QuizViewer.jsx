@@ -548,7 +548,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
     setNotionPickerOpen(true);
   }
 
-  async function handleGDriveExport(folderId) {
+  async function handleGDriveExport(folderId, name) {
     if (!generationId || gdriveExporting) return;
     setGdriveExporting(true);
     setGdriveBanner(null);
@@ -558,7 +558,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          exports: [{ generation_id: generationId, generation_type: "quiz", targets: [{ provider: "gdrive", target_id: folderId }] }],
+          exports: [{ generation_id: generationId, generation_type: "quiz", targets: [{ provider: "gdrive", target_id: folderId, name }] }],
         }),
       });
       const data = await res.json();
@@ -1030,9 +1030,9 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
         <GDriveTargetPicker
           courseId={courseId}
           generationType="quiz"
-          onSelect={({ folderId }) => {
+          onSelect={({ folderId, name }) => {
             setGdrivePickerOpen(false);
-            handleGDriveExport(folderId);
+            handleGDriveExport(folderId, name);
           }}
           onClose={() => setGdrivePickerOpen(false)}
         />

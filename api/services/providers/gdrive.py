@@ -9,37 +9,57 @@
 
 def _requests_from_segments(segments):
     """
-    Build batchUpdate requests from a list of {"text": str, "style": str} dicts.
-    Inserts all text at index 1 (start of fresh document), then applies
-    updateParagraphStyle for non-normal segments in the same batch.
+    Build batchUpdate requests from segments.
+
+    Supported segment shapes:
+      - {"text": str, "style": str}
+      - {"kind": "page_break"}
+
+    Inserts content sequentially at index 1 (start of fresh document).
+    Applies updateParagraphStyle for non-normal text segments.
     Returns list of request dicts.
     """
     normalized = []
     for seg in segments:
+        if seg.get("kind") == "page_break":
+            normalized.append({"kind": "page_break"})
+            continue
+
         text = seg.get("text") or ""
+        if not text:
+            continue
         if not text.endswith("\n"):
             text += "\n"
-        normalized.append({"text": text, "style": seg.get("style", "NORMAL_TEXT")})
+        normalized.append({"kind": "text", "text": text, "style": seg.get("style", "NORMAL_TEXT")})
 
-    full_text = "".join(s["text"] for s in normalized)
-    if not full_text:
+    if not normalized:
         return []
 
-    requests = [
-        {
-            "insertText": {
-                "location": {"index": 1},
-                "text": full_text,
-            }
-        }
-    ]
-
+    requests = []
     idx = 1
     for seg in normalized:
+        if seg["kind"] == "page_break":
+            requests.append({
+                "insertPageBreak": {
+                    "location": {"index": idx},
+                }
+            })
+            # Page break is represented as one inserted element.
+            idx += 1
+            continue
+
         text = seg["text"]
-        end_idx = idx + len(text)
         style = seg["style"]
-        if style != "NORMAL_TEXT":
+        end_idx = idx + len(text)
+
+        requests.append({
+            "insertText": {
+                "location": {"index": idx},
+                "text": text,
+            }
+        })
+
+        if style != "NORMAL_TEXT" and text.strip():
             requests.append({
                 "updateParagraphStyle": {
                     "range": {"startIndex": idx, "endIndex": end_idx},
@@ -102,37 +122,81 @@ def quiz_to_doc_requests(questions):
 def report_to_doc_requests(sections):
     """
     Convert report sections to Google Docs batchUpdate requests.
-    Section titles become headings, body text becomes NORMAL_TEXT paragraphs.
+    Handles all VALID_BLOCK_TYPES from reports_contracts:
+    heading, subheading, paragraph, bullet_list, callout, equation,
+    display_equation, table, page_break, list, section, subsection.
     """
     segments = []
-    for i, section in enumerate(sections):
-        if not isinstance(section, dict):
+    for block in sections:
+        if not isinstance(block, dict):
             continue
-        if i > 0:
-            segments.append({"text": "\n", "style": "NORMAL_TEXT"})
 
-        block_type = section.get("type") or section.get("block_type") or "paragraph"
-        title = section.get("title") or section.get("heading") or ""
-        body = section.get("body") or section.get("content") or ""
+        btype = str(block.get("type") or block.get("block_type") or "paragraph").lower().strip()
+        content = str(block.get("content") or block.get("text") or "").strip()
+        lines = block.get("lines")
+        if not isinstance(lines, list):
+            lines = []
+        items = block.get("items")
+        if not isinstance(items, list):
+            items = []
 
-        if title:
-            if block_type in ("heading_1", "h1"):
-                style = "HEADING_1"
-            elif block_type in ("heading_3", "h3"):
-                style = "HEADING_3"
-            else:
-                style = "HEADING_2"
-            segments.append({"text": title, "style": style})
-        elif block_type in ("heading_1", "heading_2", "heading_3") and body:
-            # Some report formats encode heading text in the body field
-            heading_styles = {"heading_1": "HEADING_1", "heading_2": "HEADING_2", "heading_3": "HEADING_3"}
-            segments.append({"text": body, "style": heading_styles[block_type]})
-            body = ""
+        if btype in ("heading", "section"):
+            if content:
+                segments.append({"text": content, "style": "HEADING_2"})
 
-        if body:
-            for para in body.split("\n"):
-                stripped = para.strip()
-                if stripped:
-                    segments.append({"text": stripped, "style": "NORMAL_TEXT"})
+        elif btype in ("subheading", "subsection"):
+            if content:
+                segments.append({"text": content, "style": "HEADING_3"})
+
+        elif btype in ("equation", "display_equation"):
+            # Report contracts emit equation content primarily in `lines`.
+            eq_lines = [str(line).strip() for line in lines if str(line).strip()]
+            if eq_lines:
+                for eq_line in eq_lines:
+                    segments.append({"text": eq_line, "style": "NORMAL_TEXT"})
+            elif content:
+                segments.append({"text": content, "style": "NORMAL_TEXT"})
+
+        elif btype in ("bullet_list", "list"):
+            vals = [str(item).strip() for item in items if str(item).strip()]
+            if vals:
+                for val in vals:
+                    segments.append({"text": f"• {val}", "style": "NORMAL_TEXT"})
+            elif content:
+                segments.append({"text": f"• {content}", "style": "NORMAL_TEXT"})
+
+        elif btype == "callout":
+            if content:
+                segments.append({"text": f"Note: {content}", "style": "NORMAL_TEXT"})
+
+        elif btype == "table":
+            headers = block.get("headers")
+            rows = block.get("rows")
+            if isinstance(headers, list) and headers:
+                header_line = " | ".join(str(h).strip() for h in headers if str(h).strip())
+                if header_line:
+                    segments.append({"text": header_line, "style": "NORMAL_TEXT"})
+            if isinstance(rows, list) and rows:
+                for row in rows:
+                    if isinstance(row, list):
+                        row_line = " | ".join(str(cell).strip() for cell in row if str(cell).strip())
+                    else:
+                        row_line = str(row).strip()
+                    if row_line:
+                        segments.append({"text": row_line, "style": "NORMAL_TEXT"})
+            elif items:
+                for item in items:
+                    item_line = str(item).strip()
+                    if item_line:
+                        segments.append({"text": item_line, "style": "NORMAL_TEXT"})
+            elif content:
+                segments.append({"text": content, "style": "NORMAL_TEXT"})
+
+        elif btype == "page_break":
+            segments.append({"kind": "page_break"})
+
+        else:
+            if content:
+                segments.append({"text": content, "style": "NORMAL_TEXT"})
 
     return _requests_from_segments(segments)

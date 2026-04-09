@@ -310,6 +310,7 @@ function StagingItemRow({ item, onDocTypeChange, onUpload, onRemove }) {
 
 const SOURCE_TYPE_META = {
   notion:    { label: 'Notion',    className: 'text-purple-600 bg-purple-50 border-purple-200' },
+  gdrive:    { label: 'Drive',     className: 'text-green-600 bg-green-50 border-green-200' },
   upload:    { label: 'Upload',    className: 'text-blue-500 bg-blue-50 border-blue-200' },
   generated: { label: 'Generated', className: 'text-indigo-600 bg-indigo-50 border-indigo-200' },
 };
@@ -377,6 +378,16 @@ function MaterialCard({ material, courseId, onVisibilityChange, onDelete, isOwne
   const flashcardsGenerationId = flashcardsGenMatch ? flashcardsGenMatch[1] : null;
   const reportGenMatch = material?.file_url?.match(/^report:\/\/generation\/(\d+)$/);
   const reportGenerationId = reportGenMatch ? reportGenMatch[1] : null;
+  const driveFallbackUrl = material?.external_id
+    ? `https://drive.google.com/file/d/${material.external_id}/view`
+    : null;
+  const materialOpenUrl = material?.source_type === 'gdrive'
+    ? (material?.outsourced_url || driveFallbackUrl || material?.download_url)
+    : (
+        material?.source_type !== 'upload' && material?.outsourced_url
+          ? material.outsourced_url
+          : material?.download_url
+      );
 
   return (
     <div className="flex rounded-lg border border-gray-200 bg-white overflow-hidden hover:shadow-md transition-shadow group">
@@ -416,11 +427,7 @@ function MaterialCard({ material, courseId, onVisibilityChange, onDelete, isOwne
           </button>
         ) : (
           <a
-            href={
-              material.source_type !== 'upload' && material.outsourced_url
-                ? material.outsourced_url
-                : material.download_url
-            }
+            href={materialOpenUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug"
