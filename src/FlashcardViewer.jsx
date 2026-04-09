@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import NotionTargetPicker from './components/NotionTargetPicker';
+import GDriveTargetPicker from './components/GDriveTargetPicker';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -166,22 +167,30 @@ export default function FlashcardViewer({
   const [exportStatus, setExportStatus] = useState('idle');
   const [resolving, setResolving] = useState(false);
 
-  // Notion export state
+  // Export state
   const courseId = course?.id;
   const [notionConnected, setNotionConnected] = useState(false);
   const [notionPickerOpen, setNotionPickerOpen] = useState(false);
   const [notionBanner, setNotionBanner] = useState(null); // null | { ok, url, message }
   const [notionExporting, setNotionExporting] = useState(false);
+  const [gdriveConnected, setGdriveConnected] = useState(false);
+  const [gdrivePickerOpen, setGdrivePickerOpen] = useState(false);
+  const [gdriveBanner, setGdriveBanner] = useState(null); // null | { ok, url, message }
+  const [gdriveExporting, setGdriveExporting] = useState(false);
 
   useEffect(() => {
     setSaveStatus(data?.artifact_material_id ? 'saved' : 'idle');
   }, [data?.artifact_material_id, data?.generation_id]);
 
-  // Fetch Notion connection status on mount
+  // Fetch integration connection statuses on mount
   useEffect(() => {
     fetch("/api/notion?action=status", { credentials: "include" })
       .then((r) => r.json())
       .then((d) => setNotionConnected(!!d.connected))
+      .catch(() => {});
+    fetch("/api/gdrive?action=status", { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => setGdriveConnected(!!d.connected))
       .catch(() => {});
   }, []);
 
@@ -338,6 +347,38 @@ export default function FlashcardViewer({
     setNotionPickerOpen(true);
   }
 
+  async function handleGDriveExport(folderId) {
+    if (!generationId || gdriveExporting) return;
+    setGdriveExporting(true);
+    setGdriveBanner(null);
+    try {
+      const res = await fetch("/api/gdrive?action=export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          exports: [{ generation_id: generationId, generation_type: "flashcards", targets: [{ provider: "gdrive", target_id: folderId }] }],
+        }),
+      });
+      const data = await res.json();
+      const result = data.results?.[0];
+      if (result?.status === "success") {
+        setGdriveBanner({ ok: true, url: result.url, message: "Exported to Google Drive" });
+      } else {
+        setGdriveBanner({ ok: false, message: result?.error || "Export failed" });
+      }
+    } catch (err) {
+      setGdriveBanner({ ok: false, message: err.message || "Export failed" });
+    } finally {
+      setGdriveExporting(false);
+    }
+  }
+
+  function handleGDriveClick() {
+    if (!gdriveConnected) return;
+    setGdrivePickerOpen(true);
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-teal-50 flex flex-col">
       {parentGenerationId && (
@@ -435,6 +476,24 @@ export default function FlashcardViewer({
                   <rect x="7" y="15" width="8" height="1.5" rx=".75"/>
                 </svg>
                 {notionExporting ? "Exporting…" : "Notion"}
+              </button>
+            )}
+            {gdriveConnected && (
+              <button
+                type="button"
+                onClick={handleGDriveClick}
+                disabled={gdriveExporting}
+                className={actionButtonClass}
+              >
+                <svg width="12" height="10" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
+                  <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+                  <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47"/>
+                  <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335"/>
+                  <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+                  <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+                  <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+                </svg>
+                {gdriveExporting ? "Exporting…" : "Drive"}
               </button>
             )}
             </div>
@@ -658,6 +717,38 @@ export default function FlashcardViewer({
             handleNotionExport(databaseId, name);
           }}
           onClose={() => setNotionPickerOpen(false)}
+        />
+      )}
+
+      {gdriveBanner && (
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
+          gdriveBanner.ok ? "bg-gray-900 text-white" : "bg-red-600 text-white"
+        }`}>
+          {gdriveBanner.ok ? (
+            <>
+              <span>Exported to Google Drive</span>
+              {gdriveBanner.url && (
+                <a href={gdriveBanner.url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 opacity-80 hover:opacity-100">Open</a>
+              )}
+            </>
+          ) : (
+            <span>{gdriveBanner.message}</span>
+          )}
+          <button type="button" onClick={() => setGdriveBanner(null)} className="ml-2 opacity-60 hover:opacity-100">
+            <XIcon />
+          </button>
+        </div>
+      )}
+
+      {gdrivePickerOpen && (
+        <GDriveTargetPicker
+          courseId={courseId}
+          generationType="flashcards"
+          onSelect={({ folderId }) => {
+            setGdrivePickerOpen(false);
+            handleGDriveExport(folderId);
+          }}
+          onClose={() => setGdrivePickerOpen(false)}
         />
       )}
     </div>

@@ -423,11 +423,102 @@ function NotionConnectionSection({ pending = false }) {
   );
 }
 
+function GDriveConnectionSection({ pending = false }) {
+  const [status, setStatus] = useState(null); // null = loading, { connected, email } = loaded
+  const [revoking, setRevoking] = useState(false);
+
+  useEffect(() => {
+    if (pending) {
+      fetch("/api/gdrive?action=finalize_connection", { credentials: "include" })
+        .then((r) => r.json())
+        .then((data) => setStatus(data))
+        .catch(() => setStatus({ connected: false }));
+    } else {
+      fetch("/api/gdrive?action=status", { credentials: "include" })
+        .then((r) => r.json())
+        .then((data) => setStatus(data))
+        .catch(() => setStatus({ connected: false }));
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleDisconnect() {
+    if (!window.confirm("Disconnect Google Drive? This will remove your stored access token.")) return;
+    setRevoking(true);
+    try {
+      await fetch("/api/gdrive?action=revoke", { method: "DELETE", credentials: "include" });
+      setStatus({ connected: false });
+    } finally {
+      setRevoking(false);
+    }
+  }
+
+  function handleConnect() {
+    window.location.href = "/api/gdrive?action=auth";
+  }
+
+  if (status === null) {
+    return (
+      <div className="px-8 py-6">
+        <p className="text-sm text-gray-400">Loading…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-8 py-6">
+      <div className="border border-gray-100 rounded-xl overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-3 bg-white">
+          {/* Google Drive logo */}
+          <div className="w-8 h-8 rounded-lg bg-white border border-gray-200 flex items-center justify-center shrink-0">
+            <svg width="18" height="16" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
+              <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+              <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47"/>
+              <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335"/>
+              <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+              <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+              <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+            </svg>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-gray-900">Google Drive</p>
+            {status.connected ? (
+              <p className="text-xs text-gray-500 truncate">{status.email || "Connected"}</p>
+            ) : (
+              <p className="text-xs text-gray-400">Not connected</p>
+            )}
+          </div>
+
+          {status.connected ? (
+            <button
+              type="button"
+              onClick={handleDisconnect}
+              disabled={revoking}
+              className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors shrink-0"
+            >
+              {revoking ? "Disconnecting…" : "Disconnect"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleConnect}
+              className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors shrink-0"
+            >
+              Connect
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ProfilePage({ userData, csrfToken, onSignOut, onUserUpdate }) {
   const navigate = useNavigate();
   const location = useLocation();
 
   const notionPending = new URLSearchParams(location.search).get("notion_pending") === "1";
+  const gdrivePending = new URLSearchParams(location.search).get("gdrive_pending") === "1";
 
   const [notionToast, setNotionToast] = useState(() => {
     const params = new URLSearchParams(location.search);
@@ -611,6 +702,7 @@ export default function ProfilePage({ userData, csrfToken, onSignOut, onUserUpda
 
           {/* Connected apps section */}
           <NotionConnectionSection pending={notionPending} />
+          <GDriveConnectionSection pending={gdrivePending} />
 
           <div className="border-t border-gray-100" />
 

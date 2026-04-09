@@ -27,6 +27,7 @@ ROUTES = {
     '/api/flashcards': 'api.flashcards',
     '/api/material':   'api.material',
     '/api/notion':     'api.notion',
+    '/api/gdrive':     'api.gdrive',
     '/api/quiz':       'api.quiz',
     '/api/reports':    'api.reports',
     '/api/sharing':    'api.sharing',
