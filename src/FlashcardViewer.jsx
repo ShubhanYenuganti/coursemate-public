@@ -169,11 +169,11 @@ export default function FlashcardViewer({
 
   // Export state
   const courseId = course?.id;
-  const [notionConnected, setNotionConnected] = useState(false);
+  const [notionConnected] = useState(() => localStorage.getItem('coursemate_notion_connected') === '1');
   const [notionPickerOpen, setNotionPickerOpen] = useState(false);
   const [notionBanner, setNotionBanner] = useState(null); // null | { ok, url, message }
   const [notionExporting, setNotionExporting] = useState(false);
-  const [gdriveConnected, setGdriveConnected] = useState(false);
+  const [gdriveConnected] = useState(() => localStorage.getItem('coursemate_gdrive_connected') === '1');
   const [gdrivePickerOpen, setGdrivePickerOpen] = useState(false);
   const [gdriveBanner, setGdriveBanner] = useState(null); // null | { ok, url, message }
   const [gdriveExporting, setGdriveExporting] = useState(false);
@@ -181,18 +181,6 @@ export default function FlashcardViewer({
   useEffect(() => {
     setSaveStatus(data?.artifact_material_id ? 'saved' : 'idle');
   }, [data?.artifact_material_id, data?.generation_id]);
-
-  // Fetch integration connection statuses on mount
-  useEffect(() => {
-    fetch("/api/notion?action=status", { credentials: "include" })
-      .then((r) => r.json())
-      .then((d) => setNotionConnected(!!d.connected))
-      .catch(() => {});
-    fetch("/api/gdrive?action=status", { credentials: "include" })
-      .then((r) => r.json())
-      .then((d) => setGdriveConnected(!!d.connected))
-      .catch(() => {});
-  }, []);
 
   const displayCards = useMemo(() => {
     if (!shuffled) return cards;

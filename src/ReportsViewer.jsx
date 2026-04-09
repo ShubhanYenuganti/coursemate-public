@@ -403,11 +403,11 @@ export default function ReportsViewer({
 
   // Notion export state
   const courseId = course?.id;
-  const [notionConnected, setNotionConnected] = useState(false);
+  const [notionConnected] = useState(() => localStorage.getItem('coursemate_notion_connected') === '1');
   const [notionPickerOpen, setNotionPickerOpen] = useState(false);
   const [notionBanner, setNotionBanner] = useState(null);
   const [notionExporting, setNotionExporting] = useState(false);
-  const [gdriveConnected, setGdriveConnected] = useState(false);
+  const [gdriveConnected] = useState(() => localStorage.getItem('coursemate_gdrive_connected') === '1');
   const [gdrivePickerOpen, setGdrivePickerOpen] = useState(false);
   const [gdriveBanner, setGdriveBanner] = useState(null);
   const [gdriveExporting, setGdriveExporting] = useState(false);
@@ -455,17 +455,6 @@ export default function ReportsViewer({
     setSaveError('');
     setExportStatus('idle');
   }, [report?.artifact_material_id, report?.generation_id]);
-
-  useEffect(() => {
-    fetch("/api/notion?action=status", { credentials: "include" })
-      .then((r) => r.json())
-      .then((d) => setNotionConnected(!!d.connected))
-      .catch(() => {});
-    fetch("/api/gdrive?action=status", { credentials: "include" })
-      .then((r) => r.json())
-      .then((d) => setGdriveConnected(!!d.connected))
-      .catch(() => {});
-  }, []);
 
   function handleCopy() {
     const text = report?.markdown || report?.content || report?.text || report?.report || title;

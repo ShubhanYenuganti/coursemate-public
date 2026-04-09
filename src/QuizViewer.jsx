@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { formatDateTime } from './utils/dateUtils';
 import NotionTargetPicker from './components/NotionTargetPicker';
 import GDriveTargetPicker from './components/GDriveTargetPicker';
@@ -325,11 +325,11 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
   const [exportStatus, setExportStatus] = useState('idle'); // idle | exporting | error
 
   // Notion export state
-  const [notionConnected, setNotionConnected] = useState(false);
+  const [notionConnected] = useState(() => localStorage.getItem('coursemate_notion_connected') === '1');
   const [notionPickerOpen, setNotionPickerOpen] = useState(false);
   const [notionBanner, setNotionBanner] = useState(null);
   const [notionExporting, setNotionExporting] = useState(false);
-  const [gdriveConnected, setGdriveConnected] = useState(false);
+  const [gdriveConnected] = useState(() => localStorage.getItem('coursemate_gdrive_connected') === '1');
   const [gdrivePickerOpen, setGdrivePickerOpen] = useState(false);
   const [gdriveBanner, setGdriveBanner] = useState(null);
   const [gdriveExporting, setGdriveExporting] = useState(false);
@@ -340,17 +340,6 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
   const [attemptsLoading, setAttemptsLoading] = useState(false);
   const [selectedAttempt, setSelectedAttempt] = useState(null);
   const [attemptDetailLoading, setAttemptDetailLoading] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/notion?action=status", { credentials: "include" })
-      .then((r) => r.json())
-      .then((d) => setNotionConnected(!!d.connected))
-      .catch(() => {});
-    fetch("/api/gdrive?action=status", { credentials: "include" })
-      .then((r) => r.json())
-      .then((d) => setGdriveConnected(!!d.connected))
-      .catch(() => {});
-  }, []);
 
   async function loadAttempts() {
     if (!generationId) return;

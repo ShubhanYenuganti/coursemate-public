@@ -67,13 +67,9 @@ function NotionSourcesPanel({ courseId, onSync }) {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
   const [confirmRemoveId, setConfirmRemoveId] = useState(null);
-  const [notionConnected, setNotionConnected] = useState(false);
+  const [notionConnected] = useState(() => localStorage.getItem('coursemate_notion_connected') === '1');
 
   useEffect(() => {
-    fetch('/api/notion?action=status', { credentials: 'include' })
-      .then((r) => r.json())
-      .then((d) => setNotionConnected(!!d.connected))
-      .catch(() => {});
     loadSources();
   }, [courseId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -281,13 +277,9 @@ function GDriveSourcesPanel({ courseId, onSync }) {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
   const [confirmRemoveId, setConfirmRemoveId] = useState(null);
-  const [gdriveConnected, setGdriveConnected] = useState(false);
+  const [gdriveConnected] = useState(() => localStorage.getItem('coursemate_gdrive_connected') === '1');
 
   useEffect(() => {
-    fetch('/api/gdrive?action=status', { credentials: 'include' })
-      .then((r) => r.json())
-      .then((d) => setGdriveConnected(!!d.connected))
-      .catch(() => {});
     loadSources();
   }, [courseId]); // eslint-disable-line react-hooks/exhaustive-deps
 

@@ -335,23 +335,25 @@ function NotionConnectionSection({ pending = false }) {
   const [revoking, setRevoking] = useState(false);
 
   useEffect(() => {
-    if (pending) {
-      fetch("/api/notion?action=finalize_connection", { credentials: "include" })
-        .then((r) => r.json())
-        .then((data) => setStatus(data))
-        .catch(() => setStatus({ connected: false }));
-    } else {
-      fetch("/api/notion?action=status", { credentials: "include" })
-        .then((r) => r.json())
-        .then((data) => setStatus(data))
-        .catch(() => setStatus({ connected: false }));
-    }
+    const endpoint = pending ? "finalize_connection" : "status";
+    fetch(`/api/notion?action=${endpoint}`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.connected) {
+          localStorage.setItem("coursemate_notion_connected", "1");
+        } else {
+          localStorage.removeItem("coursemate_notion_connected");
+        }
+        setStatus(data);
+      })
+      .catch(() => setStatus({ connected: false }));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleDisconnect() {
     setRevoking(true);
     try {
       await fetch("/api/notion?action=revoke", { method: "DELETE", credentials: "include" });
+      localStorage.removeItem("coursemate_notion_connected");
       setStatus({ connected: false });
     } finally {
       setRevoking(false);
@@ -428,17 +430,18 @@ function GDriveConnectionSection({ pending = false }) {
   const [revoking, setRevoking] = useState(false);
 
   useEffect(() => {
-    if (pending) {
-      fetch("/api/gdrive?action=finalize_connection", { credentials: "include" })
-        .then((r) => r.json())
-        .then((data) => setStatus(data))
-        .catch(() => setStatus({ connected: false }));
-    } else {
-      fetch("/api/gdrive?action=status", { credentials: "include" })
-        .then((r) => r.json())
-        .then((data) => setStatus(data))
-        .catch(() => setStatus({ connected: false }));
-    }
+    const endpoint = pending ? "finalize_connection" : "status";
+    fetch(`/api/gdrive?action=${endpoint}`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.connected) {
+          localStorage.setItem("coursemate_gdrive_connected", "1");
+        } else {
+          localStorage.removeItem("coursemate_gdrive_connected");
+        }
+        setStatus(data);
+      })
+      .catch(() => setStatus({ connected: false }));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleDisconnect() {
@@ -446,6 +449,7 @@ function GDriveConnectionSection({ pending = false }) {
     setRevoking(true);
     try {
       await fetch("/api/gdrive?action=revoke", { method: "DELETE", credentials: "include" });
+      localStorage.removeItem("coursemate_gdrive_connected");
       setStatus({ connected: false });
     } finally {
       setRevoking(false);
