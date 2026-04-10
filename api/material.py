@@ -168,18 +168,22 @@ class handler(BaseHTTPRequestHandler):
 
         action = data.get('action', 'request_upload')
 
-        if action == 'request_upload':
-            self._request_upload(google_id, data)
-        elif action == 'confirm_upload':
-            self._confirm_upload(google_id, data)
-        elif action == 'update_visibility':
-            self._update_visibility(google_id, data)
-        elif action == 'set_selection':
-            self._set_selection(google_id, data)
-        elif action == 'bulk_upsert_sync':
-            self._bulk_upsert_sync(google_id, data)
-        else:
-            send_json(self, 400, {"error": f"Unknown action '{action}'"})
+        try:
+            if action == 'request_upload':
+                self._request_upload(google_id, data)
+            elif action == 'confirm_upload':
+                self._confirm_upload(google_id, data)
+            elif action == 'update_visibility':
+                self._update_visibility(google_id, data)
+            elif action == 'set_selection':
+                self._set_selection(google_id, data)
+            elif action == 'bulk_upsert_sync':
+                self._bulk_upsert_sync(google_id, data)
+            else:
+                send_json(self, 400, {"error": f"Unknown action '{action}'"})
+        except Exception as exc:
+            print(f"[material] action={action} failed: {exc}")
+            send_json(self, 500, {"error": "material action failed", "action": action, "detail": str(exc)})
 
     # ---------------------------------------------------- bulk_upsert_sync --
 
@@ -217,7 +221,6 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 400, {"error": "files must be an array"})
             return
 
-        from .courses import Course
         if not Course.verify_access(int(course_id), user['id']):
             send_json(self, 403, {"error": "Access denied to this course"})
             return
@@ -226,36 +229,43 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 200, {"upserted": 0})
             return
 
-        with get_db() as conn:
-            cursor = conn.cursor()
-            # Verify source point belongs to this user and course
-            cursor.execute(
-                "SELECT id FROM integration_source_points WHERE id = %s AND user_id = %s AND course_id = %s",
-                (source_point_id, user['id'], course_id),
-            )
-            if not cursor.fetchone():
-                cursor.close()
-                send_json(self, 403, {"error": "Source point not found or access denied"})
-                return
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                # Verify source point belongs to this user and course
+                cursor.execute(
+                    "SELECT id FROM integration_source_points WHERE id = %s AND user_id = %s AND course_id = %s",
+                    (source_point_id, user['id'], course_id),
+                )
+                if not cursor.fetchone():
+                    cursor.close()
+                    send_json(self, 403, {"error": "Source point not found or access denied"})
+                    return
 
-            upserted = 0
-            for f in files:
-                external_id = f.get('external_id')
-                name = f.get('name') or ''
-                sync_val = bool(f.get('sync', True))
-                if not external_id:
-                    continue
-                cursor.execute("""
-                    INSERT INTO materials
-                        (course_id, name, file_url, uploaded_by, source_type,
-                         external_id, integration_source_point_id, sync)
-                    VALUES (%s, %s, NULL, %s, %s, %s, %s, %s)
-                    ON CONFLICT (external_id, course_id)
-                    DO UPDATE SET sync = EXCLUDED.sync,
-                                  updated_at = CURRENT_TIMESTAMP
-                """, (course_id, name, user['id'], source_type, external_id, source_point_id, sync_val))
-                upserted += 1
-            cursor.close()
+                upserted = 0
+                for f in files:
+                    external_id = f.get('external_id')
+                    name = f.get('name') or ''
+                    sync_val = bool(f.get('sync', True))
+                    if not external_id:
+                        continue
+                    # Keep file_url non-null until poller ingests and replaces with final HTTPS URL.
+                    placeholder_file_url = f"{source_type}/{external_id}.pdf"
+                    cursor.execute("""
+                        INSERT INTO materials
+                            (course_id, name, file_url, uploaded_by, file_type, source_type,
+                             external_id, integration_source_point_id, sync)
+                        VALUES (%s, %s, %s, %s, 'application/pdf', %s, %s, %s, %s)
+                        ON CONFLICT (external_id, course_id)
+                        DO UPDATE SET file_type = 'application/pdf',
+                                      sync = EXCLUDED.sync,
+                                      updated_at = CURRENT_TIMESTAMP
+                    """, (course_id, name, placeholder_file_url, user['id'], source_type, external_id, source_point_id, sync_val))
+                    upserted += 1
+                cursor.close()
+        except Exception as exc:
+            send_json(self, 500, {"error": "bulk_upsert_sync failed", "detail": str(exc)})
+            return
 
         # Trigger the integration poller Lambda so sync=true files get ingested
         _trigger_poller(source_point_id, user['id'], course_id)

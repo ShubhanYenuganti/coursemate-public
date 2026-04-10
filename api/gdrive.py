@@ -109,6 +109,18 @@ def _qs_get(qs: dict, key: str) -> str | None:
     return vals[0] if vals else None
 
 
+def _source_point_id_from_qs_or_body(qs: dict, body: dict | None = None) -> str | None:
+    """Resolve source point id from query string, with legacy body fallback."""
+    sp_id = _qs_get(qs, "id")
+    if sp_id:
+        return sp_id
+    if body and isinstance(body, dict):
+        legacy_id = body.get("source_point_id")
+        if legacy_id is not None:
+            return str(legacy_id)
+    return None
+
+
 _DRIVE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,}$")
 
 
@@ -1157,8 +1169,10 @@ def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
     send_json(handler_self, 200, {"files": files_out, "page": page, "has_more": has_more})
 
 
-def _handle_toggle_source_point(handler_self, user_id: int, qs: dict):
-    sp_id = _qs_get(qs, "id")
+def _handle_toggle_source_point(
+    handler_self, user_id: int, qs: dict, body: dict | None = None
+):
+    sp_id = _source_point_id_from_qs_or_body(qs, body)
     if not sp_id:
         send_json(handler_self, 400, {"error": "id required"})
         return
@@ -1184,8 +1198,10 @@ def _handle_toggle_source_point(handler_self, user_id: int, qs: dict):
     send_json(handler_self, 200, {"source_point": dict(row)})
 
 
-def _handle_remove_source_point(handler_self, user_id: int, qs: dict):
-    sp_id = _qs_get(qs, "id")
+def _handle_remove_source_point(
+    handler_self, user_id: int, qs: dict, body: dict | None = None
+):
+    sp_id = _source_point_id_from_qs_or_body(qs, body)
     if not sp_id:
         send_json(handler_self, 400, {"error": "id required"})
         return
@@ -1313,7 +1329,7 @@ class handler(BaseHTTPRequestHandler):
         if action == "revoke":
             _handle_revoke(self, user_id)
         elif action == "remove_source_point":
-            _handle_remove_source_point(self, user_id, qs)
+            _handle_remove_source_point(self, user_id, qs, body)
         else:
             send_json(self, 400, {"error": f"Unknown DELETE action: {action}"})
 
@@ -1330,7 +1346,7 @@ class handler(BaseHTTPRequestHandler):
             return
 
         if action == "toggle_source_point":
-            _handle_toggle_source_point(self, user_id, qs)
+            _handle_toggle_source_point(self, user_id, qs, body)
         else:
             send_json(self, 400, {"error": f"Unknown PATCH action: {action}"})
 

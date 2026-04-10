@@ -97,7 +97,9 @@ def _get_drive_file_as_pdf(file_id, mime_type, token):
 
 # ─── Ingestion helpers ───────────────────────────────────────────────────────
 
-def _upsert_material(user_id, course_id, file_id, file_name, modified_time):
+def _upsert_material(
+    user_id, course_id, source_point_id, file_id, file_name, modified_time
+):
     """
     Return (material_id, is_new_or_changed).
     Creates a new materials row on first ingestion, or returns (id, True) if
@@ -106,11 +108,20 @@ def _upsert_material(user_id, course_id, file_id, file_name, modified_time):
     """
     with get_db() as db:
         existing = db.execute(
-            "SELECT id, file_url, external_last_edited FROM materials WHERE external_id = %s AND source_type = 'gdrive'",
+            "SELECT id, file_url, external_last_edited, file_type FROM materials WHERE external_id = %s AND source_type = 'gdrive'",
             (file_id,)
         ).fetchone()
 
         if existing:
+            if existing.get('file_type') != 'application/pdf':
+                db.execute(
+                    "UPDATE materials SET file_type = 'application/pdf' WHERE id = %s",
+                    (existing['id'],)
+                )
+            db.execute(
+                "UPDATE materials SET integration_source_point_id = %s WHERE id = %s",
+                (source_point_id, existing['id'])
+            )
             existing_edited = str(existing.get('external_last_edited') or '')
             if existing_edited == modified_time:
                 return existing['id'], False
@@ -119,9 +130,10 @@ def _upsert_material(user_id, course_id, file_id, file_name, modified_time):
         row = db.execute("""
             INSERT INTO materials (
                 course_id, name, file_url, uploaded_by, file_type,
-                visibility, source_type, external_id, external_last_edited, sync
+                visibility, source_type, external_id, external_last_edited, sync,
+                integration_source_point_id
             )
-            VALUES (%s, %s, %s, %s, 'application/pdf', 'private', 'gdrive', %s, %s, true)
+            VALUES (%s, %s, %s, %s, 'application/pdf', 'private', 'gdrive', %s, %s, true, %s)
             RETURNING id
         """, (
             course_id,
@@ -130,6 +142,7 @@ def _upsert_material(user_id, course_id, file_id, file_name, modified_time):
             user_id,
             file_id,
             modified_time,
+            source_point_id,
         )).fetchone()
         material_id = row['id']
 
@@ -285,7 +298,7 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
 
         try:
             material_id, needs_ingest = _upsert_material(
-                user_id, course_id, file_id, file_name, modified_time
+                user_id, course_id, source_point['id'], file_id, file_name, modified_time
             )
 
             if not needs_ingest and not force_full_sync:

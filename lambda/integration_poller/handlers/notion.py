@@ -31,7 +31,7 @@ from reportlab.platypus import (
 from db import get_db
 
 NOTION_API_BASE = "https://api.notion.com/v1"
-NOTION_VERSION = "2022-06-28"
+NOTION_VERSION = "2026-03-11"
 
 s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 sfn = boto3.client(
@@ -283,7 +283,13 @@ def _notion_page_to_pdf(page_id, blocks, token):
 
 
 def _upsert_material(
-    user_id, course_id, page_id, page_title, last_edited_time, outsourced_url=None
+    user_id,
+    course_id,
+    source_point_id,
+    page_id,
+    page_title,
+    last_edited_time,
+    outsourced_url=None,
 ):
     """
     Return (material_id, is_new). Creates or finds the materials row.
@@ -291,7 +297,7 @@ def _upsert_material(
     """
     with get_db() as db:
         existing = db.execute(
-            "SELECT id, file_url FROM materials WHERE external_id = %s AND source_type = 'notion'",
+            "SELECT id, file_url, file_type FROM materials WHERE external_id = %s AND source_type = 'notion'",
             (page_id,),
         ).fetchone()
 
@@ -300,11 +306,21 @@ def _upsert_material(
             # Treat as new so the caller re-runs the upload + embed.
             placeholder = f"notion/{page_id}.pdf"
             existing_url = existing.get("file_url") or ""
+            existing_file_type = existing.get("file_type")
             needs_reingest = (
                 not existing_url
                 or existing_url == placeholder
                 or existing_url.startswith("notion/")
                 or not existing_url.startswith("https://")
+            )
+            if existing_file_type != "application/pdf":
+                db.execute(
+                    "UPDATE materials SET file_type = 'application/pdf' WHERE id = %s",
+                    (existing["id"],),
+                )
+            db.execute(
+                "UPDATE materials SET integration_source_point_id = %s WHERE id = %s",
+                (source_point_id, existing["id"]),
             )
             if outsourced_url:
                 db.execute(
@@ -323,9 +339,10 @@ def _upsert_material(
             """
             INSERT INTO materials (
                 course_id, name, file_url, uploaded_by, file_type,
-                visibility, source_type, external_id, external_last_edited, outsourced_url, sync
+                visibility, source_type, external_id, external_last_edited,
+                outsourced_url, sync, integration_source_point_id
             )
-            VALUES (%s, %s, %s, %s, 'application/pdf', 'private', 'notion', %s, %s, %s, true)
+            VALUES (%s, %s, %s, %s, 'application/pdf', 'private', 'notion', %s, %s, %s, true, %s)
             RETURNING id
         """,
             (
@@ -336,6 +353,7 @@ def _upsert_material(
                 page_id,
                 last_edited_time,
                 outsourced_url,
+                source_point_id,
             ),
         ).fetchone()
         material_id = row["id"]
@@ -439,18 +457,18 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
     Sync all new/updated pages from the Notion database described by source_point.
     Updates last_synced_at on the source_point row after completion.
     """
-    db_id = source_point["external_id"]
+    data_source_id = source_point["external_id"]
     user_id = source_point["user_id"]
     course_id = source_point["course_id"]
     last_synced = source_point.get("last_synced_at")
     print(
         f"[notion_handler] Starting sync source_point_id={source_point.get('id')} "
-        f"db_id={db_id} course_id={course_id} user_id={user_id} "
+        f"data_source_id={data_source_id} course_id={course_id} user_id={user_id} "
         f"last_synced_at={last_synced} force_full_sync={force_full_sync} "
         f"bucket={BUCKET!r} has_state_machine={bool(STATE_MACHINE_ARN)}"
     )
 
-    # Query Notion database for recently edited pages
+    # Query Notion data source for recently edited pages
     filter_body = {}
     if last_synced and not force_full_sync:
         if isinstance(last_synced, datetime):
@@ -470,7 +488,7 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
         body = {**filter_body, "page_size": 100}
         if cursor:
             body["start_cursor"] = cursor
-        data = _notion_post(f"databases/{db_id}/query", token, body)
+        data = _notion_post(f"data_sources/{data_source_id}/query", token, body)
         all_pages.extend(data.get("results", []))
         if not data.get("has_more"):
             break
@@ -486,7 +504,7 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
             body = {"page_size": 100}
             if cursor:
                 body["start_cursor"] = cursor
-            data = _notion_post(f"databases/{db_id}/query", token, body)
+            data = _notion_post(f"data_sources/{data_source_id}/query", token, body)
             all_pages.extend(data.get("results", []))
             if not data.get("has_more"):
                 break
@@ -562,6 +580,7 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
             material_id, is_new = _upsert_material(
                 user_id,
                 course_id,
+                source_point["id"],
                 page_id,
                 title,
                 last_edited_time,

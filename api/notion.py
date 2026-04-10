@@ -71,7 +71,10 @@ _REDIRECT_URI = os.environ.get("NOTION_REDIRECT_URI", "")
 
 _IS_HTTPS = os.environ.get("VERCEL_ENV") in ("production", "preview")
 _AWS_REGION = (
-    os.environ.get("COURSEMATE_AWS_REGION") or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+    os.environ.get("COURSEMATE_AWS_REGION")
+    or os.environ.get("AWS_REGION")
+    or os.environ.get("AWS_DEFAULT_REGION")
+    or "us-east-1"
 )
 _INTEGRATION_POLLER_ARN = os.environ.get("INTEGRATION_POLLER_LAMBDA_ARN", "")
 
@@ -98,6 +101,18 @@ def _parse_qs_from_path(handler_self) -> dict:
 def _qs_get(qs: dict, key: str) -> str | None:
     vals = qs.get(key, [])
     return vals[0] if vals else None
+
+
+def _source_point_id_from_qs_or_body(qs: dict, body: dict | None = None) -> str | None:
+    """Resolve source point id from query string, with legacy body fallback."""
+    sp_id = _qs_get(qs, "id")
+    if sp_id:
+        return sp_id
+    if body and isinstance(body, dict):
+        legacy_id = body.get("source_point_id")
+        if legacy_id is not None:
+            return str(legacy_id)
+    return None
 
 
 def _get_notion_token(user_id: int) -> str | None:
@@ -365,12 +380,16 @@ def _handle_finalize_connection(handler_self, user_id: int):
     handler_self.send_header("Content-Type", "application/json")
     handler_self.send_header("Set-Cookie", clear_pending)
     handler_self.end_headers()
-    handler_self.wfile.write(json.dumps({
-        "connected": True,
-        "workspace_name": metadata.get("workspace_name"),
-        "workspace_icon": metadata.get("workspace_icon"),
-        "workspace_id": metadata.get("workspace_id"),
-    }).encode())
+    handler_self.wfile.write(
+        json.dumps(
+            {
+                "connected": True,
+                "workspace_name": metadata.get("workspace_name"),
+                "workspace_icon": metadata.get("workspace_icon"),
+                "workspace_id": metadata.get("workspace_id"),
+            }
+        ).encode()
+    )
 
 
 def _redirect(handler_self, location: str):
@@ -443,12 +462,18 @@ def _handle_search(handler_self, user_id: int, qs: dict):
         api_filter_value = "data_source" if filter_type == "database" else filter_type
         body["filter"] = {"value": api_filter_value, "property": "object"}
 
-    data, err, err_detail = _notion_api("POST", "/search", token, body=body, user_id=user_id)
+    data, err, err_detail = _notion_api(
+        "POST", "/search", token, body=body, user_id=user_id
+    )
     if err == "notion_token_revoked":
         send_json(handler_self, 401, {"error": "notion_token_revoked"})
         return
     if err:
-        send_json(handler_self, 502, {"error": "Notion search failed", "code": err, "detail": err_detail})
+        send_json(
+            handler_self,
+            502,
+            {"error": "Notion search failed", "code": err, "detail": err_detail},
+        )
         return
 
     results = []
@@ -475,7 +500,9 @@ def _extract_title(item: dict) -> str:
     # Try top-level title array (standard for databases; also present on some pages)
     title_arr = item.get("title")
     if isinstance(title_arr, list) and title_arr:
-        result = "".join(t.get("plain_text", "") for t in title_arr if isinstance(t, dict))
+        result = "".join(
+            t.get("plain_text", "") for t in title_arr if isinstance(t, dict)
+        )
         if result:
             return result
 
@@ -488,7 +515,9 @@ def _extract_title(item: dict) -> str:
         if prop.get("type") == "title":
             texts = prop.get("title", [])
             if isinstance(texts, list) and texts:
-                result = "".join(t.get("plain_text", "") for t in texts if isinstance(t, dict))
+                result = "".join(
+                    t.get("plain_text", "") for t in texts if isinstance(t, dict)
+                )
                 if result:
                     return result
 
@@ -645,7 +674,12 @@ def _handle_export(handler_self, user_id: int, body: dict):
 
 
 def _dispatch_export(
-    user_id: int, generation_id, generation_type: str, target_id: str, token: str, name: str = ""
+    user_id: int,
+    generation_id,
+    generation_type: str,
+    target_id: str,
+    token: str,
+    name: str = "",
 ) -> dict:
     """Route to the appropriate export handler. Returns a result entry dict."""
     if generation_type == "flashcards":
@@ -663,7 +697,9 @@ def _dispatch_export(
 
 def _create_page_in_database(database_id: str, name: str, token: str, user_id: int):
     """Create a new page in a Notion database. Returns (page_id, page_url, error)."""
-    db_data, db_err, _ = _notion_api("GET", f"/databases/{database_id}", token, user_id=user_id)
+    db_data, db_err, _ = _notion_api(
+        "GET", f"/databases/{database_id}", token, user_id=user_id
+    )
     if db_err == "notion_token_revoked":
         return None, None, "notion_token_revoked"
     if db_err or not db_data:
@@ -676,19 +712,29 @@ def _create_page_in_database(database_id: str, name: str, token: str, user_id: i
 
     title_prop = None
     if ds_id:
-        ds_data, ds_err, _ = _notion_api("GET", f"/data_sources/{ds_id}", token, user_id=user_id)
+        ds_data, ds_err, _ = _notion_api(
+            "GET", f"/data_sources/{ds_id}", token, user_id=user_id
+        )
         if ds_err == "notion_token_revoked":
             return None, None, "notion_token_revoked"
         if not ds_err and ds_data:
             title_prop = next(
-                (k for k, v in (ds_data.get("properties") or {}).items() if v.get("type") == "title"),
+                (
+                    k
+                    for k, v in (ds_data.get("properties") or {}).items()
+                    if v.get("type") == "title"
+                ),
                 None,
             )
 
     # Legacy fallback for workspaces/databases without data_sources
     if not title_prop:
         title_prop = next(
-            (k for k, v in (db_data.get("properties") or {}).items() if v.get("type") == "title"),
+            (
+                k
+                for k, v in (db_data.get("properties") or {}).items()
+                if v.get("type") == "title"
+            ),
             None,
         )
 
@@ -704,21 +750,29 @@ def _create_page_in_database(database_id: str, name: str, token: str, user_id: i
     payload = {
         "parent": parent,
         "properties": {
-            title_prop: {"title": [{"type": "text", "text": {"content": name or "Untitled"}}]}
+            title_prop: {
+                "title": [{"type": "text", "text": {"content": name or "Untitled"}}]
+            }
         },
     }
-    page_data, page_err, _ = _notion_api("POST", "/pages", token, body=payload, user_id=user_id)
+    page_data, page_err, _ = _notion_api(
+        "POST", "/pages", token, body=payload, user_id=user_id
+    )
     if page_err == "notion_token_revoked":
         return None, None, "notion_token_revoked"
     if page_err:
         return None, None, page_err
 
     page_id = page_data.get("id", "")
-    page_url = page_data.get("url") or f"https://www.notion.so/{page_id.replace('-', '')}"
+    page_url = (
+        page_data.get("url") or f"https://www.notion.so/{page_id.replace('-', '')}"
+    )
     return page_id, page_url, None
 
 
-def _export_flashcards(user_id: int, generation_id, target_id: str, token: str, name: str = "") -> dict:
+def _export_flashcards(
+    user_id: int, generation_id, target_id: str, token: str, name: str = ""
+) -> dict:
     """Export flashcards as toggle blocks appended to a Notion page."""
     with get_db() as conn:
         cur = conn.cursor()
@@ -753,7 +807,9 @@ def _export_flashcards(user_id: int, generation_id, target_id: str, token: str, 
         }
 
     # Create a new page in the database
-    page_id, page_url, create_err = _create_page_in_database(target_id, name, token, user_id)
+    page_id, page_url, create_err = _create_page_in_database(
+        target_id, name, token, user_id
+    )
     if create_err == "notion_token_revoked":
         return {"status": "error", "error": "notion_token_revoked"}
     if create_err:
@@ -778,12 +834,18 @@ def _export_flashcards(user_id: int, generation_id, target_id: str, token: str, 
         if err == "notion_token_revoked":
             return {"status": "error", "error": "notion_token_revoked"}
         if err:
-            return {"status": "error", "error": f"Notion API error: {err}", "detail": err_detail}
+            return {
+                "status": "error",
+                "error": f"Notion API error: {err}",
+                "detail": err_detail,
+            }
 
     return {"status": "success", "exported_count": len(cards), "url": page_url}
 
 
-def _export_quiz(user_id: int, generation_id, target_id: str, token: str, name: str = "") -> dict:
+def _export_quiz(
+    user_id: int, generation_id, target_id: str, token: str, name: str = ""
+) -> dict:
     """Export quiz as heading/toggle blocks on a Notion page."""
     with get_db() as conn:
         cur = conn.cursor()
@@ -824,7 +886,9 @@ def _export_quiz(user_id: int, generation_id, target_id: str, token: str, name: 
         }
 
     # Create a new page in the database
-    page_id, page_url, create_err = _create_page_in_database(target_id, name, token, user_id)
+    page_id, page_url, create_err = _create_page_in_database(
+        target_id, name, token, user_id
+    )
     if create_err == "notion_token_revoked":
         return {"status": "error", "error": "notion_token_revoked"}
     if create_err:
@@ -848,12 +912,18 @@ def _export_quiz(user_id: int, generation_id, target_id: str, token: str, name: 
         if err == "notion_token_revoked":
             return {"status": "error", "error": "notion_token_revoked"}
         if err:
-            return {"status": "error", "error": f"Notion API error: {err}", "detail": err_detail}
+            return {
+                "status": "error",
+                "error": f"Notion API error: {err}",
+                "detail": err_detail,
+            }
 
     return {"status": "success", "exported_count": len(questions), "url": page_url}
 
 
-def _export_report(user_id: int, generation_id, target_id: str, token: str, name: str = "") -> dict:
+def _export_report(
+    user_id: int, generation_id, target_id: str, token: str, name: str = ""
+) -> dict:
     """Export report sections as Notion blocks on a page."""
     with get_db() as conn:
         cur = conn.cursor()
@@ -884,7 +954,9 @@ def _export_report(user_id: int, generation_id, target_id: str, token: str, name
 
     # Use the report's generated title as the page name if the caller didn't supply one.
     page_name = name or str(row.get("title") or "").strip() or "Report"
-    page_id, page_url, create_err = _create_page_in_database(target_id, page_name, token, user_id)
+    page_id, page_url, create_err = _create_page_in_database(
+        target_id, page_name, token, user_id
+    )
     if create_err == "notion_token_revoked":
         return {"status": "error", "error": "notion_token_revoked"}
     if create_err:
@@ -914,7 +986,11 @@ def _export_report(user_id: int, generation_id, target_id: str, token: str, name
         if err == "notion_token_revoked":
             return {"status": "error", "error": "notion_token_revoked"}
         if err:
-            return {"status": "error", "error": f"Notion API error: {err}", "detail": err_detail}
+            return {
+                "status": "error",
+                "error": f"Notion API error: {err}",
+                "detail": err_detail,
+            }
 
     return {"status": "success", "exported_count": len(sections), "url": page_url}
 
@@ -952,7 +1028,9 @@ def _handle_create_target(handler_self, user_id: int, body: dict):
                 "title": {"title": [{"type": "text", "text": {"content": title}}]}
             },
         }
-        data, err, err_detail = _notion_api("POST", "/pages", token, body=payload, user_id=user_id)
+        data, err, err_detail = _notion_api(
+            "POST", "/pages", token, body=payload, user_id=user_id
+        )
     else:
         # Database — hardcoded flashcard schema
         payload = {
@@ -973,7 +1051,9 @@ def _handle_create_target(handler_self, user_id: int, body: dict):
         return
     if err:
         send_json(
-            handler_self, 502, {"error": f"Failed to create Notion {target_type}", "detail": err_detail}
+            handler_self,
+            502,
+            {"error": f"Failed to create Notion {target_type}", "detail": err_detail},
         )
         return
 
@@ -1043,13 +1123,19 @@ def _handle_revoke(handler_self, user_id: int):
 
 
 def _resolve_notion_database_id(raw_id: str, token: str) -> str | None:
-    data, err, err_detail = _notion_api("GET", f"/databases/{raw_id}", token, user_id=None)
+    data, err, err_detail = _notion_api(
+        "GET", f"/databases/{raw_id}", token, user_id=None
+    )
     if not err:
         return data.get("id", raw_id)
 
-    print(f"[notion] resolve({raw_id}): /databases/ failed ({err}: {err_detail}), trying /blocks/")
+    print(
+        f"[notion] resolve({raw_id}): /databases/ failed ({err}: {err_detail}), trying /blocks/"
+    )
 
-    block, block_err, block_err_detail = _notion_api("GET", f"/blocks/{raw_id}", token, user_id=None)
+    block, block_err, block_err_detail = _notion_api(
+        "GET", f"/blocks/{raw_id}", token, user_id=None
+    )
     if block_err:
         print(
             f"[notion] resolve({raw_id}): /blocks/ also failed ({block_err}: {block_err_detail}) — "
@@ -1067,7 +1153,7 @@ def _resolve_notion_database_id(raw_id: str, token: str) -> str | None:
         or (block.get("child_page") or {}).get("title")
         or ""
     )
-    title_str = f' title={title_hint!r}' if title_hint else ""
+    title_str = f" title={title_hint!r}" if title_hint else ""
 
     if block_type == "child_database":
         print(
@@ -1084,6 +1170,41 @@ def _resolve_notion_database_id(raw_id: str, token: str) -> str | None:
     )
     return None
 
+
+def _resolve_notion_data_source_id(raw_id: str, token: str) -> str | None:
+    """Resolve input ID to a queryable Notion data_source ID."""
+    data_source, ds_err, _ = _notion_api(
+        "GET", f"/data_sources/{raw_id}", token, user_id=None
+    )
+    if not ds_err and data_source:
+        return data_source.get("id", raw_id)
+
+    database_id = _resolve_notion_database_id(raw_id, token)
+    if not database_id:
+        return None
+
+    db_data, db_err, db_err_detail = _notion_api(
+        "GET", f"/databases/{database_id}", token, user_id=None
+    )
+    if db_err or not db_data:
+        print(
+            f"[notion] resolve data source({raw_id}): /databases/{database_id} failed ({db_err}: {db_err_detail})"
+        )
+        return None
+
+    ds_items = db_data.get("data_sources") or []
+    if not ds_items:
+        print(
+            f"[notion] resolve data source({raw_id}): database {database_id} has no data_sources"
+        )
+        return None
+    ds_id = (ds_items[0] or {}).get("id")
+    if not ds_id:
+        print(
+            f"[notion] resolve data source({raw_id}): first data_source missing id for database {database_id}"
+        )
+        return None
+    return ds_id
 
 
 def _handle_add_source_point(handler_self, user_id: int, body: dict):
@@ -1102,9 +1223,15 @@ def _handle_add_source_point(handler_self, user_id: int, body: dict):
         send_json(handler_self, 400, {"error": "course_id and external_id required"})
         return
 
-    resolved_id = _resolve_notion_database_id(external_id, token)
+    resolved_id = _resolve_notion_data_source_id(external_id, token)
     if not resolved_id:
-        send_json(handler_self, 400, {"error": "Could not resolve a queryable Notion database from the provided ID. Make sure you are selecting a database (not a linked view or page)."})
+        send_json(
+            handler_self,
+            400,
+            {
+                "error": "Could not resolve a queryable Notion data source from the provided ID. Make sure you are selecting a database or data source shared with this integration."
+            },
+        )
         return
     external_id = resolved_id
 
@@ -1211,7 +1338,9 @@ def _handle_resolve_database_target(handler_self, user_id: int, body: dict):
         return
 
     # Optional title backfill from resolved database
-    db_data, db_err, _ = _notion_api("GET", f"/databases/{resolved_id}", token, user_id=user_id)
+    db_data, db_err, _ = _notion_api(
+        "GET", f"/databases/{resolved_id}", token, user_id=user_id
+    )
     resolved_title = external_title or _extract_title(db_data or {}) or "Untitled"
     if db_err:
         resolved_title = external_title or "Untitled"
@@ -1257,7 +1386,7 @@ _SOURCE_POINT_FILES_PAGE_SIZE = 20
 
 
 def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
-    """List pages in a Notion database source point, cross-referenced with materials sync state.
+    """List pages in a Notion data source source point, cross-referenced with materials sync state.
     Paginated at 20 files per page (?page=1 by default)."""
     token = _get_notion_token(user_id)
     if not token:
@@ -1286,7 +1415,7 @@ def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
         send_json(handler_self, 404, {"error": "Source point not found"})
         return
 
-    database_id = sp["external_id"]
+    data_source_id = sp["external_id"]
     course_id = sp["course_id"]
     page_size = _SOURCE_POINT_FILES_PAGE_SIZE
     target_count = page * page_size
@@ -1298,7 +1427,9 @@ def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
         body = {"page_size": min(100, target_count - len(all_pages))}
         if cursor:
             body["start_cursor"] = cursor
-        data, err, _ = _notion_api("POST", f"/databases/{database_id}/query", token, body=body, user_id=user_id)
+        data, err, _ = _notion_api(
+            "POST", f"/data_sources/{data_source_id}/query", token, body=body, user_id=user_id
+        )
         if err:
             send_json(handler_self, 502, {"error": "Notion API error", "code": err})
             return
@@ -1309,7 +1440,7 @@ def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
             break
 
     has_more = has_more_notion if len(all_pages) >= target_count else False
-    page_items = all_pages[(page - 1) * page_size: page * page_size]
+    page_items = all_pages[(page - 1) * page_size : page * page_size]
 
     if not page_items:
         send_json(handler_self, 200, {"files": [], "page": page, "has_more": False})
@@ -1345,12 +1476,16 @@ def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
         for p in page_items
     ]
 
-    send_json(handler_self, 200, {"files": files_out, "page": page, "has_more": has_more})
+    send_json(
+        handler_self, 200, {"files": files_out, "page": page, "has_more": has_more}
+    )
 
 
-def _handle_toggle_source_point(handler_self, user_id: int, qs: dict):
+def _handle_toggle_source_point(
+    handler_self, user_id: int, qs: dict, body: dict | None = None
+):
     """Flip is_active for a source point owned by the user."""
-    sp_id = _qs_get(qs, "id")
+    sp_id = _source_point_id_from_qs_or_body(qs, body)
     if not sp_id:
         send_json(handler_self, 400, {"error": "id required"})
         return
@@ -1376,9 +1511,11 @@ def _handle_toggle_source_point(handler_self, user_id: int, qs: dict):
     send_json(handler_self, 200, {"source_point": dict(row)})
 
 
-def _handle_remove_source_point(handler_self, user_id: int, qs: dict):
+def _handle_remove_source_point(
+    handler_self, user_id: int, qs: dict, body: dict | None = None
+):
     """Permanently delete a source point owned by the user."""
-    sp_id = _qs_get(qs, "id")
+    sp_id = _source_point_id_from_qs_or_body(qs, body)
     if not sp_id:
         send_json(handler_self, 400, {"error": "id required"})
         return
@@ -1434,7 +1571,10 @@ def _handle_sync(handler_self, user_id: int, body: dict):
         )
     except Exception as e:
         import traceback
-        print(f"[notion sync] Lambda invoke failed: {e}\n{traceback.format_exc()}")  # visible in Vercel logs
+
+        print(
+            f"[notion sync] Lambda invoke failed: {e}\n{traceback.format_exc()}"
+        )  # visible in Vercel logs
 
     send_json(handler_self, 202, {"message": "Sync triggered"})
 
@@ -1521,7 +1661,7 @@ class handler(BaseHTTPRequestHandler):
         if action == "revoke":
             _handle_revoke(self, user_id)
         elif action == "remove_source_point":
-            _handle_remove_source_point(self, user_id, qs)
+            _handle_remove_source_point(self, user_id, qs, body)
         else:
             send_json(self, 400, {"error": f"Unknown DELETE action: {action}"})
 
@@ -1538,7 +1678,7 @@ class handler(BaseHTTPRequestHandler):
             return
 
         if action == "toggle_source_point":
-            _handle_toggle_source_point(self, user_id, qs)
+            _handle_toggle_source_point(self, user_id, qs, body)
         else:
             send_json(self, 400, {"error": f"Unknown PATCH action: {action}"})
 

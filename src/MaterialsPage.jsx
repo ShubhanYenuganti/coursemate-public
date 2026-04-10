@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { formatDateTime } from './utils/dateUtils';
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -715,6 +716,11 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
   const [syncHasMore, setSyncHasMore] = useState(false);
   const [syncToggles, setSyncToggles] = useState({});
   const [pendingSyncRows, setPendingSyncRows] = useState([]);
+  const [sourceSearch, setSourceSearch] = useState('');
+  const [sourceSearchResults, setSourceSearchResults] = useState([]);
+  const [sourceSearching, setSourceSearching] = useState(false);
+  const [confirmRemoveId, setConfirmRemoveId] = useState(null);
+  const [addError, setAddError] = useState('');
 
   const selectedSourcePoint = useMemo(() => (
     sourcePoints[syncProvider]?.find((sp) => String(sp.id) === String(selectedSourcePointId)) || null
@@ -855,6 +861,25 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
   useEffect(() => () => {
     if (syncPollingTimeoutRef.current) clearTimeout(syncPollingTimeoutRef.current);
   }, []);
+
+  // ── search for source points to add ──────────────────────────────────────
+  useEffect(() => {
+    const q = sourceSearch.trim();
+    if (!q) { setSourceSearchResults([]); return; }
+    const timer = setTimeout(async () => {
+      setSourceSearching(true);
+      try {
+        const url = syncProvider === 'notion'
+          ? `/api/notion?action=search&q=${encodeURIComponent(q)}&filter_type=database`
+          : `/api/gdrive?action=search&q=${encodeURIComponent(q)}`;
+        const res = await fetch(url, { credentials: 'include' });
+        const data = await res.json();
+        setSourceSearchResults(Array.isArray(data.results) ? data.results : []);
+      } catch { setSourceSearchResults([]); }
+      finally { setSourceSearching(false); }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [sourceSearch, syncProvider]);
 
   // ── upload one file ──────────────────────────────────────────────────────
   const uploadOne = useCallback(async (item) => {
@@ -1021,14 +1046,6 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
     }
   }, []);
 
-  const openSyncModal = useCallback(async () => {
-    if (!selectedSourcePointId) return;
-    setSyncModalOpen(true);
-    setSyncModalMode('staging');
-    setPendingSyncRows([]);
-    await fetchSyncRowsPage(1);
-  }, [selectedSourcePointId, fetchSyncRowsPage]);
-
   const handleSyncToggle = useCallback((externalId, next) => {
     setSyncToggles((prev) => ({ ...prev, [externalId]: next }));
   }, []);
@@ -1055,8 +1072,33 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
           files: filesPayload,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || 'Failed to sync file selections');
+      let data = {};
+      let rawText = '';
+      try {
+        rawText = await res.text();
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        data = {};
+      }
+      if (!res.ok) {
+        const detail = data?.detail
+          || data?.error
+          || (rawText ? rawText.slice(0, 2000) : '');
+        const msg = `Failed to sync file selections (HTTP ${res.status}${detail ? `): ${detail}` : ')'}`;
+        console.error('[materials] bulk_upsert_sync failed', {
+          status: res.status,
+          payload: {
+            action: 'bulk_upsert_sync',
+            course_id: courseId,
+            source_point_id: Number(selectedSourcePointId),
+            source_type: syncProvider,
+            files_count: filesPayload.length,
+          },
+          response_json: data,
+          response_text: rawText,
+        });
+        throw new Error(msg);
+      }
 
       setSyncModalMode('progress');
       setPendingSyncRows(filesPayload
@@ -1082,6 +1124,111 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
     syncRows,
     syncToggles,
   ]);
+
+  const handleAddSourcePoint = useCallback(async (result) => {
+    const alreadyExists = (sourcePoints[syncProvider] || []).find(
+      (sp) => String(sp.external_id) === String(result.id)
+    );
+    if (alreadyExists) {
+      setSelectedSourcePointId(String(alreadyExists.id));
+      setSourceSearch('');
+      setSourceSearchResults([]);
+      return;
+    }
+    const endpoint = syncProvider === 'notion' ? '/api/notion' : '/api/gdrive';
+    const externalTitle = syncProvider === 'notion'
+      ? (result.title || result.name || '')
+      : (result.name || '');
+    try {
+      const res = await fetch(`${endpoint}?action=add_source_point`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ course_id: courseId, provider: syncProvider, external_id: result.id, external_title: externalTitle }),
+      });
+      const data = await res.json();
+      if (res.status === 409) { setAddError(data?.error || 'Already added'); return; }
+      if (!res.ok) return;
+      setSourceSearch('');
+      setSourceSearchResults([]);
+      setAddError('');
+      await fetchSourcePoints();
+      const newId = data?.source_point?.id;
+      if (newId) setSelectedSourcePointId(String(newId));
+    } catch { /* ignore */ }
+  }, [courseId, syncProvider, sourcePoints, fetchSourcePoints]);
+
+  const handleRemoveSourcePoint = useCallback(async (id) => {
+    const endpoint = syncProvider === 'notion' ? '/api/notion' : '/api/gdrive';
+    try {
+      await fetch(`${endpoint}?action=remove_source_point&id=${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ source_point_id: id }),
+      });
+      setSourcePoints((prev) => ({
+        ...prev,
+        [syncProvider]: prev[syncProvider].filter((sp) => sp.id !== id),
+      }));
+      if (String(selectedSourcePointId) === String(id)) {
+        const remaining = (sourcePoints[syncProvider] || []).filter((sp) => sp.id !== id);
+        setSelectedSourcePointId(remaining[0]?.id ? String(remaining[0].id) : '');
+      }
+      setConfirmRemoveId(null);
+    } catch { /* ignore */ }
+  }, [syncProvider, selectedSourcePointId, sourcePoints]);
+
+  const handleToggleSourcePoint = useCallback(async (id, currentActive) => {
+    const endpoint = syncProvider === 'notion' ? '/api/notion' : '/api/gdrive';
+    try {
+      const res = await fetch(`${endpoint}?action=toggle_source_point&id=${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ source_point_id: id }),
+      });
+      const data = await res.json();
+      if (!res.ok) return;
+      setSourcePoints((prev) => ({
+        ...prev,
+        [syncProvider]: prev[syncProvider].map((sp) =>
+          sp.id === id ? { ...sp, is_active: data?.source_point?.is_active ?? !currentActive } : sp
+        ),
+      }));
+    } catch { /* ignore */ }
+  }, [syncProvider]);
+
+  const openSyncModalForId = useCallback(async (id) => {
+    const endpoint = syncProvider === 'notion' ? '/api/notion' : '/api/gdrive';
+    setSelectedSourcePointId(String(id));
+    setSyncModalOpen(true);
+    setSyncModalMode('staging');
+    setPendingSyncRows([]);
+    setSyncRowsLoading(true);
+    setSyncRowsError('');
+    try {
+      const res = await fetch(
+        `${endpoint}?action=list_source_point_files&id=${id}&page=1`,
+        { credentials: 'include' }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Failed to load source point files');
+      const rows = normalizeSyncRows(syncProvider, data.files);
+      const nextToggles = {};
+      rows.forEach((row) => { nextToggles[row.external_id] = row.sync !== false; });
+      setSyncRows(rows);
+      setSyncToggles(nextToggles);
+      setSyncPage(1);
+      setSyncHasMore(Boolean(data.has_more));
+    } catch (err) {
+      setSyncRows([]);
+      setSyncHasMore(false);
+      setSyncRowsError(err?.message || 'Failed to load source point files');
+    } finally {
+      setSyncRowsLoading(false);
+    }
+  }, [syncProvider]);
 
   const closeSyncModal = useCallback(() => {
     setSyncModalOpen(false);
@@ -1116,7 +1263,6 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
   const activeUploads    = uploadItems.filter(i => i.status === 'uploading');
   const completedUploads = uploadItems.filter(i => i.status === 'done' || i.status === 'error');
   const providerSourcePoints = sourcePoints[syncProvider] || [];
-  const syncActionDisabled = !selectedSourcePointId || sourcePointsLoading;
 
   const visibleMaterials = materials.filter(m => {
     if (ownerFilter === 'mine' && m.uploaded_by !== userId) return false;
@@ -1127,44 +1273,133 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
 
   return (
     <div className="space-y-8 pb-4">
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-        <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-800">Integration Sync</h3>
-            <p className="text-xs text-gray-500 mt-0.5">Open Sync Modal for Notion or Google Drive source points.</p>
-          </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <select
-              value={syncProvider}
-              onChange={(e) => setSyncProvider(e.target.value)}
-              className="text-xs rounded border border-gray-200 bg-white px-2 py-1.5 text-gray-700"
-            >
-              <option value="gdrive">Google Drive</option>
-              <option value="notion">Notion</option>
-            </select>
-            <select
-              value={selectedSourcePointId}
-              onChange={(e) => setSelectedSourcePointId(e.target.value)}
-              className="text-xs rounded border border-gray-200 bg-white px-2 py-1.5 text-gray-700 min-w-56"
-            >
-              {providerSourcePoints.length === 0 ? (
-                <option value="">{sourcePointsLoading ? 'Loading…' : 'No source points'}</option>
-              ) : (
-                providerSourcePoints.map((sp) => (
-                  <option key={sp.id} value={sp.id}>
-                    {sp.external_title || sp.external_id}
-                  </option>
-                ))
-              )}
-            </select>
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="flex border-b border-gray-100">
+          {['gdrive', 'notion'].map((p) => (
             <button
+              key={p}
               type="button"
-              onClick={openSyncModal}
-              disabled={syncActionDisabled}
-              className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              onClick={() => { setSyncProvider(p); setSourceSearch(''); setSourceSearchResults([]); setConfirmRemoveId(null); setAddError(''); }}
+              className={`flex-1 py-2.5 text-xs font-medium transition-colors ${
+                syncProvider === p
+                  ? 'bg-indigo-50 text-indigo-700 border-b-2 border-indigo-500'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+              }`}
             >
-              Sync Now
+              {p === 'gdrive' ? 'Google Drive' : 'Notion'}
             </button>
+          ))}
+        </div>
+        <div className="p-4 space-y-3">
+
+        {/* Search to add a new source point */}
+          <div className="relative">
+            <input
+              type="text"
+              value={sourceSearch}
+              onChange={(e) => { setSourceSearch(e.target.value); setAddError(''); }}
+              placeholder={syncProvider === 'notion' ? 'Search Notion databases to add…' : 'Search Drive folders to add…'}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+            />
+            {sourceSearching && (
+              <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
+                <Spinner size={14} />
+              </div>
+            )}
+          </div>
+          {sourceSearch.trim() !== '' && sourceSearchResults.length > 0 && (
+            <div className="border border-gray-100 rounded-lg overflow-hidden max-h-44 overflow-y-auto">
+              {sourceSearchResults.map((r) => {
+                const isDuplicate = providerSourcePoints.some((sp) => String(sp.external_id) === String(r.id));
+                return (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onClick={() => { if (!isDuplicate) handleAddSourcePoint(r); }}
+                    disabled={isDuplicate}
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm border-b border-gray-50 last:border-0 transition-colors ${
+                      isDuplicate
+                        ? 'text-gray-400 bg-gray-50 cursor-default'
+                        : 'text-gray-800 hover:bg-indigo-50 hover:text-indigo-700'
+                    }`}
+                  >
+                    <span className="flex-1 truncate">{syncProvider === 'notion' ? (r.title || 'Untitled') : (r.name || 'Untitled')}</span>
+                    {isDuplicate ? (
+                      <span className="ml-2 text-xs text-gray-400 shrink-0">Already added</span>
+                    ) : (
+                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${syncProvider === 'notion' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                        {syncProvider === 'notion' ? 'DB' : 'Folder'}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {addError && <p className="text-xs text-red-500">{addError}</p>}
+          <div className="space-y-2">
+            {sourcePointsLoading ? (
+              <div className="flex justify-center py-4"><Spinner size={20} /></div>
+            ) : providerSourcePoints.length === 0 ? (
+              <p className="text-xs text-gray-400 text-center py-4">No source points added yet.</p>
+            ) : (
+              providerSourcePoints.map((sp) => (
+                <div key={sp.id} className="flex items-center gap-2 p-2.5 rounded-lg border border-gray-100 bg-gray-50 group">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800 truncate">{sp.external_title || sp.external_id}</p>
+                    {sp.last_synced_at && (
+                      <p className="text-xs text-gray-400 mt-0.5">Last synced {formatDateTime(sp.last_synced_at)}</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleSourcePoint(sp.id, sp.is_active !== false)}
+                    title={sp.is_active !== false ? 'Pause ingestion' : 'Resume ingestion'}
+                    className={`px-2 py-1 text-xs rounded border transition-colors shrink-0 ${
+                      sp.is_active !== false
+                        ? 'border-green-200 bg-green-50 text-green-700 hover:bg-red-50 hover:text-red-600 hover:border-red-200'
+                        : 'border-gray-200 bg-gray-100 text-gray-500 hover:bg-green-50 hover:text-green-600 hover:border-green-200'
+                    }`}
+                  >
+                    {sp.is_active !== false ? 'Active' : 'Paused'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openSyncModalForId(sp.id)}
+                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-600 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 transition-colors shrink-0"
+                  >
+                    Sync
+                  </button>
+                  {confirmRemoveId === sp.id ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveSourcePoint(sp.id)}
+                        className="px-2 py-1 text-xs rounded bg-red-600 text-white hover:bg-red-700"
+                      >
+                        Remove
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmRemoveId(null)}
+                        className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-gray-100"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmRemoveId(sp.id)}
+                      className="p-1.5 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                      title="Remove source point"
+                    >
+                      <TrashIcon size={14} />
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>
