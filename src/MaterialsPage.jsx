@@ -316,6 +316,7 @@ function normalizeSyncRows(provider, rawFiles) {
       name: row.name || row.external_id,
       mime_type: row.mime_type || 'application/pdf',
       sync: row.sync ?? null,
+      doc_type: row.doc_type ?? null,
       source_type: sourceType,
     }));
 }
@@ -329,9 +330,11 @@ function SyncModal({
   loading,
   mode,
   toggles,
+  docTypes = {},
   pendingRows,
   error,
   onToggle,
+  onDocTypeChange,
   onPrevPage,
   onNextPage,
   onSync,
@@ -378,6 +381,15 @@ function SyncModal({
                       <p className="text-sm font-medium text-gray-800 truncate">{row.name}</p>
                       <p className="text-xs text-gray-400 truncate">{row.external_id}</p>
                     </div>
+                    <select
+                      value={docTypes[row.external_id] ?? row.doc_type ?? 'general'}
+                      onChange={e => onDocTypeChange(row.external_id, e.target.value)}
+                      className="text-xs rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400 shrink-0"
+                    >
+                      {DOCUMENT_TYPES.map(dt => (
+                        <option key={dt.value} value={dt.value}>{dt.label}</option>
+                      ))}
+                    </select>
                     <div className="flex items-center gap-2">
                       <span className={`text-xs font-medium ${enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
                         {enabled ? 'Sync ON' : 'Sync OFF'}
@@ -715,6 +727,7 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
   const [syncPage, setSyncPage] = useState(1);
   const [syncHasMore, setSyncHasMore] = useState(false);
   const [syncToggles, setSyncToggles] = useState({});
+  const [syncDocTypes, setSyncDocTypes] = useState({});
   const [pendingSyncRows, setPendingSyncRows] = useState([]);
   const [sourceSearch, setSourceSearch] = useState('');
   const [sourceSearchResults, setSourceSearchResults] = useState([]);
@@ -775,11 +788,14 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
       if (!res.ok) throw new Error(data?.error || 'Failed to load source point files');
       const rows = normalizeSyncRows(syncProvider, data.files);
       const nextToggles = {};
+      const nextDocTypes = {};
       rows.forEach((row) => {
         nextToggles[row.external_id] = row.sync !== false;
+        if (row.doc_type != null) nextDocTypes[row.external_id] = row.doc_type;
       });
       setSyncRows(rows);
       setSyncToggles(nextToggles);
+      setSyncDocTypes(nextDocTypes);
       setSyncPage(page);
       setSyncHasMore(Boolean(data.has_more));
     } catch (err) {
@@ -854,6 +870,7 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
     setSyncModalMode('staging');
     setSyncRows([]);
     setSyncToggles({});
+    setSyncDocTypes({});
     setSyncRowsError('');
     setSyncPolling(false);
   }, [pendingSyncRows.length, syncModalMode]);
@@ -1050,6 +1067,10 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
     setSyncToggles((prev) => ({ ...prev, [externalId]: next }));
   }, []);
 
+  const handleSyncDocTypeChange = useCallback((externalId, docType) => {
+    setSyncDocTypes((prev) => ({ ...prev, [externalId]: docType }));
+  }, []);
+
   const handleSyncConfirm = useCallback(async () => {
     if (!selectedSourcePointId || syncRows.length === 0) return;
     setSyncRowsLoading(true);
@@ -1059,6 +1080,7 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
         external_id: row.external_id,
         name: row.name,
         sync: syncToggles[row.external_id] ?? (row.sync !== false),
+        doc_type: syncDocTypes[row.external_id] ?? row.doc_type ?? 'general',
       }));
       const res = await fetch('/api/material', {
         method: 'POST',
@@ -1120,6 +1142,7 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
     courseId,
     fetchMaterials,
     selectedSourcePointId,
+    syncDocTypes,
     syncProvider,
     syncRows,
     syncToggles,
@@ -1216,9 +1239,14 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
       if (!res.ok) throw new Error(data?.error || 'Failed to load source point files');
       const rows = normalizeSyncRows(syncProvider, data.files);
       const nextToggles = {};
-      rows.forEach((row) => { nextToggles[row.external_id] = row.sync !== false; });
+      const nextDocTypes = {};
+      rows.forEach((row) => {
+        nextToggles[row.external_id] = row.sync !== false;
+        if (row.doc_type != null) nextDocTypes[row.external_id] = row.doc_type;
+      });
       setSyncRows(rows);
       setSyncToggles(nextToggles);
+      setSyncDocTypes(nextDocTypes);
       setSyncPage(1);
       setSyncHasMore(Boolean(data.has_more));
     } catch (err) {
@@ -1236,6 +1264,7 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
     setSyncRows([]);
     setSyncRowsError('');
     setSyncToggles({});
+    setSyncDocTypes({});
     setPendingSyncRows([]);
   }, []);
 
@@ -1415,9 +1444,11 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
           loading={syncRowsLoading}
           mode={syncModalMode}
           toggles={syncToggles}
+          docTypes={syncDocTypes}
           pendingRows={pendingSyncRows}
           error={syncRowsError}
           onToggle={handleSyncToggle}
+          onDocTypeChange={handleSyncDocTypeChange}
           onPrevPage={() => fetchSyncRowsPage(Math.max(1, syncPage - 1))}
           onNextPage={() => fetchSyncRowsPage(syncPage + 1)}
           onSync={handleSyncConfirm}

@@ -1150,20 +1150,21 @@ def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT external_id, sync FROM materials WHERE external_id = ANY(%s) AND course_id = %s AND source_type = 'gdrive'",
+            "SELECT external_id, sync, doc_type FROM materials WHERE external_id = ANY(%s) AND course_id = %s AND source_type = 'gdrive'",
             (external_ids, course_id),
         )
-        sync_rows = {r["external_id"]: r["sync"] for r in cur.fetchall()}
+        sync_rows = {r["external_id"]: {"sync": r["sync"], "doc_type": r["doc_type"]} for r in cur.fetchall()}
         cur.close()
 
     files_out = []
     for f in page_files:
-        sync_val = sync_rows.get(f["id"])  # None if no row yet
+        row_meta = sync_rows.get(f["id"], {})
         files_out.append({
             "external_id": f["id"],
             "name": f["name"],
             "mime_type": f.get("mimeType"),
-            "sync": sync_val,
+            "sync": row_meta.get("sync"),
+            "doc_type": row_meta.get("doc_type"),
         })
 
     send_json(handler_self, 200, {"files": files_out, "page": page, "has_more": has_more})

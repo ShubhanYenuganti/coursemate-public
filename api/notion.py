@@ -1460,10 +1460,10 @@ def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT external_id, sync FROM materials WHERE external_id = ANY(%s) AND course_id = %s AND source_type = 'notion'",
+            "SELECT external_id, sync, doc_type FROM materials WHERE external_id = ANY(%s) AND course_id = %s AND source_type = 'notion'",
             (external_ids, course_id),
         )
-        sync_rows = {r["external_id"]: r["sync"] for r in cur.fetchall()}
+        sync_rows = {r["external_id"]: {"sync": r["sync"], "doc_type": r["doc_type"]} for r in cur.fetchall()}
         cur.close()
 
     files_out = [
@@ -1471,7 +1471,8 @@ def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
             "external_id": p["id"],
             "name": _page_title(p),
             "mime_type": "notion/page",
-            "sync": sync_rows.get(p["id"]),
+            "sync": sync_rows.get(p["id"], {}).get("sync"),
+            "doc_type": sync_rows.get(p["id"], {}).get("doc_type"),
         }
         for p in page_items
     ]

@@ -247,6 +247,8 @@ class handler(BaseHTTPRequestHandler):
                     external_id = f.get('external_id')
                     name = f.get('name') or ''
                     sync_val = bool(f.get('sync', True))
+                    raw_doc_type = f.get('doc_type', DEFAULT_DOC_TYPE)
+                    doc_type = raw_doc_type if raw_doc_type in VALID_DOC_TYPES else DEFAULT_DOC_TYPE
                     if not external_id:
                         continue
                     # Keep file_url non-null until poller ingests and replaces with final HTTPS URL.
@@ -254,13 +256,14 @@ class handler(BaseHTTPRequestHandler):
                     cursor.execute("""
                         INSERT INTO materials
                             (course_id, name, file_url, uploaded_by, file_type, source_type,
-                             external_id, integration_source_point_id, sync)
-                        VALUES (%s, %s, %s, %s, 'application/pdf', %s, %s, %s, %s)
+                             external_id, integration_source_point_id, sync, doc_type)
+                        VALUES (%s, %s, %s, %s, 'application/pdf', %s, %s, %s, %s, %s)
                         ON CONFLICT (external_id, course_id)
                         DO UPDATE SET file_type = 'application/pdf',
                                       sync = EXCLUDED.sync,
+                                      doc_type = EXCLUDED.doc_type,
                                       updated_at = CURRENT_TIMESTAMP
-                    """, (course_id, name, placeholder_file_url, user['id'], source_type, external_id, source_point_id, sync_val))
+                    """, (course_id, name, placeholder_file_url, user['id'], source_type, external_id, source_point_id, sync_val, doc_type))
                     upserted += 1
                 cursor.close()
         except Exception as exc:
