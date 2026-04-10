@@ -1122,6 +1122,14 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
         throw new Error(msg);
       }
 
+      const confirmedIds = new Set(
+        filesPayload.filter((row) => row.sync).map((row) => row.external_id)
+      );
+      setMaterials((prev) => prev.map((m) =>
+        confirmedIds.has(m.external_id) && m.source_type === syncProvider
+          ? { ...m, embed_status: 'syncing' }
+          : m
+      ));
       setSyncModalMode('progress');
       setPendingSyncRows(filesPayload
         .filter((row) => row.sync)

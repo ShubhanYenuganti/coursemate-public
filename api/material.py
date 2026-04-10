@@ -54,21 +54,24 @@ _AWS_REGION = (
 )
 
 
-def _trigger_poller(source_point_id, user_id, course_id):
+def _trigger_poller(source_point_id, user_id, course_id, external_ids: list | None = None):
     """Fire-and-forget Lambda invoke for the integration poller."""
     if not _INTEGRATION_POLLER_ARN:
         return
     try:
         import boto3
         lmbd = boto3.client("lambda", region_name=_AWS_REGION)
+        payload = {
+            "source_point_id": int(source_point_id),
+            "user_id": user_id,
+            "course_id": int(course_id),
+        }
+        if external_ids is not None:
+            payload["external_ids"] = external_ids
         lmbd.invoke(
             FunctionName=_INTEGRATION_POLLER_ARN,
             InvocationType="Event",
-            Payload=json.dumps({
-                "source_point_id": int(source_point_id),
-                "user_id": user_id,
-                "course_id": int(course_id),
-            }).encode(),
+            Payload=json.dumps(payload).encode(),
         )
     except Exception as exc:
         print(f"[material] poller invoke failed: {exc}")
@@ -271,7 +274,8 @@ class handler(BaseHTTPRequestHandler):
             return
 
         # Trigger the integration poller Lambda so sync=true files get ingested
-        _trigger_poller(source_point_id, user['id'], course_id)
+        external_ids = [f['external_id'] for f in files if f.get('sync') and f.get('external_id')]
+        _trigger_poller(source_point_id, user['id'], course_id, external_ids=external_ids)
 
         send_json(self, 200, {"upserted": upserted})
 

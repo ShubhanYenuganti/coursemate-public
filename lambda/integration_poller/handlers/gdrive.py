@@ -17,6 +17,7 @@ import boto3
 import requests
 
 from db import get_db
+from utils import _needs_ingest
 
 DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3'
 MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
@@ -47,25 +48,20 @@ def _drive_get(path, token, params=None, stream=False):
     return resp
 
 
-def _list_folder_files(folder_id, token):
-    """Return list of {id, name, mimeType, modifiedTime} for all non-trashed files in folder."""
-    files = []
-    page_token = None
-    while True:
-        params = {
-            'q': f"'{folder_id}' in parents and trashed=false",
-            'fields': 'nextPageToken,files(id,name,mimeType,modifiedTime)',
-            'pageSize': 100,
-        }
-        if page_token:
-            params['pageToken'] = page_token
-        resp = _drive_get('files', token, params=params)
-        data = resp.json()
-        files.extend(data.get('files', []))
-        page_token = data.get('nextPageToken')
-        if not page_token:
-            break
-    return files
+
+def _fetch_file_metadata(file_id: str, token: str) -> dict | None:
+    """Fetch metadata for a single Drive file. Returns None on error."""
+    try:
+        resp = _drive_get(
+            f'files/{file_id}',
+            token,
+            params={'fields': 'id,name,mimeType,modifiedTime'},
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as exc:
+        print(f'[gdrive_handler] Failed to fetch metadata for file_id={file_id}: {exc}')
+        return None
 
 
 def _get_drive_file_as_pdf(file_id, mime_type, token):
@@ -122,8 +118,7 @@ def _upsert_material(
                 "UPDATE materials SET integration_source_point_id = %s WHERE id = %s",
                 (source_point_id, existing['id'])
             )
-            existing_edited = str(existing.get('external_last_edited') or '')
-            if existing_edited == modified_time:
+            if not _needs_ingest(modified_time, existing.get('external_last_edited')):
                 return existing['id'], False
             return existing['id'], True
 
@@ -222,87 +217,75 @@ def _trigger_embed(s3_key):
 
 # ─── Main entry point ────────────────────────────────────────────────────────
 
-def sync_source_point(source_point: dict, token: str, force_full_sync: bool = False):
+def sync_source_point(source_point: dict, token: str, force_full_sync: bool = False, external_ids: list | None = None):
     """
-    Sync all files in the Drive folder described by source_point.
-    source_point['external_id'] is the Drive folder ID.
+    Sync Drive files described by source_point.
+
+    When external_ids is provided (Sync Now path), only those file IDs are processed.
+    When external_ids is None (background sweep), all sync=TRUE materials for this
+    source point are fetched from the DB and processed.
+
     token is a valid Google OAuth access token string.
     """
-    folder_id = source_point['external_id']
     user_id = source_point['user_id']
     course_id = source_point['course_id']
+    source_point_id = source_point['id']
     print(
-        f'[gdrive_handler] Starting sync source_point_id={source_point.get("id")} '
-        f'folder_id={folder_id} course_id={course_id} user_id={user_id} '
-        f'force_full_sync={force_full_sync} bucket={BUCKET!r} has_state_machine={bool(STATE_MACHINE_ARN)}'
+        f'[gdrive_handler] Starting sync source_point_id={source_point_id} '
+        f'course_id={course_id} user_id={user_id} '
+        f'force_full_sync={force_full_sync} external_ids={external_ids} '
+        f'bucket={BUCKET!r} has_state_machine={bool(STATE_MACHINE_ARN)}'
     )
 
-    # List all current files in the folder
-    try:
-        current_files = _list_folder_files(folder_id, token)
-    except Exception as exc:
-        print(f'[gdrive_handler] Failed to list folder {folder_id}: {exc}')
-        raise
+    # Determine which file IDs to process
+    if external_ids is not None:
+        # Sync Now path: caller already knows which files to process
+        work_ids = external_ids
+        print(f'[gdrive_handler] Sync Now path: processing {len(work_ids)} targeted file(s)')
+    else:
+        # Background sweep path: query DB for all sync=TRUE materials for this source point
+        with get_db() as db:
+            rows = db.execute(
+                """
+                SELECT external_id FROM materials
+                WHERE integration_source_point_id = %s
+                  AND sync = TRUE
+                """,
+                (source_point_id,)
+            ).fetchall()
+        work_ids = [r['external_id'] for r in rows]
+        print(f'[gdrive_handler] Background sweep path: processing {len(work_ids)} sync=TRUE file(s)')
 
-    current_file_ids = {f['id'] for f in current_files}
-    print(f'[gdrive_handler] Folder {folder_id} contains {len(current_files)} files')
-
-    # Log files that were previously ingested but are no longer in the folder.
-    # We intentionally do not mark them inactive; all synced files remain wanted by default.
-    with get_db() as db:
-        ingested_rows = db.execute(
-            """
-            SELECT external_id FROM materials
-            WHERE course_id = %s AND source_type = 'gdrive'
-              AND file_url LIKE 'https://%%'
-            """,
-            (course_id,)
-        ).fetchall()
-    ingested_ids = {r['external_id'] for r in ingested_rows}
-    removed_ids = ingested_ids - current_file_ids
-    if removed_ids:
-        print(f'[gdrive_handler] {len(removed_ids)} previously ingested file(s) no longer present in folder: {removed_ids}')
-
-    # Batch-query sync state for all current files before any conversion work.
-    # sync=False → file is explicitly excluded; skip without touching Drive API.
-    # Missing row → new file, treat as sync=True (proceed with ingestion).
-    current_file_id_list = [f['id'] for f in current_files]
-    with get_db() as db:
-        sync_rows = db.execute(
-            """
-            SELECT external_id, sync FROM materials
-            WHERE external_id = ANY(%s) AND course_id = %s AND source_type = 'gdrive'
-            """,
-            (current_file_id_list, course_id)
-        ).fetchall()
-    sync_lookup = {r['external_id']: r['sync'] for r in sync_rows}
-
-    # Process each current file
+    # Process each file by fetching its metadata individually
     files_processed = 0
-    for file_info in current_files:
-        file_id = file_info['id']
+    for file_id in work_ids:
+        file_info = _fetch_file_metadata(file_id, token)
+        if file_info is None:
+            print(f'[gdrive_handler] Skipping file_id={file_id}: metadata fetch failed')
+            continue
+
         file_name = file_info.get('name', f'Drive file {file_id}')
         mime_type = file_info.get('mimeType', '')
         modified_time = file_info.get('modifiedTime', '')
 
-        # Skip subfolders nested inside the source folder
+        # Skip subfolders
         if mime_type == 'application/vnd.google-apps.folder':
             print(f'[gdrive_handler] Skipping subfolder file_id={file_id} name={file_name!r}')
             continue
 
-        # Sync gate: skip files explicitly excluded by the user (sync=False).
-        # Files with no row yet (not in sync_lookup) are new and should proceed.
-        if sync_lookup.get(file_id) is False:
-            print(f'[gdrive_handler] Skipping sync=false file={file_id} name={file_name!r}')
-            continue
-
         try:
             material_id, needs_ingest = _upsert_material(
-                user_id, course_id, source_point['id'], file_id, file_name, modified_time
+                user_id, course_id, source_point_id, file_id, file_name, modified_time
             )
 
             if not needs_ingest and not force_full_sync:
                 print(f'[gdrive_handler] Skipping unchanged file={file_id} name={file_name!r}')
+                if external_ids is not None:
+                    with get_db() as db:
+                        db.execute(
+                            "UPDATE material_embed_jobs SET status = 'up_to_date' WHERE material_id = %s",
+                            (material_id,)
+                        )
                 continue
 
             print(f'[gdrive_handler] Ingesting file={file_id} name={file_name!r} mime={mime_type}')
@@ -337,9 +320,9 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
     with get_db() as db:
         db.execute(
             "UPDATE integration_source_points SET last_synced_at = CURRENT_TIMESTAMP WHERE id = %s",
-            (source_point['id'],)
+            (source_point_id,)
         )
     print(
-        f'[gdrive_handler] Sync complete source_point_id={source_point.get("id")} '
-        f'files_in_folder={len(current_files)} files_ingested={files_processed}'
+        f'[gdrive_handler] Sync complete source_point_id={source_point_id} '
+        f'files_in_work_list={len(work_ids)} files_ingested={files_processed}'
     )

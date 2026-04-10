@@ -29,6 +29,7 @@ from reportlab.platypus import (
 )
 
 from db import get_db
+from utils import _needs_ingest
 
 NOTION_API_BASE = "https://api.notion.com/v1"
 NOTION_VERSION = "2026-03-11"
@@ -297,23 +298,12 @@ def _upsert_material(
     """
     with get_db() as db:
         existing = db.execute(
-            "SELECT id, file_url, file_type FROM materials WHERE external_id = %s AND source_type = 'notion'",
+            "SELECT id, file_type, external_last_edited FROM materials WHERE external_id = %s AND source_type = 'notion'",
             (page_id,),
         ).fetchone()
 
         if existing:
-            # If the S3 upload previously failed, file_url is still the placeholder path.
-            # Treat as new so the caller re-runs the upload + embed.
-            placeholder = f"notion/{page_id}.pdf"
-            existing_url = existing.get("file_url") or ""
-            existing_file_type = existing.get("file_type")
-            needs_reingest = (
-                not existing_url
-                or existing_url == placeholder
-                or existing_url.startswith("notion/")
-                or not existing_url.startswith("https://")
-            )
-            if existing_file_type != "application/pdf":
+            if existing.get("file_type") != "application/pdf":
                 db.execute(
                     "UPDATE materials SET file_type = 'application/pdf' WHERE id = %s",
                     (existing["id"],),
@@ -327,13 +317,9 @@ def _upsert_material(
                     "UPDATE materials SET outsourced_url = %s WHERE id = %s",
                     (outsourced_url, existing["id"]),
                 )
-            if needs_reingest:
-                print(
-                    f"[notion_handler] Existing material requires reingest "
-                    f"page={page_id} material_id={existing['id']} file_url={existing_url!r}"
-                )
-                return existing["id"], True
-            return existing["id"], False
+            if not _needs_ingest(last_edited_time, existing.get("external_last_edited")):
+                return existing["id"], False
+            return existing["id"], True
 
         row = db.execute(
             """
@@ -452,113 +438,52 @@ def _trigger_embed(s3_key):
 # ─── Main entry point ────────────────────────────────────────────────────────
 
 
-def sync_source_point(source_point: dict, token: str, force_full_sync: bool = False):
+def sync_source_point(source_point: dict, token: str, force_full_sync: bool = False, external_ids: list | None = None):
     """
-    Sync all new/updated pages from the Notion database described by source_point.
-    Updates last_synced_at on the source_point row after completion.
+    Sync Notion pages described by source_point.
+
+    When external_ids is provided (Sync Now path), only those page IDs are processed.
+    When external_ids is None (background sweep), all sync=TRUE materials for this
+    source point are fetched from the DB and processed.
     """
-    data_source_id = source_point["external_id"]
     user_id = source_point["user_id"]
     course_id = source_point["course_id"]
-    last_synced = source_point.get("last_synced_at")
+    source_point_id = source_point["id"]
     print(
-        f"[notion_handler] Starting sync source_point_id={source_point.get('id')} "
-        f"data_source_id={data_source_id} course_id={course_id} user_id={user_id} "
-        f"last_synced_at={last_synced} force_full_sync={force_full_sync} "
+        f"[notion_handler] Starting sync source_point_id={source_point_id} "
+        f"course_id={course_id} user_id={user_id} "
+        f"force_full_sync={force_full_sync} external_ids={external_ids} "
         f"bucket={BUCKET!r} has_state_machine={bool(STATE_MACHINE_ARN)}"
     )
 
-    # Query Notion data source for recently edited pages
-    filter_body = {}
-    if last_synced and not force_full_sync:
-        if isinstance(last_synced, datetime):
-            last_synced_str = last_synced.replace(tzinfo=timezone.utc).isoformat()
-        else:
-            last_synced_str = str(last_synced)
-        filter_body = {
-            "filter": {
-                "timestamp": "last_edited_time",
-                "last_edited_time": {"on_or_after": last_synced_str},
-            }
-        }
+    # Determine which page IDs to process
+    if external_ids is not None:
+        # Sync Now path: caller already knows which pages to process
+        work_ids = external_ids
+        print(f"[notion_handler] Sync Now path: processing {len(work_ids)} targeted page(s)")
+    else:
+        # Background sweep path: query DB for all sync=TRUE materials for this source point
+        with get_db() as db:
+            rows = db.execute(
+                """
+                SELECT external_id FROM materials
+                WHERE integration_source_point_id = %s
+                  AND sync = TRUE
+                """,
+                (source_point_id,)
+            ).fetchall()
+        work_ids = [r["external_id"] for r in rows]
+        print(f"[notion_handler] Background sweep path: processing {len(work_ids)} sync=TRUE page(s)")
 
-    all_pages = []
-    cursor = None
-    while True:
-        body = {**filter_body, "page_size": 100}
-        if cursor:
-            body["start_cursor"] = cursor
-        data = _notion_post(f"data_sources/{data_source_id}/query", token, body)
-        all_pages.extend(data.get("results", []))
-        if not data.get("has_more"):
-            break
-        cursor = data.get("next_cursor")
-
-    if filter_body and not all_pages:
-        print(
-            f"[notion_handler] Filtered query returned 0 pages for source_point_id={source_point.get('id')}; "
-            f"retrying with full sync to catch initial import gaps"
-        )
-        cursor = None
-        while True:
-            body = {"page_size": 100}
-            if cursor:
-                body["start_cursor"] = cursor
-            data = _notion_post(f"data_sources/{data_source_id}/query", token, body)
-            all_pages.extend(data.get("results", []))
-            if not data.get("has_more"):
-                break
-            cursor = data.get("next_cursor")
-
-    # Also retry any pages from this database whose S3 upload previously failed
-    # (file_url still holds the placeholder path, meaning embed never ran).
-    with get_db() as db:
-        stuck = db.execute(
-            """
-            SELECT external_id FROM materials
-            WHERE course_id = %s
-              AND source_type = 'notion'
-              AND sync IS DISTINCT FROM false
-              AND (
-                  file_url IS NULL
-                  OR file_url = ''
-                  OR file_url LIKE 'notion/%%.pdf'
-                  OR file_url NOT LIKE 'https://%%'
-              )
-            """,
-            (course_id,),
-        ).fetchall()
-    stuck_ids = {r["external_id"] for r in stuck}
-    print(
-        f"[notion_handler] Notion query complete source_point_id={source_point.get('id')} "
-        f"pages={len(all_pages)} stuck_pages={len(stuck_ids)}"
-    )
-
-    # Batch-query sync state for all discovered pages before any conversion work.
-    # sync=False → page is explicitly excluded; skip without touching Notion API.
-    # Missing row → new page, treat as sync=True (proceed with ingestion).
-    current_page_id_list = [p["id"] for p in all_pages]
-    with get_db() as db:
-        sync_rows = db.execute(
-            """
-            SELECT external_id, sync FROM materials
-            WHERE external_id = ANY(%s) AND course_id = %s AND source_type = 'notion'
-            """,
-            (current_page_id_list, course_id),
-        ).fetchall()
-    sync_lookup = {r["external_id"]: r["sync"] for r in sync_rows}
-
-    # If a stuck page isn't already in all_pages, fetch it from Notion and append it.
-    seen_ids = {p["id"] for p in all_pages}
-    for stuck_id in stuck_ids - seen_ids:
+    # Process each page by fetching its metadata individually
+    pages_processed = 0
+    for page_id in work_ids:
         try:
-            page = _notion_get(f"pages/{stuck_id}", token)
-            all_pages.append(page)
+            page = _notion_get(f"pages/{page_id}", token)
         except Exception as exc:
-            print(f"[notion_handler] Could not re-fetch stuck page {stuck_id}: {exc}")
+            print(f"[notion_handler] Skipping page_id={page_id}: fetch failed: {exc}")
+            continue
 
-    for page in all_pages:
-        page_id = page["id"]
         last_edited_time = page.get("last_edited_time", "")
 
         # Determine title from page properties
@@ -569,41 +494,46 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
                 title = _plain_text(prop.get("title", []))
                 break
 
-        # Sync gate: skip pages explicitly excluded by the user (sync=False).
-        # Pages with no row yet (not in sync_lookup) are new and should proceed.
-        if sync_lookup.get(page_id) is False:
-            print(f"[notion_handler] Skipping sync=false page={page_id}")
-            continue
-
         try:
-            print(f"[notion_handler] Ingesting page={page_id} title={title!r}")
-            material_id, is_new = _upsert_material(
+            material_id, needs_ingest = _upsert_material(
                 user_id,
                 course_id,
-                source_point["id"],
+                source_point_id,
                 page_id,
                 title,
                 last_edited_time,
                 outsourced_url=page.get("url"),
             )
 
+            if not needs_ingest and not force_full_sync:
+                print(f"[notion_handler] Skipping unchanged page={page_id} title={title!r}")
+                if external_ids is not None:
+                    with get_db() as db:
+                        db.execute(
+                            "UPDATE material_embed_jobs SET status = 'up_to_date' WHERE material_id = %s",
+                            (material_id,)
+                        )
+                continue
+
+            print(f"[notion_handler] Ingesting page={page_id} title={title!r}")
+
             # Fetch all blocks for this page
             blocks = _fetch_all_blocks(page_id, token)
 
-            if not is_new:
+            if not needs_ingest:
                 # Updated page: clear stale embeddings before re-ingestion
                 _delete_old_chunks(material_id)
-                # Remove old S3 PDF
                 try:
                     s3.delete_object(Bucket=BUCKET, Key=f"notion/{page_id}.pdf")
                 except Exception:
-                    pass  # File may not exist yet
+                    pass
 
             pdf_bytes = _notion_page_to_pdf(page_id, blocks, token)
             s3_key = _upload_pdf_to_s3(page_id, pdf_bytes)
             _update_material_after_upload(material_id, s3_key, last_edited_time)
             _enqueue_embed_job(material_id)
             _trigger_embed(s3_key)
+            pages_processed += 1
 
         except Exception as exc:
             print(f"[notion_handler] Failed to ingest page={page_id}: {exc}")
@@ -614,8 +544,9 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
     with get_db() as db:
         db.execute(
             "UPDATE integration_source_points SET last_synced_at = CURRENT_TIMESTAMP WHERE id = %s",
-            (source_point["id"],),
+            (source_point_id,),
         )
     print(
-        f"[notion_handler] Sync complete source_point_id={source_point.get('id')} pages_processed={len(all_pages)}"
+        f"[notion_handler] Sync complete source_point_id={source_point_id} "
+        f"pages_in_work_list={len(work_ids)} pages_ingested={pages_processed}"
     )
