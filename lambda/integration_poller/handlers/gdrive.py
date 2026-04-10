@@ -119,9 +119,9 @@ def _upsert_material(user_id, course_id, file_id, file_name, modified_time):
         row = db.execute("""
             INSERT INTO materials (
                 course_id, name, file_url, uploaded_by, file_type,
-                visibility, source_type, external_id, external_last_edited
+                visibility, source_type, external_id, external_last_edited, sync
             )
-            VALUES (%s, %s, %s, %s, 'application/pdf', 'private', 'gdrive', %s, %s)
+            VALUES (%s, %s, %s, %s, 'application/pdf', 'private', 'gdrive', %s, %s, true)
             RETURNING id
         """, (
             course_id,
@@ -250,6 +250,20 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
     if removed_ids:
         print(f'[gdrive_handler] {len(removed_ids)} previously ingested file(s) no longer present in folder: {removed_ids}')
 
+    # Batch-query sync state for all current files before any conversion work.
+    # sync=False → file is explicitly excluded; skip without touching Drive API.
+    # Missing row → new file, treat as sync=True (proceed with ingestion).
+    current_file_id_list = [f['id'] for f in current_files]
+    with get_db() as db:
+        sync_rows = db.execute(
+            """
+            SELECT external_id, sync FROM materials
+            WHERE external_id = ANY(%s) AND course_id = %s AND source_type = 'gdrive'
+            """,
+            (current_file_id_list, course_id)
+        ).fetchall()
+    sync_lookup = {r['external_id']: r['sync'] for r in sync_rows}
+
     # Process each current file
     files_processed = 0
     for file_info in current_files:
@@ -261,6 +275,12 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
         # Skip subfolders nested inside the source folder
         if mime_type == 'application/vnd.google-apps.folder':
             print(f'[gdrive_handler] Skipping subfolder file_id={file_id} name={file_name!r}')
+            continue
+
+        # Sync gate: skip files explicitly excluded by the user (sync=False).
+        # Files with no row yet (not in sync_lookup) are new and should proceed.
+        if sync_lookup.get(file_id) is False:
+            print(f'[gdrive_handler] Skipping sync=false file={file_id} name={file_name!r}')
             continue
 
         try:

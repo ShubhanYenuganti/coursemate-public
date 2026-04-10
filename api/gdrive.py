@@ -5,6 +5,7 @@
 # GET    /api/gdrive?action=search             → search Drive folders
 # GET    /api/gdrive?action=get_target         → get sticky export target
 # GET    /api/gdrive?action=list_source_points → list course source points
+# GET    /api/gdrive?action=list_source_point_files → list files in a source point folder (paginated, with sync state)
 # GET    /api/gdrive?action=finalize_connection → complete pending OAuth from cookie
 # POST   /api/gdrive?action=set_target         → upsert sticky export target
 # POST   /api/gdrive?action=export             → batch export (207 Multi-Status)
@@ -1052,6 +1053,110 @@ def _handle_list_source_points(handler_self, user_id: int, qs: dict):
     send_json(handler_self, 200, {"source_points": [dict(r) for r in rows]})
 
 
+_SOURCE_POINT_FILES_PAGE_SIZE = 20
+
+
+def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
+    """List files in a Drive source point folder, cross-referenced with materials sync state.
+    Paginated at 20 files per page (?page=1 by default)."""
+    try:
+        access_token = get_valid_token(user_id)
+    except RuntimeError:
+        send_json(handler_self, 401, {"error": "gdrive_token_revoked"})
+        return
+
+    if not access_token:
+        send_json(handler_self, 403, {"error": "Google Drive not connected"})
+        return
+
+    sp_id = _qs_get(qs, "id")
+    if not sp_id:
+        send_json(handler_self, 400, {"error": "id required"})
+        return
+
+    page = int(_qs_get(qs, "page") or 1)
+    if page < 1:
+        page = 1
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, external_id, course_id FROM integration_source_points WHERE id = %s AND user_id = %s AND provider = 'gdrive'",
+            (sp_id, user_id),
+        )
+        sp = cur.fetchone()
+        cur.close()
+
+    if not sp:
+        send_json(handler_self, 404, {"error": "Source point not found"})
+        return
+
+    folder_id = sp["external_id"]
+    course_id = sp["course_id"]
+
+    # List all non-folder files in the Drive folder, paginated via pageToken
+    # We must page through Drive API to find offset for requested page number
+    # Since Drive uses cursor tokens, we collect up to page*PAGE_SIZE files then slice
+    page_size = _SOURCE_POINT_FILES_PAGE_SIZE
+    target_count = page * page_size
+    all_files = []
+    next_token = None
+
+    while len(all_files) < target_count:
+        params = {
+            "q": f"'{folder_id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false",
+            "fields": "nextPageToken,files(id,name,mimeType)",
+            "pageSize": min(page_size, target_count - len(all_files)),
+        }
+        if next_token:
+            params["pageToken"] = next_token
+
+        data, err = _drive_api("GET", "/files", access_token, params=params)
+        if err == "gdrive_token_revoked":
+            send_json(handler_self, 401, {"error": "gdrive_token_revoked"})
+            return
+        if err:
+            send_json(handler_self, 502, {"error": "Drive listing failed", "code": err})
+            return
+
+        batch = (data or {}).get("files", [])
+        all_files.extend(batch)
+        next_token = (data or {}).get("nextPageToken")
+        if not next_token:
+            break
+
+    total_fetched = len(all_files)
+    has_more = next_token is not None or total_fetched > target_count
+    page_files = all_files[(page - 1) * page_size: page * page_size]
+
+    if not page_files:
+        send_json(handler_self, 200, {"files": [], "page": page, "has_more": False})
+        return
+
+    # Cross-reference with materials table for sync state
+    external_ids = [f["id"] for f in page_files]
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT external_id, sync FROM materials WHERE external_id = ANY(%s) AND course_id = %s AND source_type = 'gdrive'",
+            (external_ids, course_id),
+        )
+        sync_rows = {r["external_id"]: r["sync"] for r in cur.fetchall()}
+        cur.close()
+
+    files_out = []
+    for f in page_files:
+        sync_val = sync_rows.get(f["id"])  # None if no row yet
+        files_out.append({
+            "external_id": f["id"],
+            "name": f["name"],
+            "mime_type": f.get("mimeType"),
+            "sync": sync_val,
+        })
+
+    send_json(handler_self, 200, {"files": files_out, "page": page, "has_more": has_more})
+
+
 def _handle_toggle_source_point(handler_self, user_id: int, qs: dict):
     sp_id = _qs_get(qs, "id")
     if not sp_id:
@@ -1166,6 +1271,8 @@ class handler(BaseHTTPRequestHandler):
             _handle_get_target(self, user_id, qs)
         elif action == "list_source_points":
             _handle_list_source_points(self, user_id, qs)
+        elif action == "list_source_point_files":
+            _handle_list_source_point_files(self, user_id, qs)
         else:
             send_json(self, 400, {"error": f"Unknown GET action: {action}"})
 

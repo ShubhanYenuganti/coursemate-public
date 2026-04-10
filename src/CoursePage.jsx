@@ -58,13 +58,12 @@ function ToolbarItem({ icon, label, active, onClick }) {
 
 // ─── Notion Sources Panel ─────────────────────────────────────────────────────
 
-function NotionSourcesPanel({ courseId, onSync }) {
+function NotionSourcesPanel({ courseId, onSync, onOpenMaterials }) {
   const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
   const [confirmRemoveId, setConfirmRemoveId] = useState(null);
   const [notionConnected] = useState(() => localStorage.getItem('coursemate_notion_connected') === '1');
@@ -123,7 +122,7 @@ function NotionSourcesPanel({ courseId, onSync }) {
         setSyncMsg('Source added, initial sync started');
         onSync?.();
       } else {
-        setSyncMsg('Source added; initial sync was not triggered. Use Sync Now.');
+        setSyncMsg('Source added; initial sync was not triggered. Use Sync in Materials.');
       }
       setTimeout(() => setSyncMsg(''), 4000);
       setQuery('');
@@ -149,19 +148,6 @@ function NotionSourcesPanel({ courseId, onSync }) {
     finally { setConfirmRemoveId(null); }
   }
 
-  async function handleSync() {
-    if (syncing) return;
-    setSyncing(true);
-    setSyncMsg('');
-    try {
-      await fetch(`/api/notion?action=sync&course_id=${courseId}`, { method: 'POST', credentials: 'include' });
-      setSyncMsg('Sync started');
-      setTimeout(() => setSyncMsg(''), 3000);
-      onSync?.();
-    } catch { setSyncMsg('Sync failed'); }
-    finally { setSyncing(false); }
-  }
-
   function formatDate(ts) {
     if (!ts) return 'Never';
     return formatDateTime(ts);
@@ -185,11 +171,10 @@ function NotionSourcesPanel({ courseId, onSync }) {
           {syncMsg && <span className="text-xs text-gray-500">{syncMsg}</span>}
           <button
             type="button"
-            onClick={handleSync}
-            disabled={syncing || sources.filter((s) => s.is_active).length === 0}
+            onClick={onOpenMaterials}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40"
           >
-            {syncing ? 'Syncing…' : 'Sync Now'}
+            Sync in Materials
           </button>
         </div>
       </div>
@@ -268,13 +253,12 @@ function NotionSourcesPanel({ courseId, onSync }) {
 
 // ─── Google Drive Sources Panel ──────────────────────────────────────────────
 
-function GDriveSourcesPanel({ courseId, onSync }) {
+function GDriveSourcesPanel({ courseId, onSync, onOpenMaterials }) {
   const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
   const [confirmRemoveId, setConfirmRemoveId] = useState(null);
   const [gdriveConnected] = useState(() => localStorage.getItem('coursemate_gdrive_connected') === '1');
@@ -348,8 +332,8 @@ function GDriveSourcesPanel({ courseId, onSync }) {
         onSync?.();
       } else {
         const fallbackMsg = data?.sync_error
-          ? `Source added; initial sync was not triggered (${data.sync_error}). Use Sync Now.`
-          : 'Source added; initial sync was not triggered. Use Sync Now.';
+          ? `Source added; initial sync was not triggered (${data.sync_error}). Use Sync in Materials.`
+          : 'Source added; initial sync was not triggered. Use Sync in Materials.';
         setSyncMsg(fallbackMsg);
       }
       setTimeout(() => setSyncMsg(''), 4000);
@@ -374,22 +358,6 @@ function GDriveSourcesPanel({ courseId, onSync }) {
       setSources((prev) => prev.filter((s) => s.id !== id));
     } catch { /* ignore */ }
     finally { setConfirmRemoveId(null); }
-  }
-
-  async function handleSync() {
-    if (syncing) return;
-    setSyncing(true);
-    setSyncMsg('');
-    try {
-      await fetch(`/api/gdrive?action=sync&course_id=${courseId}`, { method: 'POST', credentials: 'include' });
-      setSyncMsg('Sync started');
-      setTimeout(() => setSyncMsg(''), 3000);
-      onSync?.();
-    } catch {
-      setSyncMsg('Sync failed');
-    } finally {
-      setSyncing(false);
-    }
   }
 
   function formatDate(ts) {
@@ -417,11 +385,10 @@ function GDriveSourcesPanel({ courseId, onSync }) {
           {syncMsg && <span className="text-xs text-gray-500">{syncMsg}</span>}
           <button
             type="button"
-            onClick={handleSync}
-            disabled={syncing || sources.filter((s) => s.is_active).length === 0}
+            onClick={onOpenMaterials}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40"
           >
-            {syncing ? 'Syncing…' : 'Sync Now'}
+            Sync in Materials
           </button>
         </div>
       </div>
@@ -664,8 +631,16 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
               isOwner={isOwner}
             />
           )}
-          <NotionSourcesPanel courseId={course?.id} onSync={() => setSyncVersion(v => v + 1)} />
-          <GDriveSourcesPanel courseId={course?.id} onSync={() => setSyncVersion(v => v + 1)} />
+          <NotionSourcesPanel
+            courseId={course?.id}
+            onSync={() => setSyncVersion(v => v + 1)}
+            onOpenMaterials={() => handleTabChange('materials')}
+          />
+          <GDriveSourcesPanel
+            courseId={course?.id}
+            onSync={() => setSyncVersion(v => v + 1)}
+            onOpenMaterials={() => handleTabChange('materials')}
+          />
           </div>
         )}
 

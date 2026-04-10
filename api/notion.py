@@ -5,6 +5,7 @@
 # GET    /api/notion?action=search             → search pages/databases
 # GET    /api/notion?action=get_target         → get sticky export target
 # GET    /api/notion?action=list_source_points → list course source points
+# GET    /api/notion?action=list_source_point_files → list pages in a source point database (paginated, with sync state)
 # POST   /api/notion?action=set_target         → upsert sticky export target
 # POST   /api/notion?action=export             → batch export (207 Multi-Status)
 # POST   /api/notion?action=create_target      → create new Notion page/db, auto-select
@@ -1252,6 +1253,101 @@ def _handle_list_source_points(handler_self, user_id: int, qs: dict):
     send_json(handler_self, 200, {"source_points": [dict(r) for r in rows]})
 
 
+_SOURCE_POINT_FILES_PAGE_SIZE = 20
+
+
+def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
+    """List pages in a Notion database source point, cross-referenced with materials sync state.
+    Paginated at 20 files per page (?page=1 by default)."""
+    token = _get_notion_token(user_id)
+    if not token:
+        send_json(handler_self, 403, {"error": "Notion not connected"})
+        return
+
+    sp_id = _qs_get(qs, "id")
+    if not sp_id:
+        send_json(handler_self, 400, {"error": "id required"})
+        return
+
+    page = int(_qs_get(qs, "page") or 1)
+    if page < 1:
+        page = 1
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, external_id, course_id FROM integration_source_points WHERE id = %s AND user_id = %s AND provider = 'notion'",
+            (sp_id, user_id),
+        )
+        sp = cur.fetchone()
+        cur.close()
+
+    if not sp:
+        send_json(handler_self, 404, {"error": "Source point not found"})
+        return
+
+    database_id = sp["external_id"]
+    course_id = sp["course_id"]
+    page_size = _SOURCE_POINT_FILES_PAGE_SIZE
+    target_count = page * page_size
+
+    # Collect enough pages from Notion to satisfy the requested page
+    all_pages = []
+    cursor = None
+    while len(all_pages) < target_count:
+        body = {"page_size": min(100, target_count - len(all_pages))}
+        if cursor:
+            body["start_cursor"] = cursor
+        data, err, _ = _notion_api("POST", f"/databases/{database_id}/query", token, body=body, user_id=user_id)
+        if err:
+            send_json(handler_self, 502, {"error": "Notion API error", "code": err})
+            return
+        all_pages.extend((data or {}).get("results", []))
+        has_more_notion = (data or {}).get("has_more", False)
+        cursor = (data or {}).get("next_cursor")
+        if not has_more_notion:
+            break
+
+    has_more = has_more_notion if len(all_pages) >= target_count else False
+    page_items = all_pages[(page - 1) * page_size: page * page_size]
+
+    if not page_items:
+        send_json(handler_self, 200, {"files": [], "page": page, "has_more": False})
+        return
+
+    # Extract page ID and title from Notion page objects
+    def _page_title(notion_page: dict) -> str:
+        props = notion_page.get("properties", {})
+        for prop in props.values():
+            if prop.get("type") == "title":
+                parts = prop.get("title", [])
+                return "".join(p.get("plain_text", "") for p in parts)
+        return notion_page.get("id", "Untitled")
+
+    external_ids = [p["id"] for p in page_items]
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT external_id, sync FROM materials WHERE external_id = ANY(%s) AND course_id = %s AND source_type = 'notion'",
+            (external_ids, course_id),
+        )
+        sync_rows = {r["external_id"]: r["sync"] for r in cur.fetchall()}
+        cur.close()
+
+    files_out = [
+        {
+            "external_id": p["id"],
+            "name": _page_title(p),
+            "mime_type": "notion/page",
+            "sync": sync_rows.get(p["id"]),
+        }
+        for p in page_items
+    ]
+
+    send_json(handler_self, 200, {"files": files_out, "page": page, "has_more": has_more})
+
+
 def _handle_toggle_source_point(handler_self, user_id: int, qs: dict):
     """Flip is_active for a source point owned by the user."""
     sp_id = _qs_get(qs, "id")
@@ -1377,6 +1473,8 @@ class handler(BaseHTTPRequestHandler):
             _handle_get_target(self, user_id, qs)
         elif action == "list_source_points":
             _handle_list_source_points(self, user_id, qs)
+        elif action == "list_source_point_files":
+            _handle_list_source_point_files(self, user_id, qs)
         else:
             send_json(self, 400, {"error": f"Unknown GET action: {action}"})
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 // ─── constants ───────────────────────────────────────────────────────────────
@@ -306,6 +306,154 @@ function StagingItemRow({ item, onDocTypeChange, onUpload, onRemove }) {
   );
 }
 
+function normalizeSyncRows(provider, rawFiles) {
+  const sourceType = provider === 'notion' ? 'notion' : 'gdrive';
+  return (Array.isArray(rawFiles) ? rawFiles : [])
+    .filter((row) => row?.external_id)
+    .map((row) => ({
+      external_id: row.external_id,
+      name: row.name || row.external_id,
+      mime_type: row.mime_type || 'application/pdf',
+      sync: row.sync ?? null,
+      source_type: sourceType,
+    }));
+}
+
+function SyncModal({
+  provider,
+  sourcePointTitle,
+  rows,
+  page,
+  hasMore,
+  loading,
+  mode,
+  toggles,
+  pendingRows,
+  error,
+  onToggle,
+  onPrevPage,
+  onNextPage,
+  onSync,
+  onClose,
+}) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-800">Sync Modal</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {provider === 'notion' ? 'Notion' : 'Google Drive'} · {sourcePointTitle || 'Source point'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+        >
+          Close
+        </button>
+      </div>
+
+      {error && (
+        <p className="text-xs text-red-500">{error}</p>
+      )}
+
+      {mode === 'staging' ? (
+        <>
+          {loading ? (
+            <div className="py-8 flex items-center justify-center">
+              <Spinner size={22} className="text-indigo-400" />
+            </div>
+          ) : rows.length === 0 ? (
+            <p className="text-sm text-gray-500 py-6">No files found for this source point.</p>
+          ) : (
+            <div className="space-y-2">
+              {rows.map((row) => {
+                const enabled = toggles[row.external_id] ?? (row.sync !== false);
+                return (
+                  <div key={row.external_id} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                    <FileTypeIcon type={row.mime_type} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-gray-800 truncate">{row.name}</p>
+                      <p className="text-xs text-gray-400 truncate">{row.external_id}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-medium ${enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
+                        {enabled ? 'Sync ON' : 'Sync OFF'}
+                      </span>
+                      <VisibilityToggle
+                        isPublic={enabled}
+                        onChange={(next) => onToggle(row.external_id, next)}
+                        size="sm"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex items-center justify-between pt-1">
+            <div className="text-xs text-gray-400">Page {page}</div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onPrevPage}
+                disabled={page <= 1 || loading}
+                className="px-2.5 py-1 rounded border border-gray-200 text-xs text-gray-600 disabled:opacity-40 hover:bg-gray-50"
+              >
+                Prev
+              </button>
+              <button
+                type="button"
+                onClick={onNextPage}
+                disabled={!hasMore || loading}
+                className="px-2.5 py-1 rounded border border-gray-200 text-xs text-gray-600 disabled:opacity-40 hover:bg-gray-50"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={onSync}
+              disabled={loading || rows.length === 0}
+              className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+            >
+              Sync
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-sm text-indigo-600 font-medium">
+            <Spinner size={14} />
+            Sync in progress
+          </div>
+          <details open className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+            <summary className="text-xs font-semibold text-gray-600 cursor-pointer">
+              Pending files ({pendingRows.length})
+            </summary>
+            <div className="mt-2 space-y-1.5">
+              {pendingRows.length === 0 ? (
+                <p className="text-xs text-emerald-600">All selected files passed poller handoff.</p>
+              ) : (
+                pendingRows.map((row) => (
+                  <div key={`${row.source_type}:${row.external_id}`} className="text-xs text-gray-600 truncate">
+                    {row.name}
+                  </div>
+                ))
+              )}
+            </div>
+          </details>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── source type badge ───────────────────────────────────────────────────────
 
 const SOURCE_TYPE_META = {
@@ -452,7 +600,7 @@ function MaterialCard({ material, courseId, onVisibilityChange, onDelete, isOwne
             type="button"
             onClick={async () => {
               setDeleting(true);
-              await onDelete(material.id);
+              await onDelete(material);
             }}
             disabled={deleting}
             className="p-1 rounded text-gray-300 hover:text-red-500 transition-colors"
@@ -551,6 +699,91 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
   const [typeFilter,  setTypeFilter]    = useState('all');
   const [syncPolling, setSyncPolling]   = useState(false);
   const prevSyncVersion                 = useRef(0);
+  const syncPollingTimeoutRef           = useRef(null);
+
+  const [sourcePoints, setSourcePoints] = useState({ gdrive: [], notion: [] });
+  const [sourcePointsLoading, setSourcePointsLoading] = useState(false);
+  const [syncProvider, setSyncProvider] = useState('gdrive');
+  const [selectedSourcePointId, setSelectedSourcePointId] = useState('');
+
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [syncModalMode, setSyncModalMode] = useState('staging'); // staging | progress
+  const [syncRows, setSyncRows] = useState([]);
+  const [syncRowsLoading, setSyncRowsLoading] = useState(false);
+  const [syncRowsError, setSyncRowsError] = useState('');
+  const [syncPage, setSyncPage] = useState(1);
+  const [syncHasMore, setSyncHasMore] = useState(false);
+  const [syncToggles, setSyncToggles] = useState({});
+  const [pendingSyncRows, setPendingSyncRows] = useState([]);
+
+  const selectedSourcePoint = useMemo(() => (
+    sourcePoints[syncProvider]?.find((sp) => String(sp.id) === String(selectedSourcePointId)) || null
+  ), [sourcePoints, syncProvider, selectedSourcePointId]);
+
+  const beginSyncPollingWindow = useCallback(() => {
+    setSyncPolling(true);
+    if (syncPollingTimeoutRef.current) clearTimeout(syncPollingTimeoutRef.current);
+    syncPollingTimeoutRef.current = setTimeout(() => {
+      setSyncPolling(false);
+      syncPollingTimeoutRef.current = null;
+    }, 90_000);
+  }, []);
+
+  const fetchSourcePoints = useCallback(async () => {
+    if (!courseId) return;
+    setSourcePointsLoading(true);
+    try {
+      const [gdriveRes, notionRes] = await Promise.all([
+        fetch(`/api/gdrive?action=list_source_points&course_id=${courseId}`, { credentials: 'include' }),
+        fetch(`/api/notion?action=list_source_points&course_id=${courseId}`, { credentials: 'include' }),
+      ]);
+      const [gdriveData, notionData] = await Promise.all([gdriveRes.json(), notionRes.json()]);
+      const next = {
+        gdrive: Array.isArray(gdriveData?.source_points) ? gdriveData.source_points : [],
+        notion: Array.isArray(notionData?.source_points) ? notionData.source_points : [],
+      };
+      setSourcePoints(next);
+      const currentList = next[syncProvider] || [];
+      if (!currentList.some((sp) => String(sp.id) === String(selectedSourcePointId))) {
+        setSelectedSourcePointId(currentList[0]?.id ? String(currentList[0].id) : '');
+      }
+    } catch {
+      setSourcePoints({ gdrive: [], notion: [] });
+      setSelectedSourcePointId('');
+    } finally {
+      setSourcePointsLoading(false);
+    }
+  }, [courseId, syncProvider, selectedSourcePointId]);
+
+  const fetchSyncRowsPage = useCallback(async (page) => {
+    if (!selectedSourcePointId) return;
+    const endpoint = syncProvider === 'notion' ? '/api/notion' : '/api/gdrive';
+    setSyncRowsLoading(true);
+    setSyncRowsError('');
+    try {
+      const res = await fetch(
+        `${endpoint}?action=list_source_point_files&id=${selectedSourcePointId}&page=${page}`,
+        { credentials: 'include' }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Failed to load source point files');
+      const rows = normalizeSyncRows(syncProvider, data.files);
+      const nextToggles = {};
+      rows.forEach((row) => {
+        nextToggles[row.external_id] = row.sync !== false;
+      });
+      setSyncRows(rows);
+      setSyncToggles(nextToggles);
+      setSyncPage(page);
+      setSyncHasMore(Boolean(data.has_more));
+    } catch (err) {
+      setSyncRows([]);
+      setSyncHasMore(false);
+      setSyncRowsError(err?.message || 'Failed to load source point files');
+    } finally {
+      setSyncRowsLoading(false);
+    }
+  }, [selectedSourcePointId, syncProvider]);
 
   // ── fetch existing materials ──────────────────────────────────────────────
   const fetchMaterials = useCallback(async () => {
@@ -569,16 +802,22 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
   }, [courseId]);
 
   useEffect(() => { fetchMaterials(); }, [fetchMaterials]);
+  useEffect(() => { fetchSourcePoints(); }, [fetchSourcePoints]);
+
+  useEffect(() => {
+    const list = sourcePoints[syncProvider] || [];
+    if (!list.some((sp) => String(sp.id) === String(selectedSourcePointId))) {
+      setSelectedSourcePointId(list[0]?.id ? String(list[0].id) : '');
+    }
+  }, [sourcePoints, syncProvider, selectedSourcePointId]);
 
   // ── enter a polling window whenever a sync is triggered ───────────────────
   useEffect(() => {
     if (syncVersion <= prevSyncVersion.current) return;
     prevSyncVersion.current = syncVersion;
     fetchMaterials();
-    setSyncPolling(true);
-    const t = setTimeout(() => setSyncPolling(false), 90_000);
-    return () => clearTimeout(t);
-  }, [syncVersion, fetchMaterials]);
+    beginSyncPollingWindow();
+  }, [syncVersion, fetchMaterials, beginSyncPollingWindow]);
 
   // ── poll while any material is in a non-terminal state ────────────────────
   useEffect(() => {
@@ -591,6 +830,31 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
     const timer = setTimeout(fetchMaterials, 5000);
     return () => clearTimeout(timer);
   }, [materials, fetchMaterials, syncPolling]);
+
+  useEffect(() => {
+    if (syncModalMode !== 'progress' || pendingSyncRows.length === 0) return;
+    setPendingSyncRows((prev) => prev.filter((row) => (
+      !materials.some((m) => (
+        m.external_id === row.external_id
+        && m.source_type === row.source_type
+        && m.sync !== false
+      ))
+    )));
+  }, [materials, pendingSyncRows.length, syncModalMode]);
+
+  useEffect(() => {
+    if (syncModalMode !== 'progress' || pendingSyncRows.length > 0) return;
+    setSyncModalOpen(false);
+    setSyncModalMode('staging');
+    setSyncRows([]);
+    setSyncToggles({});
+    setSyncRowsError('');
+    setSyncPolling(false);
+  }, [pendingSyncRows.length, syncModalMode]);
+
+  useEffect(() => () => {
+    if (syncPollingTimeoutRef.current) clearTimeout(syncPollingTimeoutRef.current);
+  }, []);
 
   // ── upload one file ──────────────────────────────────────────────────────
   const uploadOne = useCallback(async (item) => {
@@ -757,16 +1021,91 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
     }
   }, []);
 
+  const openSyncModal = useCallback(async () => {
+    if (!selectedSourcePointId) return;
+    setSyncModalOpen(true);
+    setSyncModalMode('staging');
+    setPendingSyncRows([]);
+    await fetchSyncRowsPage(1);
+  }, [selectedSourcePointId, fetchSyncRowsPage]);
+
+  const handleSyncToggle = useCallback((externalId, next) => {
+    setSyncToggles((prev) => ({ ...prev, [externalId]: next }));
+  }, []);
+
+  const handleSyncConfirm = useCallback(async () => {
+    if (!selectedSourcePointId || syncRows.length === 0) return;
+    setSyncRowsLoading(true);
+    setSyncRowsError('');
+    try {
+      const filesPayload = syncRows.map((row) => ({
+        external_id: row.external_id,
+        name: row.name,
+        sync: syncToggles[row.external_id] ?? (row.sync !== false),
+      }));
+      const res = await fetch('/api/material', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          action: 'bulk_upsert_sync',
+          course_id: courseId,
+          source_point_id: Number(selectedSourcePointId),
+          source_type: syncProvider,
+          files: filesPayload,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Failed to sync file selections');
+
+      setSyncModalMode('progress');
+      setPendingSyncRows(filesPayload
+        .filter((row) => row.sync)
+        .map((row) => ({
+          external_id: row.external_id,
+          name: row.name || row.external_id,
+          source_type: syncProvider,
+        })));
+      beginSyncPollingWindow();
+      await fetchMaterials();
+    } catch (err) {
+      setSyncRowsError(err?.message || 'Failed to sync file selections');
+    } finally {
+      setSyncRowsLoading(false);
+    }
+  }, [
+    beginSyncPollingWindow,
+    courseId,
+    fetchMaterials,
+    selectedSourcePointId,
+    syncProvider,
+    syncRows,
+    syncToggles,
+  ]);
+
+  const closeSyncModal = useCallback(() => {
+    setSyncModalOpen(false);
+    setSyncModalMode('staging');
+    setSyncRows([]);
+    setSyncRowsError('');
+    setSyncToggles({});
+    setPendingSyncRows([]);
+  }, []);
+
   // ── delete material ──────────────────────────────────────────────────────
-  const handleDelete = useCallback(async (materialId) => {
+  const handleDelete = useCallback(async (material) => {
     try {
       await fetch('/api/material', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ material_id: materialId, course_id: courseId }),
+        body: JSON.stringify({
+          material_id: material.id,
+          course_id: courseId,
+          tombstone: Boolean(material.integration_source_point_id),
+        }),
       });
-      setMaterials(prev => prev.filter(m => m.id !== materialId));
+      setMaterials(prev => prev.filter(m => m.id !== material.id));
     } catch {
       // ignore
     }
@@ -776,6 +1115,8 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
 
   const activeUploads    = uploadItems.filter(i => i.status === 'uploading');
   const completedUploads = uploadItems.filter(i => i.status === 'done' || i.status === 'error');
+  const providerSourcePoints = sourcePoints[syncProvider] || [];
+  const syncActionDisabled = !selectedSourcePointId || sourcePointsLoading;
 
   const visibleMaterials = materials.filter(m => {
     if (ownerFilter === 'mine' && m.uploaded_by !== userId) return false;
@@ -786,61 +1127,123 @@ export default function MaterialsPage({ courseId, userId, syncVersion = 0 }) {
 
   return (
     <div className="space-y-8 pb-4">
-      {/* Upload section */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-        <UploadZone
-          onFiles={handleFiles}
-          disabled={false}
-        />
-
-        {/* Staging queue — doc type selection before upload starts */}
-        {stagingItems.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ready to upload</p>
-            {stagingItems.map(item => (
-              <StagingItemRow
-                key={item.id}
-                item={item}
-                onDocTypeChange={handleStagingDocType}
-                onUpload={handleStagingUpload}
-                onRemove={removeStagingItem}
-              />
-            ))}
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-800">Integration Sync</h3>
+            <p className="text-xs text-gray-500 mt-0.5">Open Sync Modal for Notion or Google Drive source points.</p>
           </div>
-        )}
-
-        {/* Active upload queue */}
-        {activeUploads.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Uploading</p>
-            {activeUploads.map(item => (
-              <UploadItemRow
-                key={item.id}
-                item={item}
-                onVisibilityChange={handleUploadItemVisibility}
-                onDismiss={dismissItem}
-              />
-            ))}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <select
+              value={syncProvider}
+              onChange={(e) => setSyncProvider(e.target.value)}
+              className="text-xs rounded border border-gray-200 bg-white px-2 py-1.5 text-gray-700"
+            >
+              <option value="gdrive">Google Drive</option>
+              <option value="notion">Notion</option>
+            </select>
+            <select
+              value={selectedSourcePointId}
+              onChange={(e) => setSelectedSourcePointId(e.target.value)}
+              className="text-xs rounded border border-gray-200 bg-white px-2 py-1.5 text-gray-700 min-w-56"
+            >
+              {providerSourcePoints.length === 0 ? (
+                <option value="">{sourcePointsLoading ? 'Loading…' : 'No source points'}</option>
+              ) : (
+                providerSourcePoints.map((sp) => (
+                  <option key={sp.id} value={sp.id}>
+                    {sp.external_title || sp.external_id}
+                  </option>
+                ))
+              )}
+            </select>
+            <button
+              type="button"
+              onClick={openSyncModal}
+              disabled={syncActionDisabled}
+              className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+            >
+              Sync Now
+            </button>
           </div>
-        )}
-
-        {/* Completed uploads */}
-        {completedUploads.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-              {activeUploads.length > 0 ? 'Completed' : 'Just uploaded'}
-            </p>
-            {completedUploads.map(item => (
-              <UploadItemRow
-                key={item.id}
-                item={item}
-                onVisibilityChange={handleUploadItemVisibility}
-                onDismiss={dismissItem}
-              />
-            ))}
-          </div>
-        )}
+        </div>
       </div>
+
+      {/* Upload section or Sync Modal */}
+      {syncModalOpen ? (
+        <SyncModal
+          provider={syncProvider}
+          sourcePointTitle={selectedSourcePoint?.external_title || selectedSourcePoint?.external_id}
+          rows={syncRows}
+          page={syncPage}
+          hasMore={syncHasMore}
+          loading={syncRowsLoading}
+          mode={syncModalMode}
+          toggles={syncToggles}
+          pendingRows={pendingSyncRows}
+          error={syncRowsError}
+          onToggle={handleSyncToggle}
+          onPrevPage={() => fetchSyncRowsPage(Math.max(1, syncPage - 1))}
+          onNextPage={() => fetchSyncRowsPage(syncPage + 1)}
+          onSync={handleSyncConfirm}
+          onClose={closeSyncModal}
+        />
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+          <UploadZone
+            onFiles={handleFiles}
+            disabled={false}
+          />
+
+          {/* Staging queue — doc type selection before upload starts */}
+          {stagingItems.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ready to upload</p>
+              {stagingItems.map(item => (
+                <StagingItemRow
+                  key={item.id}
+                  item={item}
+                  onDocTypeChange={handleStagingDocType}
+                  onUpload={handleStagingUpload}
+                  onRemove={removeStagingItem}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Active upload queue */}
+          {activeUploads.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Uploading</p>
+              {activeUploads.map(item => (
+                <UploadItemRow
+                  key={item.id}
+                  item={item}
+                  onVisibilityChange={handleUploadItemVisibility}
+                  onDismiss={dismissItem}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Completed uploads */}
+          {completedUploads.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                {activeUploads.length > 0 ? 'Completed' : 'Just uploaded'}
+              </p>
+              {completedUploads.map(item => (
+                <UploadItemRow
+                  key={item.id}
+                  item={item}
+                  onVisibilityChange={handleUploadItemVisibility}
+                  onDismiss={dismissItem}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Materials grid */}
       <div>
