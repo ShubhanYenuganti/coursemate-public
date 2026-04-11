@@ -13,10 +13,10 @@
 
 ## 3. Verification
 
-- [ ] 3.1 Start an upload, wait for it to reach "indexing" state — confirm material does NOT appear in grid, only in ProgressPanel
-- [ ] 3.2 Wait for embedding to complete — confirm material appears in grid
-- [ ] 3.3 Start an upload, then refresh mid-indexing — confirm ProgressPanel reappears showing the item (status from polling catches up)
-- [ ] 3.4 Start an upload, refresh while still in "uploading" state — confirm item reappears as "error" in ProgressPanel
-- [ ] 3.5 Dismiss the panel, refresh — confirm panel stays dismissed
-- [ ] 3.6 Complete some uploads, refresh — confirm done items reappear in ProgressPanel
-- [ ] 3.7 Trigger a sync, switch tabs, return — confirm sync jobs still show in ProgressPanel and mid-indexing materials are absent from grid
+- [x] 3.1 Start an upload, wait for it to reach "indexing" state — confirm material does NOT appear in grid, only in ProgressPanel
+- [x] 3.2 Wait for embedding to complete — confirm material appears in grid
+- [x] 3.3 Start an upload, then refresh mid-indexing — confirm ProgressPanel reappears showing the item (status from polling catches up)
+- [x] 3.4 Start an upload, refresh while still in "uploading" state — confirm item reappears as "error" in ProgressPanel
+- [x] 3.5 Dismiss the panel, refresh — confirm panel stays dismissed
+- [x] 3.6 Complete some uploads, refresh — confirm done items reappear in ProgressPanel
+- [x] 3.7 Trigger a sync, switch tabs, return — confirm sync jobs still show in ProgressPanel and mid-indexing materials are absent from grid

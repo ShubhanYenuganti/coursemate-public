@@ -6,5 +6,5 @@
 
 ## 2. Verification
 
-- [ ] 2.1 Confirm unmatched material cards (manual uploads, different source type) are unaffected by the optimistic update
-- [ ] 2.2 Confirm the badge transitions correctly from "Syncing" to the real server status once the polling cycle returns (e.g. "Queued" or "Ready")
+- [x] 2.1 Confirm unmatched material cards (manual uploads, different source type) are unaffected by the optimistic update
+- [x] 2.2 Confirm the badge transitions correctly from "Syncing" to the real server status once the polling cycle returns (e.g. "Queued" or "Ready")

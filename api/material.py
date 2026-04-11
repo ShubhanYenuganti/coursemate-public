@@ -265,6 +265,11 @@ class handler(BaseHTTPRequestHandler):
                         DO UPDATE SET file_type = 'application/pdf',
                                       sync = EXCLUDED.sync,
                                       doc_type = EXCLUDED.doc_type,
+                                      embed_status = CASE
+                                          WHEN materials.doc_type IS DISTINCT FROM EXCLUDED.doc_type
+                                          THEN 'pending'
+                                          ELSE materials.embed_status
+                                      END,
                                       updated_at = CURRENT_TIMESTAMP
                     """, (course_id, name, placeholder_file_url, user['id'], source_type, external_id, source_point_id, sync_val, doc_type))
                     upserted += 1

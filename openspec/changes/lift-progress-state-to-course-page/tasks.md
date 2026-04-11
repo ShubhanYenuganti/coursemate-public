@@ -15,7 +15,7 @@
 
 ## 3. Verification
 
-- [ ] 3.1 Start an upload, switch to Chat tab, return to Materials — confirm `ProgressPanel` is still visible with correct items
-- [ ] 3.2 Start a sync, switch tabs, return — confirm sync jobs are still listed
-- [ ] 3.3 Dismiss the panel, switch tabs, return — confirm panel stays dismissed
-- [ ] 3.4 Confirm no console errors or prop-type warnings on tab switch
+- [x] 3.1 Start an upload, switch to Chat tab, return to Materials — confirm `ProgressPanel` is still visible with correct items
+- [x] 3.2 Start a sync, switch tabs, return — confirm sync jobs are still listed
+- [x] 3.3 Dismiss the panel, switch tabs, return — confirm panel stays dismissed
+- [x] 3.4 Confirm no console errors or prop-type warnings on tab switch

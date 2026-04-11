@@ -50,8 +50,8 @@
 
 ## 9. Verification
 
-- [ ] 9.1 Trigger a GDrive sync: confirm SyncModal closes immediately, ProgressPanel appears with all synced files showing "Syncing…", items update to "Queued" → "Indexing…" → "Done" as polling progresses
+- [x] 9.1 Trigger a GDrive sync: confirm SyncModal closes immediately, ProgressPanel appears with all synced files showing "Syncing…", items update to "Queued" → "Indexing…" → "Done" as polling progresses
 - [x] 9.2 Upload a file via staging queue: confirm file appears in ProgressPanel (not inline in upload card), shows upload progress, then "Done"
-- [ ] 9.3 Confirm "Clear done" removes completed items and hides panel when no active items remain; confirm panel reappears on next upload
+- [x] 9.3 Confirm "Clear done" removes completed items and hides panel when no active items remain; confirm panel reappears on next upload
 - [x] 9.4 Confirm polling stops after all items are terminal (no further network calls to `/api/material`)
 - [x] 9.5 Confirm material cards no longer show any embed status badge

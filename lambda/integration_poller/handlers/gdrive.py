@@ -97,61 +97,58 @@ def _upsert_material(
     user_id, course_id, source_point_id, file_id, file_name, modified_time
 ):
     """
-    Return (material_id, is_new_or_changed).
-    Creates a new materials row on first ingestion, or returns (id, True) if
-    modifiedTime has changed since last ingest (so caller re-runs upload+embed).
-    Returns (id, False) if file is unchanged — caller should skip.
+    Return (material_id, needs_ingest).
+    All materials are pre-registered via bulk_upsert_sync before the poller runs.
+    Returns (id, False) if modifiedTime is unchanged — caller should check doc_type drift then skip.
+    Returns (id, True) if modifiedTime has advanced since last ingest.
+    Returns (None, False) if no materials row exists (should not happen in normal flow).
     """
     with get_db() as db:
         existing = db.execute(
-            "SELECT id, file_url, external_last_edited, file_type FROM materials WHERE external_id = %s AND source_type = 'gdrive'",
+            "SELECT id, external_last_edited, file_type FROM materials WHERE external_id = %s AND source_type = 'gdrive'",
             (file_id,)
         ).fetchone()
 
-        if existing:
-            if existing.get('file_type') != 'application/pdf':
-                db.execute(
-                    "UPDATE materials SET file_type = 'application/pdf' WHERE id = %s",
-                    (existing['id'],)
-                )
+        if not existing:
+            print(f'[gdrive_handler] No material row for file_id={file_id} — skipping')
+            return None, False
+
+        if existing.get('file_type') != 'application/pdf':
             db.execute(
-                "UPDATE materials SET integration_source_point_id = %s WHERE id = %s",
-                (source_point_id, existing['id'])
+                "UPDATE materials SET file_type = 'application/pdf' WHERE id = %s",
+                (existing['id'],)
             )
-            if not _needs_ingest(modified_time, existing.get('external_last_edited')):
-                return existing['id'], False
-            return existing['id'], True
-
-        row = db.execute("""
-            INSERT INTO materials (
-                course_id, name, file_url, uploaded_by, file_type,
-                visibility, source_type, external_id, external_last_edited, sync,
-                integration_source_point_id
-            )
-            VALUES (%s, %s, %s, %s, 'application/pdf', 'private', 'gdrive', %s, %s, true, %s)
-            RETURNING id
-        """, (
-            course_id,
-            file_name or f'Drive file {file_id}',
-            f'gdrive/{file_id}.pdf',  # placeholder; updated after S3 upload
-            user_id,
-            file_id,
-            modified_time,
-            source_point_id,
-        )).fetchone()
-        material_id = row['id']
-
-        # Link material to course via material_ids JSONB array
         db.execute(
-            """
-            UPDATE courses
-            SET material_ids = material_ids || %s::jsonb
-            WHERE id = %s
-              AND NOT material_ids @> %s::jsonb
-            """,
-            (json.dumps([material_id]), course_id, json.dumps([material_id]))
+            "UPDATE materials SET integration_source_point_id = %s WHERE id = %s",
+            (source_point_id, existing['id'])
         )
-    return material_id, True
+        if not _needs_ingest(modified_time, existing.get('external_last_edited')):
+            return existing['id'], False
+        return existing['id'], True
+
+
+def _doc_type_changed(material_id: int) -> bool:
+    """Return True if materials.doc_type differs from the doc_type used in the last ingest.
+
+    Compares materials.doc_type (current user setting) against documents.source_type
+    (the doc_type that was active when chunks were last generated). Returns False if
+    no documents row exists — no prior ingest means no drift to detect.
+    """
+    with get_db() as db:
+        row = db.execute(
+            """
+            SELECT m.doc_type, d.source_type AS last_doc_type
+            FROM materials m
+            LEFT JOIN documents d ON d.material_id = m.id
+            WHERE m.id = %s
+            ORDER BY d.ingested_at DESC NULLS LAST
+            LIMIT 1
+            """,
+            (material_id,)
+        ).fetchone()
+    if not row or not row.get('last_doc_type'):
+        return False
+    return row['doc_type'] != row['last_doc_type']
 
 
 def _delete_old_chunks(material_id):
@@ -278,7 +275,13 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
                 user_id, course_id, source_point_id, file_id, file_name, modified_time
             )
 
-            if not needs_ingest and not force_full_sync:
+            if material_id is None:
+                continue
+
+            doc_type_drifted = (not needs_ingest and not force_full_sync
+                                and _doc_type_changed(material_id))
+
+            if not needs_ingest and not force_full_sync and not doc_type_drifted:
                 print(f'[gdrive_handler] Skipping unchanged file={file_id} name={file_name!r}')
                 if external_ids is not None:
                     with get_db() as db:
@@ -292,6 +295,9 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
                         )
                 continue
 
+            if doc_type_drifted:
+                print(f'[gdrive_handler] doc_type changed for file={file_id} name={file_name!r} — re-ingesting')
+
             print(f'[gdrive_handler] Ingesting file={file_id} name={file_name!r} mime={mime_type}')
 
             try:
@@ -302,7 +308,7 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
                 continue
 
             if not needs_ingest:
-                # Changed file: clear stale embeddings and old S3 PDF before re-ingest
+                # force_full_sync or doc_type changed: clear stale embeddings before re-ingest
                 _delete_old_chunks(material_id)
                 try:
                     s3.delete_object(Bucket=BUCKET, Key=f'gdrive/{file_id}.pdf')

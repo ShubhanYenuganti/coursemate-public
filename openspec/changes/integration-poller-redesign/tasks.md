@@ -36,9 +36,9 @@
 
 ## 6. Verification
 
-- [ ] 6.1 Trigger a "Sync Now" on a GDrive file that has not changed — confirm `embed_status` becomes `'up_to_date'` in the DB and no S3/embed work runs
-- [ ] 6.2 Trigger a "Sync Now" on a GDrive file that has changed — confirm full re-ingest pipeline runs and `embed_status` reaches `'done'`
-- [ ] 6.3 Trigger a "Sync Now" on a Notion page that has not changed — confirm `embed_status = 'up_to_date'` and no re-conversion
-- [ ] 6.4 Trigger a "Sync Now" on a Notion page that has changed — confirm re-conversion, S3 re-upload, and fresh embed job
-- [ ] 6.5 Confirm EventBridge background sweep still processes all `sync=TRUE` materials correctly without `external_ids` in the event
+- [x] 6.1 Trigger a "Sync Now" on a GDrive file that has not changed — confirm `embed_status` becomes `'up_to_date'` in the DB and no S3/embed work runs
+- [x] 6.2 Trigger a "Sync Now" on a GDrive file that has changed — confirm full re-ingest pipeline runs and `embed_status` reaches `'done'`
+- [x] 6.3 Trigger a "Sync Now" on a Notion page that has not changed — confirm `embed_status = 'up_to_date'` and no re-conversion
+- [x] 6.4 Trigger a "Sync Now" on a Notion page that has changed — confirm re-conversion, S3 re-upload, and fresh embed job
+- [x] 6.5 Confirm EventBridge background sweep still processes all `sync=TRUE` materials correctly without `external_ids` in the event
 - [ ] 6.6 Confirm a file with `external_last_edited = NULL` (failed prior upload) is retried automatically by both pollers on the next sweep
