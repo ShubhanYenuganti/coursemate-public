@@ -1808,7 +1808,14 @@ export default function MaterialsPage({
   const dismissItem = (id) =>
     setUploadItems((prev) => prev.filter((i) => i.id !== id));
 
-  const isTerminalUpload = (i) => i.status === "done" || i.status === "error";
+  const isTerminalUpload = (i) => {
+    if (i.status === "done" || i.status === "error") return true;
+    if (i.status === "indexing") {
+      const s = embedStatusMap[String(i.materialId)];
+      return s === "done" || s === "failed" || s === "skipped";
+    }
+    return false;
+  };
   const isTerminalSyncItem = (item) => {
     const status = embedStatusMap[item.external_id];
     return (
