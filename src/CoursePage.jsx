@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CreateCourseModal from './CreateCourseModal.jsx';
 import SharingAccessModal from './SharingAccessModal.jsx';
@@ -55,6 +55,28 @@ function ToolbarItem({ icon, label, active, onClick }) {
   );
 }
 
+// ─── progress state persistence ──────────────────────────────────────────────
+
+function loadProgressState(courseId) {
+  try {
+    const raw = localStorage.getItem(`coursemate_progress_${courseId}`);
+    if (!raw) return { syncJobs: [], uploadItems: [], panelDismissed: false };
+    const parsed = JSON.parse(raw);
+    const uploadItems = (parsed.uploadItems || []).map((item) =>
+      item.status === 'uploading' || item.status === 'confirming'
+        ? { ...item, status: 'error' }
+        : item,
+    );
+    return {
+      syncJobs: parsed.syncJobs || [],
+      uploadItems,
+      panelDismissed: parsed.panelDismissed ?? false,
+    };
+  } catch {
+    return { syncJobs: [], uploadItems: [], panelDismissed: false };
+  }
+}
+
 // ─── main component ───────────────────────────────────────────────────────────
 
 export default function CoursePage({ course, userData, csrfToken, onSignOut, onCourseUpdate }) {
@@ -78,10 +100,30 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
   const [descStatus, setDescStatus] = useState(null); // null | 'saving' | 'error'
   const [descError, setDescError] = useState('');
 
-  // ─── progress panel state (persists across tab switches) ─────────────────────
+  // ─── progress panel state (persists across tab switches and page refresh) ────
   const [syncJobs, setSyncJobs] = useState([]);
   const [uploadItems, setUploadItems] = useState([]);
   const [panelDismissed, setPanelDismissed] = useState(false);
+  const progressInitialized = useRef(false);
+
+  // Load from localStorage once courseId is known
+  useEffect(() => {
+    if (!course?.id || progressInitialized.current) return;
+    progressInitialized.current = true;
+    const saved = loadProgressState(course.id);
+    setSyncJobs(saved.syncJobs);
+    setUploadItems(saved.uploadItems);
+    setPanelDismissed(saved.panelDismissed);
+  }, [course?.id]);
+
+  // Persist to localStorage on every change
+  useEffect(() => {
+    if (!course?.id) return;
+    localStorage.setItem(
+      `coursemate_progress_${course.id}`,
+      JSON.stringify({ syncJobs, uploadItems, panelDismissed }),
+    );
+  }, [syncJobs, uploadItems, panelDismissed, course?.id]);
 
   async function handleSaveDesc() {
     setDescStatus('saving');

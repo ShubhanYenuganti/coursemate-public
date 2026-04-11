@@ -1827,7 +1827,9 @@ export default function MaterialsPage({
   }, [syncJobs, uploadItems, embedStatusMap]);
   const providerSourcePoints = sourcePoints[syncProvider] || [];
 
+  const TERMINAL_EMBED_STATUSES = new Set(["done", "failed", "skipped"]);
   const visibleMaterials = materials.filter((m) => {
+    if (!TERMINAL_EMBED_STATUSES.has(m.embed_status)) return false;
     if (ownerFilter === "mine" && m.uploaded_by !== userId) return false;
     if (typeFilter === "uploaded" && m.source_type !== "upload") return false;
     if (typeFilter === "generated" && m.source_type !== "generated")
