@@ -78,6 +78,11 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
   const [descStatus, setDescStatus] = useState(null); // null | 'saving' | 'error'
   const [descError, setDescError] = useState('');
 
+  // ─── progress panel state (persists across tab switches) ─────────────────────
+  const [syncJobs, setSyncJobs] = useState([]);
+  const [uploadItems, setUploadItems] = useState([]);
+  const [panelDismissed, setPanelDismissed] = useState(false);
+
   async function handleSaveDesc() {
     setDescStatus('saving');
     setDescError('');
@@ -229,6 +234,12 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
             <MaterialsPage
               courseId={course?.id}
               userId={userData?.db_id}
+              syncJobs={syncJobs}
+              setSyncJobs={setSyncJobs}
+              uploadItems={uploadItems}
+              setUploadItems={setUploadItems}
+              panelDismissed={panelDismissed}
+              setPanelDismissed={setPanelDismissed}
             />
           </div>
         )}

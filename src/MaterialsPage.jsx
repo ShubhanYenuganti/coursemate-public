@@ -1045,18 +1045,22 @@ function FilterBar({ ownerFilter, setOwnerFilter, typeFilter, setTypeFilter }) {
 
 // ─── main component ───────────────────────────────────────────────────────────
 
-export default function MaterialsPage({ courseId, userId }) {
+export default function MaterialsPage({
+  courseId,
+  userId,
+  syncJobs,
+  setSyncJobs,
+  uploadItems,
+  setUploadItems,
+  panelDismissed,
+  setPanelDismissed,
+}) {
   const [materials, setMaterials] = useState([]);
   const [loadingMats, setLoadingMats] = useState(true);
   const [stagingItems, setStagingItems] = useState([]);
-  const [uploadItems, setUploadItems] = useState([]);
   const [ownerFilter, setOwnerFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
-  const [syncJobs, setSyncJobs] = useState([]);
   const [embedStatusMap, setEmbedStatusMap] = useState({});
-  const [panelDismissed, setPanelDismissed] = useState(
-    () => localStorage.getItem("coursemate_progress_dismissed") === "true",
-  );
 
   const [sourcePoints, setSourcePoints] = useState({ gdrive: [], notion: [] });
   const [sourcePointsLoading, setSourcePointsLoading] = useState(false);
@@ -1408,7 +1412,6 @@ export default function MaterialsPage({ courseId, userId }) {
       };
       setUploadItems((prev) => [...prev, uploadItem]);
       setPanelDismissed(false);
-      localStorage.removeItem("coursemate_progress_dismissed");
       await uploadOne(uploadItem);
     },
     [uploadOne],
@@ -1591,7 +1594,6 @@ export default function MaterialsPage({ courseId, userId }) {
         },
       ]);
       setPanelDismissed(false);
-      localStorage.removeItem("coursemate_progress_dismissed");
       setSyncModalOpen(false);
       await fetchMaterials();
     } catch (err) {
@@ -1821,7 +1823,6 @@ export default function MaterialsPage({ courseId, userId }) {
     const remainingUploads = uploadItems.filter((i) => !isTerminalUpload(i));
     if (remainingSync.length === 0 && remainingUploads.length === 0) {
       setPanelDismissed(true);
-      localStorage.setItem("coursemate_progress_dismissed", "true");
     }
   }, [syncJobs, uploadItems, embedStatusMap]);
   const providerSourcePoints = sourcePoints[syncProvider] || [];
