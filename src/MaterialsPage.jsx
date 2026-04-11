@@ -807,7 +807,7 @@ function ProgressPanel({ syncJobs, uploadItems, embedStatusMap, onClearDone }) {
               >
                 <div className="min-w-0 flex-1">
                   <p className="text-xs text-gray-700 truncate">
-                    {item.file?.name || item.id}
+                    {item.name || item.file?.name || item.id}
                   </p>
                 </div>
                 <span
@@ -1185,6 +1185,12 @@ export default function MaterialsPage({
           : material,
       );
       setMaterials(mappedMaterials);
+      const map = {};
+      for (const m of mappedMaterials) {
+        if (m.external_id) map[m.external_id] = m.embed_status;
+        map[String(m.id)] = m.embed_status;
+      }
+      setEmbedStatusMap(map);
     } catch {
       // silently fail — UI will show empty state
     } finally {
@@ -1403,6 +1409,7 @@ export default function MaterialsPage({
       const uploadItem = {
         id: stagingItem.id,
         file: stagingItem.file,
+        name: stagingItem.file.name,
         docType: stagingItem.docType,
         status: "queued",
         materialId: null,
