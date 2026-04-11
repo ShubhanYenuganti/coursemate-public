@@ -796,7 +796,10 @@ function ProgressPanel({ syncJobs, uploadItems, embedStatusMap, onClearDone }) {
             Uploads
           </p>
           {uploadItems.map((item) => {
-            const st = uploadStatusLabel(item.status);
+            const st =
+              item.status === "indexing"
+                ? deriveSyncStatus({ external_id: String(item.materialId) })
+                : uploadStatusLabel(item.status);
             return (
               <div
                 key={item.id}
@@ -1194,7 +1197,9 @@ export default function MaterialsPage({ courseId, userId }) {
       const data = await res.json();
       const map = {};
       for (const m of data.materials || []) {
-        map[m.external_id] = m.embed_status === "up_to_date" ? "done" : m.embed_status;
+        const status = m.embed_status === "up_to_date" ? "done" : m.embed_status;
+        if (m.external_id) map[m.external_id] = status;
+        map[String(m.id)] = status;
       }
       setEmbedStatusMap(map);
     } catch {
@@ -1224,7 +1229,13 @@ export default function MaterialsPage({ courseId, userId }) {
       ),
     ) ||
     uploadItems.some(
-      (i) => i.status === "uploading" || i.status === "confirming",
+      (i) =>
+        i.status === "uploading" ||
+        i.status === "confirming" ||
+        (i.status === "indexing" &&
+          embedStatusMap[String(i.materialId)] !== "done" &&
+          embedStatusMap[String(i.materialId)] !== "failed" &&
+          embedStatusMap[String(i.materialId)] !== "skipped"),
     );
 
   // Poll embed statuses every 2 s (lightweight — does not touch the materials grid)
@@ -1351,7 +1362,7 @@ export default function MaterialsPage({ courseId, userId }) {
         const { material } = await r3.json();
 
         update({
-          status: "done",
+          status: "indexing",
           materialId: material.id,
           isPublic: false,
           visibilityUpdating: false,
@@ -1399,12 +1410,8 @@ export default function MaterialsPage({ courseId, userId }) {
       setPanelDismissed(false);
       localStorage.removeItem("coursemate_progress_dismissed");
       await uploadOne(uploadItem);
-      await fetchMaterials();
-      setUploadItems((prev) =>
-        prev.filter((i) => i.id !== uploadItem.id || i.status !== "done"),
-      );
     },
-    [uploadOne, fetchMaterials],
+    [uploadOne],
   );
 
   // ── remove a staging item ─────────────────────────────────────────────────
