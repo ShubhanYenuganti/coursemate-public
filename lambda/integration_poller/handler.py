@@ -110,6 +110,7 @@ def lambda_handler(event, context):
     course_id_filter = event.get('course_id')
     source_point_id_filter = event.get('source_point_id')
     force_full_sync = bool(event.get('force_full_sync', False))
+    external_ids = event.get('external_ids') or None
     print(
         f'[integration_poller] lambda_handler start '
         f'user_id_filter={user_id_filter} course_id_filter={course_id_filter} '
@@ -152,7 +153,7 @@ def lambda_handler(event, context):
                     results.append({'id': sp['id'], 'status': 'skipped', 'reason': 'no_token'})
                     continue
                 print(f'[integration_poller] source_point_id={sp["id"]} notion token resolved')
-                notion_sync(sp, token, force_full_sync=force_full_sync)
+                notion_sync(sp, token, force_full_sync=force_full_sync, external_ids=external_ids)
                 print(f'[integration_poller] source_point_id={sp["id"]} notion sync completed')
                 results.append({'id': sp['id'], 'status': 'ok'})
             elif provider == 'gdrive':
@@ -162,7 +163,7 @@ def lambda_handler(event, context):
                     results.append({'id': sp['id'], 'status': 'skipped', 'reason': 'no_token'})
                     continue
                 print(f'[integration_poller] source_point_id={sp["id"]} gdrive token resolved')
-                gdrive_sync(sp, token, force_full_sync=force_full_sync)
+                gdrive_sync(sp, token, force_full_sync=force_full_sync, external_ids=external_ids)
                 print(f'[integration_poller] source_point_id={sp["id"]} gdrive sync completed')
                 results.append({'id': sp['id'], 'status': 'ok'})
             else:

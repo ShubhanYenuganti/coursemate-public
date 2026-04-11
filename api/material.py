@@ -3,7 +3,8 @@
 # POST   /api/material  action="request_upload"     → get presigned S3 upload URL
 # POST   /api/material  action="confirm_upload"     → confirm S3 upload, create record
 # POST   /api/material  action="update_visibility"  → change public/private
-# DELETE /api/material                              → delete material
+# POST   /api/material  action="bulk_upsert_sync"   → upsert sync state for integration source point files
+# DELETE /api/material                              → delete material (server-side tombstone for synced materials)
 
 import json
 import math
@@ -42,6 +43,38 @@ except ImportError:
         create_multipart_upload, generate_multipart_part_url,
         complete_multipart_upload, abort_multipart_upload,
     )
+
+
+_INTEGRATION_POLLER_ARN = os.environ.get("INTEGRATION_POLLER_LAMBDA_ARN", "")
+_AWS_REGION = (
+    os.environ.get("COURSEMATE_AWS_REGION")
+    or os.environ.get("AWS_REGION")
+    or os.environ.get("AWS_DEFAULT_REGION")
+    or "us-east-1"
+)
+
+
+def _trigger_poller(source_point_id, user_id, course_id, external_ids: list | None = None):
+    """Fire-and-forget Lambda invoke for the integration poller."""
+    if not _INTEGRATION_POLLER_ARN:
+        return
+    try:
+        import boto3
+        lmbd = boto3.client("lambda", region_name=_AWS_REGION)
+        payload = {
+            "source_point_id": int(source_point_id),
+            "user_id": user_id,
+            "course_id": int(course_id),
+        }
+        if external_ids is not None:
+            payload["external_ids"] = external_ids
+        lmbd.invoke(
+            FunctionName=_INTEGRATION_POLLER_ARN,
+            InvocationType="Event",
+            Payload=json.dumps(payload).encode(),
+        )
+    except Exception as exc:
+        print(f"[material] poller invoke failed: {exc}")
 
 
 def _s3_key_from_url(file_url: str) -> str:
@@ -138,16 +171,113 @@ class handler(BaseHTTPRequestHandler):
 
         action = data.get('action', 'request_upload')
 
-        if action == 'request_upload':
-            self._request_upload(google_id, data)
-        elif action == 'confirm_upload':
-            self._confirm_upload(google_id, data)
-        elif action == 'update_visibility':
-            self._update_visibility(google_id, data)
-        elif action == 'set_selection':
-            self._set_selection(google_id, data)
-        else:
-            send_json(self, 400, {"error": f"Unknown action '{action}'"})
+        try:
+            if action == 'request_upload':
+                self._request_upload(google_id, data)
+            elif action == 'confirm_upload':
+                self._confirm_upload(google_id, data)
+            elif action == 'update_visibility':
+                self._update_visibility(google_id, data)
+            elif action == 'set_selection':
+                self._set_selection(google_id, data)
+            elif action == 'bulk_upsert_sync':
+                self._bulk_upsert_sync(google_id, data)
+            else:
+                send_json(self, 400, {"error": f"Unknown action '{action}'"})
+        except Exception as exc:
+            print(f"[material] action={action} failed: {exc}")
+            send_json(self, 500, {"error": "material action failed", "action": action, "detail": str(exc)})
+
+    # ---------------------------------------------------- bulk_upsert_sync --
+
+    def _bulk_upsert_sync(self, google_id: str, data: dict):
+        """Bulk upsert sync state for a list of integration source point files.
+
+        Body: {
+            course_id: int,
+            source_point_id: int,
+            source_type: "gdrive" | "notion",
+            files: [{external_id: str, name: str, sync: bool}]
+        }
+
+        Performs INSERT ... ON CONFLICT (external_id, course_id) DO UPDATE SET sync = excluded.sync
+        so existing rows get their sync flag updated and new rows are inserted with sync set.
+        After writing, triggers the integration poller Lambda for the source point.
+        """
+        user = User.get_by_google_id(google_id)
+        if not user:
+            send_json(self, 404, {"error": "User not found"})
+            return
+
+        course_id = data.get('course_id')
+        source_point_id = data.get('source_point_id')
+        source_type = data.get('source_type')
+        files = data.get('files', [])
+
+        if not course_id or not source_point_id or not source_type:
+            send_json(self, 400, {"error": "course_id, source_point_id, and source_type are required"})
+            return
+        if source_type not in ('gdrive', 'notion'):
+            send_json(self, 400, {"error": "source_type must be 'gdrive' or 'notion'"})
+            return
+        if not isinstance(files, list):
+            send_json(self, 400, {"error": "files must be an array"})
+            return
+
+        if not Course.verify_access(int(course_id), user['id']):
+            send_json(self, 403, {"error": "Access denied to this course"})
+            return
+
+        if not files:
+            send_json(self, 200, {"upserted": 0})
+            return
+
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                # Verify source point belongs to this user and course
+                cursor.execute(
+                    "SELECT id FROM integration_source_points WHERE id = %s AND user_id = %s AND course_id = %s",
+                    (source_point_id, user['id'], course_id),
+                )
+                if not cursor.fetchone():
+                    cursor.close()
+                    send_json(self, 403, {"error": "Source point not found or access denied"})
+                    return
+
+                upserted = 0
+                for f in files:
+                    external_id = f.get('external_id')
+                    name = f.get('name') or ''
+                    sync_val = bool(f.get('sync', True))
+                    raw_doc_type = f.get('doc_type', DEFAULT_DOC_TYPE)
+                    doc_type = raw_doc_type if raw_doc_type in VALID_DOC_TYPES else DEFAULT_DOC_TYPE
+                    if not external_id:
+                        continue
+                    # Keep file_url non-null until poller ingests and replaces with final HTTPS URL.
+                    placeholder_file_url = f"{source_type}/{external_id}.pdf"
+                    cursor.execute("""
+                        INSERT INTO materials
+                            (course_id, name, file_url, uploaded_by, file_type, source_type,
+                             external_id, integration_source_point_id, sync, doc_type)
+                        VALUES (%s, %s, %s, %s, 'application/pdf', %s, %s, %s, %s, %s)
+                        ON CONFLICT (external_id, course_id)
+                        DO UPDATE SET file_type = 'application/pdf',
+                                      sync = EXCLUDED.sync,
+                                      doc_type = EXCLUDED.doc_type,
+                                      updated_at = CURRENT_TIMESTAMP
+                    """, (course_id, name, placeholder_file_url, user['id'], source_type, external_id, source_point_id, sync_val, doc_type))
+                    upserted += 1
+                cursor.close()
+        except Exception as exc:
+            send_json(self, 500, {"error": "bulk_upsert_sync failed", "detail": str(exc)})
+            return
+
+        # Trigger the integration poller Lambda so sync=true files get ingested
+        external_ids = [f['external_id'] for f in files if f.get('sync') and f.get('external_id')]
+        _trigger_poller(source_point_id, user['id'], course_id, external_ids=external_ids)
+
+        send_json(self, 200, {"upserted": upserted})
 
     # --------------------------------------------------------------- DELETE --
     def do_DELETE(self):
@@ -210,10 +340,18 @@ class handler(BaseHTTPRequestHandler):
                     send_json(self, 500, {"error": "Failed to delete file from S3", "detail": str(e)})
                     return
 
+        is_synced_material = material.get('integration_source_point_id') is not None
+        if is_synced_material:
+            # Retain synced rows as tombstones so the poller won't re-ingest.
+            # The active materials query filters sync=false rows from UI.
+            Material.tombstone(material_id)
+            send_json(self, 200, {"success": True, "tombstoned": True})
+            return
+
         Course.remove_material(course_id, material_id)
         Material.delete(material_id)
 
-        send_json(self, 200, {"success": True})
+        send_json(self, 200, {"success": True, "tombstoned": False})
 
     # --------------------------------------------------------- GET helpers ---
 

@@ -1,5 +1,9 @@
 # CourseMate Development Guidelines
 
+## File Editing
+
+Always use the Write or Edit tools to create or modify files. Never use `sed`, `cat`, `awk`, `echo >`, or other shell commands for file editing.
+
 ## Database Migrations
 
 For simple migrations (one-liners or a few SQL commands), provide the commands directly in chat for the user to run against the database — do NOT create a migration script file. Only create a migration script for complex, multi-step migrations that benefit from a file.

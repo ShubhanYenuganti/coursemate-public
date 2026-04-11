@@ -169,15 +169,18 @@ class Material:
         visibility: str = 'private',
         source_type: str = 'upload',
         doc_type: str = 'general',
+        sync: bool = True,
+        integration_source_point_id: Optional[int] = None,
+        external_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Insert a new material record and return it."""
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO materials (course_id, name, file_url, uploaded_by, file_type, visibility, source_type, doc_type)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO materials (course_id, name, file_url, uploaded_by, file_type, visibility, source_type, doc_type, sync, integration_source_point_id, external_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
-            """, (course_id, name, file_url, uploaded_by, file_type, visibility, source_type, doc_type))
+            """, (course_id, name, file_url, uploaded_by, file_type, visibility, source_type, doc_type, sync, integration_source_point_id, external_id))
             material = cursor.fetchone()
             cursor.close()
             return dict(material)
@@ -207,6 +210,7 @@ class Material:
                 LEFT JOIN material_embed_jobs j ON j.material_id = m.id
                 WHERE m.course_id = %s
                   AND (m.visibility = 'public' OR m.uploaded_by = %s)
+                  AND m.sync IS DISTINCT FROM false
                 ORDER BY m.created_at DESC
             """, (course_id, user_id))
             materials = cursor.fetchall()
@@ -234,6 +238,19 @@ class Material:
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM materials WHERE id = %s RETURNING id", (material_id,))
+            result = cursor.fetchone()
+            cursor.close()
+            return result is not None
+
+    @staticmethod
+    def tombstone(material_id: int) -> bool:
+        """Set sync=false on a synced material (retains row, prevents re-ingestion). Returns True if updated."""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE materials SET sync = false, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s RETURNING id
+            """, (material_id,))
             result = cursor.fetchone()
             cursor.close()
             return result is not None
