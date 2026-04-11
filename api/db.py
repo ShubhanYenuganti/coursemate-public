@@ -307,7 +307,7 @@ def init_db():
                 id                     SERIAL PRIMARY KEY,
                 material_id            INTEGER      NOT NULL REFERENCES materials(id) ON DELETE CASCADE UNIQUE,
                 status                 VARCHAR(20)  NOT NULL DEFAULT 'pending'
-                                       CHECK (status IN ('pending', 'processing', 'done', 'failed', 'skipped')),
+                                       CHECK (status IN ('pending', 'syncing', 'processing', 'done', 'failed', 'skipped', 'up_to_date')),
                 chunks_created         INTEGER,
                 chunk_cursor           INTEGER      NOT NULL DEFAULT 0,
                 total_chunks_detected  INTEGER,
@@ -320,6 +320,13 @@ def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_embed_jobs_status      ON material_embed_jobs(status);
             CREATE INDEX IF NOT EXISTS idx_embed_jobs_material_id ON material_embed_jobs(material_id);
+
+            ALTER TABLE material_embed_jobs
+                DROP CONSTRAINT IF EXISTS material_embed_jobs_status_check;
+
+            ALTER TABLE material_embed_jobs
+                ADD CONSTRAINT material_embed_jobs_status_check
+                CHECK (status IN ('pending', 'syncing', 'processing', 'done', 'failed', 'skipped', 'up_to_date'));
         """)
 
         # RAG schema: documents, chunks

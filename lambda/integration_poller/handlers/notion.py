@@ -29,7 +29,7 @@ from reportlab.platypus import (
 )
 
 from db import get_db
-from utils import _needs_ingest
+from .utils import _needs_ingest
 
 NOTION_API_BASE = "https://api.notion.com/v1"
 NOTION_VERSION = "2026-03-11"
@@ -511,6 +511,10 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
                     with get_db() as db:
                         db.execute(
                             "UPDATE material_embed_jobs SET status = 'up_to_date' WHERE material_id = %s",
+                            (material_id,)
+                        )
+                        db.execute(
+                            "UPDATE materials SET updated_at = CURRENT_TIMESTAMP WHERE id = %s",
                             (material_id,)
                         )
                 continue
