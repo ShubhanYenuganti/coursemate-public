@@ -256,22 +256,47 @@ class handler(BaseHTTPRequestHandler):
                         continue
                     # Keep file_url non-null until poller ingests and replaces with final HTTPS URL.
                     placeholder_file_url = f"{source_type}/{external_id}.pdf"
+                    # Use a CTE so we can detect doc_type drift in a single round-trip.
+                    # `pre` reads the old doc_type before the upsert (same snapshot), then
+                    # `reset_embed` resets the embed job to pending only when doc_type changed.
+                    # embed_status is NOT a column on materials — it lives in material_embed_jobs.
                     cursor.execute("""
-                        INSERT INTO materials
-                            (course_id, name, file_url, uploaded_by, file_type, source_type,
-                             external_id, integration_source_point_id, sync, doc_type)
-                        VALUES (%s, %s, %s, %s, 'application/pdf', %s, %s, %s, %s, %s)
-                        ON CONFLICT (external_id, course_id)
-                        DO UPDATE SET file_type = 'application/pdf',
-                                      sync = EXCLUDED.sync,
-                                      doc_type = EXCLUDED.doc_type,
-                                      embed_status = CASE
-                                          WHEN materials.doc_type IS DISTINCT FROM EXCLUDED.doc_type
-                                          THEN 'pending'
-                                          ELSE materials.embed_status
-                                      END,
-                                      updated_at = CURRENT_TIMESTAMP
-                    """, (course_id, name, placeholder_file_url, user['id'], source_type, external_id, source_point_id, sync_val, doc_type))
+                        WITH pre AS (
+                            SELECT id, doc_type AS old_doc_type
+                            FROM materials
+                            WHERE external_id = %s AND course_id = %s
+                        ),
+                        upserted AS (
+                            INSERT INTO materials
+                                (course_id, name, file_url, uploaded_by, file_type, source_type,
+                                 external_id, integration_source_point_id, sync, doc_type)
+                            VALUES (%s, %s, %s, %s, 'application/pdf', %s, %s, %s, %s, %s)
+                            ON CONFLICT (external_id, course_id)
+                            DO UPDATE SET file_type = 'application/pdf',
+                                          sync = EXCLUDED.sync,
+                                          doc_type = EXCLUDED.doc_type,
+                                          updated_at = CURRENT_TIMESTAMP
+                            RETURNING id
+                        ),
+                        reset_embed AS (
+                            UPDATE material_embed_jobs
+                            SET status = 'pending',
+                                started_at = NULL,
+                                completed_at = NULL,
+                                error_message = NULL,
+                                chunks_created = NULL
+                            FROM upserted u
+                            JOIN pre p ON p.id = u.id
+                            WHERE material_embed_jobs.material_id = u.id
+                              AND p.old_doc_type IS DISTINCT FROM %s
+                        )
+                        SELECT id FROM upserted
+                    """, (
+                        external_id, course_id,  # pre
+                        course_id, name, placeholder_file_url, user['id'], source_type,
+                        external_id, source_point_id, sync_val, doc_type,  # upserted
+                        doc_type,  # reset_embed: new doc_type to compare against old
+                    ))
                     upserted += 1
                 cursor.close()
         except Exception as exc:

@@ -1,9 +1,7 @@
 ## Purpose
 
 Define Google Drive import behavior for course source points, including folder source management and Lambda-driven ingestion into course materials.
-
 ## Requirements
-
 ### Requirement: User can add a Drive folder as a course source point
 The system SHALL allow users to add a Google Drive folder as a source point for a course. The source point SHALL be stored in `integration_source_points` with `provider = "gdrive"` and `external_id` set to the Drive folder ID.
 
@@ -20,31 +18,27 @@ The system SHALL allow users to add a Google Drive folder as a source point for 
 - **THEN** the system SHALL return a 403 error prompting the user to verify folder permissions or reconnect
 
 ### Requirement: Lambda poller ingests all files in a Drive folder as course materials
-The system SHALL poll active Drive folder source points, list all files within each folder, and convert each file to PDF for ingestion as course materials. Files larger than 50 MB SHALL be skipped with an error status.
+The system SHALL poll active Drive folder source points, derive a work list of files from the materials table (filtered to `sync = TRUE` for the source point), fetch fresh metadata per file ID from the Drive API, and re-ingest files whose `modifiedTime > external_last_edited`. Files larger than 50 MB SHALL be skipped with an error status.
 
 #### Scenario: New Drive folder ingested
 - **WHEN** the integration Lambda polls an active `gdrive` source point for the first time
-- **THEN** the system lists all files in the folder, exports each file as PDF (using Drive export API for Google Docs/Sheets/Slides, or downloads directly for native PDFs), uploads each to S3, creates a materials record per file, and enqueues an embed job per file
+- **THEN** the system fetches metadata for each external_id in the work list, exports each file as PDF (using Drive export API for Google Docs/Sheets/Slides, or downloads directly for native PDFs), uploads each to S3, creates a materials record per file, and enqueues an embed job per file
 
-#### Scenario: Changed file in folder re-ingested
-- **WHEN** the integration Lambda polls a folder and a file's `modifiedTime` is newer than its corresponding material's `external_last_edited`
+#### Scenario: Changed file re-ingested
+- **WHEN** the integration Lambda polls a source point and a file's `modifiedTime` is strictly greater than its material's `external_last_edited`
 - **THEN** the system re-exports that file as PDF, replaces the S3 object, updates the materials record, deletes old embedding chunks, and enqueues a fresh embed job
 
-#### Scenario: New file added to folder
-- **WHEN** the integration Lambda polls a folder and finds a file with no corresponding material record (by `external_id`)
+#### Scenario: New file added to source point
+- **WHEN** the integration Lambda polls a source point and finds an external_id with no corresponding material record
 - **THEN** the system ingests it as a new material following the same flow as initial ingestion
 
 #### Scenario: Unchanged file skipped
-- **WHEN** the integration Lambda polls a folder and a file's `modifiedTime` matches its material's `external_last_edited`
+- **WHEN** the integration Lambda polls a source point and a file's `modifiedTime` is equal to or older than its material's `external_last_edited`
 - **THEN** the system SHALL skip re-ingestion for that file
-
-#### Scenario: File removed from folder
-- **WHEN** the integration Lambda polls a folder and a previously ingested file is no longer present
-- **THEN** the system SHALL mark the corresponding material as inactive (do NOT delete it or its embeddings)
 
 #### Scenario: File exceeds size limit
 - **WHEN** a Drive file export results in a file larger than 50 MB
-- **THEN** the system SHALL skip ingestion for that file and mark the material with an error status; other files in the folder continue processing
+- **THEN** the system SHALL skip ingestion for that file and mark the material with an error status; other files in the source point continue processing
 
 ### Requirement: User can list and manage Drive folder source points
 The system SHALL allow users to list, enable/disable, and remove Drive folder source points for a course. The `list_source_point_files` response SHALL include `doc_type` for each file alongside `sync`, populated from the `materials` table when a record exists. Files with no materials record SHALL return `doc_type = null`.
@@ -79,3 +73,4 @@ The `bulk_upsert_sync` endpoint SHALL accept an optional `doc_type` field per fi
 #### Scenario: Invalid doc_type defaults to general
 - **WHEN** a file entry in `bulk_upsert_sync` payload contains an unrecognised `doc_type` value
 - **THEN** the materials record SHALL be upserted with `doc_type = 'general'`
+
