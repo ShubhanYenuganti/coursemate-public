@@ -747,7 +747,7 @@ class handler(BaseHTTPRequestHandler):
                      ai_provider, ai_model, context_material_ids,
                      grounding_meta, tool_trace,
                      retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at, tool_trace
@@ -923,7 +923,7 @@ class handler(BaseHTTPRequestHandler):
                      ai_provider, ai_model, context_material_ids,
                      grounding_meta, tool_trace,
                      retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at, tool_trace
@@ -1186,7 +1186,7 @@ class handler(BaseHTTPRequestHandler):
                          ai_provider, ai_model, context_material_ids,
                          grounding_meta, tool_trace,
                          retrieved_chunk_ids, message_index)
-                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                               retrieved_chunk_ids, context_token_count, response_token_count,
                               response_time_ms, finish_reason, message_index, created_at, tool_trace
@@ -1827,7 +1827,7 @@ class handler(BaseHTTPRequestHandler):
                         (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                          ai_provider, ai_model, context_material_ids, grounding_meta, tool_trace,
                          retrieved_chunk_ids, message_index)
-                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id, chat_id, role, content, summary, ai_provider, ai_model, retrieved_chunk_ids,
                               message_index, created_at, tool_trace
                     """,
