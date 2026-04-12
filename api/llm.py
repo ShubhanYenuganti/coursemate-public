@@ -82,10 +82,13 @@ _SYSTEM_PROMPT_TOOL_USE = (
 SYSTEM_PROMPT = _SYSTEM_PROMPT_BASE + _SYSTEM_PROMPT_TOOL_USE
 
 _JSON_SYNTHESIS_INSTRUCTION = (
-    "\n\n**Response format**: You MUST respond with a single JSON object only, with exactly two string keys: "
+    "\n\n**Response format**: Respond with a single raw JSON object — no code fences, "
+    "no ```json wrapper, no text before or after. The object must have exactly two string keys: "
     "`reply` (your full markdown answer following the rules above) and "
     "`summary` (a concise phrase of about 5–6 words highlighting key concepts from this turn). "
-    "No text outside the JSON object."
+    "**Escaping**: `reply` is a JSON string value, so every backslash must be doubled. "
+    "Write $\\\\frac{}{}$ not $\\frac{}{}$, and $\\\\lambda$ not $\\lambda$. "
+    "Never emit a bare single backslash inside a JSON string value."
 )
 
 _AGENTIC_JSON_FINAL_INSTRUCTION = (
@@ -164,34 +167,20 @@ def _cap_summary(value: str | None) -> str | None:
 
 
 def _extract_synthesis_obj(text: str) -> dict | None:
-    """Try json.loads on text; return dict on success, None otherwise.
-
-    If the first attempt fails, retries after fixing invalid JSON escape sequences.
-    Models commonly emit LaTeX notation (\\(, \\[, \\lambda, \\frac, …) inside JSON
-    string values; these are not valid JSON escapes and cause JSONDecodeError.
-    """
+    """Try json.loads on text; return dict on success, None otherwise."""
     try:
         obj = json.loads(text)
         if isinstance(obj, dict):
             return obj
     except json.JSONDecodeError:
         pass
-
-    # Retry with escape-sequence repair.  Models commonly embed raw LaTeX
-    # (\\(, \\[, \\lambda, \\frac, …) inside JSON string values; these are not
-    # valid JSON escape sequences and cause JSONDecodeError.  We preserve only
-    # the escape characters that appear literally in model-generated JSON:
-    # \" \\ \/ \n \r \t and \uXXXX.  We intentionally do NOT exempt \b \f
-    # because they are virtually never used as JSON escapes in LLM output and
-    # frequently appear as the start of LaTeX commands (\\beta, \\frac, …).
+    repaired = re.sub(r'\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})', r'\\\\', text)
     try:
-        fixed = re.sub(r'\\(?!["\\/nrt]|u[0-9a-fA-F]{4})', r'\\\\', text)
-        obj = json.loads(fixed)
+        obj = json.loads(repaired)
         if isinstance(obj, dict):
             return obj
     except json.JSONDecodeError:
         pass
-
     return None
 
 
