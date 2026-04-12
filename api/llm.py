@@ -163,27 +163,60 @@ def _cap_summary(value: str | None) -> str | None:
     return s
 
 
+def _extract_synthesis_obj(text: str) -> dict | None:
+    """Try json.loads on text; return dict on success, None otherwise."""
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
+    return None
+
+
 def _parse_synthesis_json(raw: str) -> tuple[str, str | None]:
     """Parse `{"reply": "...", "summary": "..."}` from model output; fallback to plain markdown."""
     original = (raw or "").strip()
     text = original
     if not text:
         return "", None
-    if text.startswith("```"):
+
+    # Strip code fence wrapper (```json ... ```) — handles both regex match and
+    # cases where the regex fails by also trying a brace-scan fallback below.
+    if "```" in text:
         m = re.match(r"^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$", text)
         if m:
             text = m.group(1).strip()
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            reply = obj.get("reply") or obj.get("content") or obj.get("answer")
-            if isinstance(reply, str):
-                summ = obj.get("summary")
-                if isinstance(summ, str):
-                    return reply.strip(), _cap_summary(summ)
-                return reply.strip(), None
-    except json.JSONDecodeError:
-        logger.debug("synthesis_json_parse_failed", extra={"excerpt": _truncate_text(text, 200)})
+        else:
+            # Regex missed (e.g. prose before/after the fence); strip fences explicitly
+            text = re.sub(r"```(?:json)?", "", text).replace("```", "").strip()
+
+    def _obj_to_result(obj: dict) -> tuple[str, str | None] | None:
+        reply = obj.get("reply") or obj.get("content") or obj.get("answer")
+        if not isinstance(reply, str):
+            return None
+        summ = obj.get("summary")
+        return reply.strip(), (_cap_summary(summ) if isinstance(summ, str) else None)
+
+    # 1. Try parsing the (possibly unwrapped) text directly
+    obj = _extract_synthesis_obj(text)
+    if obj:
+        result = _obj_to_result(obj)
+        if result:
+            return result
+
+    # 2. Fallback: scan for the outermost { ... } embedded in surrounding text
+    start = text.find('{')
+    end = text.rfind('}')
+    if start != -1 and end > start:
+        candidate = text[start:end + 1]
+        obj = _extract_synthesis_obj(candidate)
+        if obj:
+            result = _obj_to_result(obj)
+            if result:
+                return result
+
+    logger.debug("synthesis_json_parse_failed", extra={"excerpt": _truncate_text(text, 200)})
     return original, None
 
 
@@ -1111,7 +1144,7 @@ def run_agent_openai(
         verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
         if not verifier_result["passed"]:
             repair_invoked = True
-            final_text = _repair_response_openai(
+            raw_repair = _repair_response_openai(
                 api_key=api_key,
                 model=model,
                 messages=messages,
@@ -1119,6 +1152,9 @@ def run_agent_openai(
                 grounding_refs=grounding_refs,
                 required_entities=required_entities,
             )
+            # Repair calls inherit the JSON system prompt, so parse its output too
+            repaired_reply, _ = _parse_synthesis_json(raw_repair)
+            final_text = repaired_reply if (repaired_reply or "").strip() else raw_repair
             verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
 
     final_text = _normalize_llm_markdown(final_text)
