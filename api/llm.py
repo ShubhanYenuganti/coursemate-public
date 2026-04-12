@@ -81,6 +81,24 @@ _SYSTEM_PROMPT_TOOL_USE = (
 # model hallucinating tool call syntax as plain text in its response.
 SYSTEM_PROMPT = _SYSTEM_PROMPT_BASE + _SYSTEM_PROMPT_TOOL_USE
 
+_JSON_SYNTHESIS_INSTRUCTION = (
+    "\n\n**Response format**: You MUST respond with a single JSON object only, with exactly two string keys: "
+    "`reply` (your full markdown answer following the rules above) and "
+    "`summary` (a concise phrase of about 5–6 words highlighting key concepts from this turn). "
+    "No text outside the JSON object."
+)
+
+_AGENTIC_JSON_FINAL_INSTRUCTION = (
+    "\n\n**Final answer format**: When you respond with your final answer to the user and you are not "
+    "calling any tools in that turn, respond with ONLY a valid JSON object with keys `reply` (string, full markdown) "
+    "and `summary` (string, about 5–6 words). No prose outside the JSON."
+)
+
+# Agentic loop: same as SYSTEM_PROMPT plus JSON final-answer requirement.
+AGENTIC_SYSTEM_PROMPT = SYSTEM_PROMPT + _AGENTIC_JSON_FINAL_INSTRUCTION
+
+_SUMMARY_MAX_LEN = 200
+
 _TIMEOUT = 60  # seconds
 DEFAULT_AGENTIC_PROVIDER = "openai"
 DEFAULT_AGENTIC_MODEL = "gpt-4o-mini"
@@ -132,6 +150,74 @@ def _truncate_text(value: str, limit: int = 180) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "..."
+
+
+def _cap_summary(value: str | None) -> str | None:
+    if not value or not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    if len(s) > _SUMMARY_MAX_LEN:
+        s = s[:_SUMMARY_MAX_LEN].rstrip()
+    return s
+
+
+def _extract_synthesis_obj(text: str) -> dict | None:
+    """Try json.loads on text; return dict on success, None otherwise."""
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
+    return None
+
+
+def _parse_synthesis_json(raw: str) -> tuple[str, str | None]:
+    """Parse `{"reply": "...", "summary": "..."}` from model output; fallback to plain markdown."""
+    original = (raw or "").strip()
+    text = original
+    if not text:
+        return "", None
+
+    # Strip code fence wrapper (```json ... ```) — handles both regex match and
+    # cases where the regex fails by also trying a brace-scan fallback below.
+    if "```" in text:
+        m = re.match(r"^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$", text)
+        if m:
+            text = m.group(1).strip()
+        else:
+            # Regex missed (e.g. prose before/after the fence); strip fences explicitly
+            text = re.sub(r"```(?:json)?", "", text).replace("```", "").strip()
+
+    def _obj_to_result(obj: dict) -> tuple[str, str | None] | None:
+        reply = obj.get("reply") or obj.get("content") or obj.get("answer")
+        if not isinstance(reply, str):
+            return None
+        summ = obj.get("summary")
+        return reply.strip(), (_cap_summary(summ) if isinstance(summ, str) else None)
+
+    # 1. Try parsing the (possibly unwrapped) text directly
+    obj = _extract_synthesis_obj(text)
+    if obj:
+        result = _obj_to_result(obj)
+        if result:
+            return result
+
+    # 2. Fallback: scan for the outermost { ... } embedded in surrounding text
+    start = text.find('{')
+    end = text.rfind('}')
+    if start != -1 and end > start:
+        candidate = text[start:end + 1]
+        obj = _extract_synthesis_obj(candidate)
+        if obj:
+            result = _obj_to_result(obj)
+            if result:
+                return result
+
+    logger.debug("synthesis_json_parse_failed", extra={"excerpt": _truncate_text(text, 200)})
+    return original, None
 
 
 _INLINE_TOKEN_PATTERN = re.compile(
@@ -577,7 +663,7 @@ def _synthesize_claude(context: str, user_message: str, model: str, api_key: str
         json={
             "model": model,
             "max_tokens": 4096,
-            "system": f"{_SYSTEM_PROMPT_BASE}\n\nCourse material excerpts:\n{context}",
+            "system": f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}",
             "messages": [{"role": "user", "content": user_message}],
         },
         timeout=_TIMEOUT,
@@ -598,10 +684,11 @@ def _synthesize_openai(context: str, user_message: str, model: str, api_key: str
             "messages": [
                 {
                     "role": "system",
-                    "content": f"{_SYSTEM_PROMPT_BASE}\n\nCourse material excerpts:\n{context}",
+                    "content": f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}",
                 },
                 {"role": "user", "content": user_message},
             ],
+            "response_format": {"type": "json_object"},
         },
         timeout=_TIMEOUT,
     )
@@ -618,7 +705,7 @@ def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str
         },
         json={
             "system_instruction": {
-                "parts": [{"text": f"{_SYSTEM_PROMPT_BASE}\n\nCourse material excerpts:\n{context}"}]
+                "parts": [{"text": f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}"}]
             },
             "contents": [{"parts": [{"text": user_message}]}],
         },
@@ -655,7 +742,7 @@ def run_agent_openai(
     selected_model_draft: str = "",
     model_web_handoff: dict | None = None,
     on_event=None,
-) -> tuple[str, list, list, dict]:
+) -> tuple[str, list, list, dict, str | None]:
     debug = _is_enabled("AGENTIC_LOOP_DEBUG", default=False)
     resolver_enabled = _is_enabled("GROUNDING_RESOLVER_ENABLED", default=True)
     fusion_enabled = _is_enabled("GROUNDING_FUSION_ENABLED", default=True)
@@ -783,7 +870,7 @@ def run_agent_openai(
         {
             "role": "system",
             "content": _build_layered_system_context(
-                task_and_policy=SYSTEM_PROMPT,
+                task_and_policy=AGENTIC_SYSTEM_PROMPT,
                 resolver_result=resolver_result,
                 carryover_evidence_text=carryover_text,
                 fresh_evidence_text=fresh_text,
@@ -864,6 +951,7 @@ def run_agent_openai(
     max_iterations = _safe_int_env("AGENTIC_MAX_ITERATIONS", MAX_TOOL_ITERATIONS, 1, 8)
     tool_trace = []
     final_text = ""
+    assistant_reply_summary = None
 
     for iteration in range(1, max_iterations + 1):
         started = time.time()
@@ -915,9 +1003,14 @@ def run_agent_openai(
             )
 
         if not tool_calls:
-            final_text = _message_text(message).strip()
-            if not final_text:
-                final_text = "I could not synthesize a response from the available context."
+            raw_final = _message_text(message).strip()
+            if not raw_final:
+                raw_final = "I could not synthesize a response from the available context."
+            reply_body, assistant_reply_summary = _parse_synthesis_json(raw_final)
+            if not (reply_body or "").strip():
+                reply_body = raw_final
+                assistant_reply_summary = None
+            final_text = reply_body
             tool_trace.append(
                 {
                     "iteration": iteration,
@@ -1051,7 +1144,7 @@ def run_agent_openai(
         verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
         if not verifier_result["passed"]:
             repair_invoked = True
-            final_text = _repair_response_openai(
+            raw_repair = _repair_response_openai(
                 api_key=api_key,
                 model=model,
                 messages=messages,
@@ -1059,6 +1152,9 @@ def run_agent_openai(
                 grounding_refs=grounding_refs,
                 required_entities=required_entities,
             )
+            # Repair calls inherit the JSON system prompt, so parse its output too
+            repaired_reply, _ = _parse_synthesis_json(raw_repair)
+            final_text = repaired_reply if (repaired_reply or "").strip() else raw_repair
             verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
 
     final_text = _normalize_llm_markdown(final_text)
@@ -1098,7 +1194,7 @@ def run_agent_openai(
         "web_handoff_low_conf_override": low_conf_not_needed_override,
         "web_search_allowed_by_handoff": web_search_allowed_by_handoff,
     }
-    return final_text, grounding_refs, tool_trace, metadata
+    return final_text, grounding_refs, tool_trace, metadata, assistant_reply_summary
 
 
 _TITLE_MODEL = "gpt-4o-mini"
@@ -1206,7 +1302,7 @@ def synthesize(
     Synthesize an LLM response using the user's chosen provider and model.
 
     Returns:
-        (synthesized_text: str, chunk_ids_used: list[int])
+        (synthesized_text: str, chunk_ids_or_grounding_refs, metadata_dict, tool_trace_list, summary_or_none)
 
     Raises:
         ValueError: if no API key is stored for the provider, or unsupported provider.
@@ -1226,6 +1322,9 @@ def synthesize(
         context = _format_context(chunks)
         fn = _PROVIDERS[ai_provider]
         selected_model_draft = fn(context, user_message, ai_model, selected_provider_api_key)
+        draft_reply, _ = _parse_synthesis_json(selected_model_draft)
+        if draft_reply and str(draft_reply).strip():
+            selected_model_draft = draft_reply
         web_handoff_enabled = _is_enabled("AGENTIC_WEB_HANDOFF_ENABLED", default=True)
         selected_model_handoff = None
         if web_handoff_enabled:
@@ -1237,7 +1336,7 @@ def synthesize(
                 selected_model_draft=selected_model_draft,
             )
         agentic_api_key = _get_api_key(conn, user_id, DEFAULT_AGENTIC_PROVIDER)
-        text, grounding_refs, tool_trace, metadata = run_agent_openai(
+        text, grounding_refs, tool_trace, metadata, msg_summary = run_agent_openai(
             conn=conn,
             user_message=user_message,
             model=DEFAULT_AGENTIC_MODEL,
@@ -1269,22 +1368,23 @@ def synthesize(
                 "web_search_allowed_by_handoff": metadata.get("web_search_allowed_by_handoff"),
             },
         )
-        return text, grounding_refs, metadata, tool_trace
+        return text, grounding_refs, metadata, tool_trace, msg_summary
 
     context = _format_context(chunks)
     fn = _PROVIDERS[ai_provider]
-    text = fn(context, user_message, ai_model, selected_provider_api_key)
-    text = _normalize_llm_markdown(text)
+    raw = fn(context, user_message, ai_model, selected_provider_api_key)
+    reply, msg_summary = _parse_synthesis_json(raw)
+    reply = _normalize_llm_markdown(reply)
     chunk_ids = [
         _json_safe_chunk_id(c.get("id"))
         for c in chunks
         if c.get("id") is not None
     ]
-    return text, chunk_ids, {
+    return reply, chunk_ids, {
         "intent_type": "fresh",
         "resolver_confidence": 0.0,
         "verifier_passed": True,
         "repair_invoked": False,
         "carryover_ref_count": 0,
         "fresh_ref_count": len(chunk_ids),
-    }, []
+    }, [], msg_summary

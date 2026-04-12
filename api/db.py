@@ -169,6 +169,7 @@ def init_db():
                 parent_message_id INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL,
                 role VARCHAR(20) NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
                 content TEXT NOT NULL,
+                summary TEXT,
                 ai_provider VARCHAR(20) CHECK (ai_provider IN ('gemini', 'openai', 'claude')),
                 ai_model VARCHAR(100),
                 temperature DECIMAL(3,2) CHECK (temperature >= 0 AND temperature <= 2),

@@ -1448,12 +1448,6 @@ export default function ChatTab({ course, userData, onAddSource }) {
     setEditingTitle(false);
   }
 
-  function derivePinSummary(text) {
-    const words = (text || '').split(/\s+/).filter(Boolean);
-    if (words.length <= 5) return text || '';
-    return words.slice(0, 5).join(' ') + '…';
-  }
-
   async function handlePinMessage(assistantMsg, userMsg) {
     const isCurrentlyPinned = pinnedResponses.some((p) => p.assistant_message_id === assistantMsg.id);
     const action = isCurrentlyPinned ? 'unpin' : 'pin';
@@ -1463,7 +1457,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
     pinToastTimerRef.current = setTimeout(() => setPinToast(''), 1500);
 
     const body = action === 'pin'
-      ? { resource: 'pin', action: 'pin', user_message_id: userMsg.id, assistant_message_id: assistantMsg.id, course_id: course.id, chat_id: activeConv, ai_summary: derivePinSummary(assistantMsg.content) }
+      ? { resource: 'pin', action: 'pin', user_message_id: userMsg.id, assistant_message_id: assistantMsg.id, course_id: course.id, chat_id: activeConv }
       : { resource: 'pin', action: 'unpin', assistant_message_id: assistantMsg.id };
 
     try {
@@ -1484,7 +1478,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
             assistant_message_id: assistantMsg.id,
             course_id: course.id,
             chat_id: activeConv,
-            ai_summary: body.ai_summary,
+            ai_summary: assistantMsg.summary || '',
             pinned_at: responseData.pin?.pinned_at,
             chat_title: chatTitle,
             user_message: userMsg,
