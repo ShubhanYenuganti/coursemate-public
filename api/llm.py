@@ -164,13 +164,34 @@ def _cap_summary(value: str | None) -> str | None:
 
 
 def _extract_synthesis_obj(text: str) -> dict | None:
-    """Try json.loads on text; return dict on success, None otherwise."""
+    """Try json.loads on text; return dict on success, None otherwise.
+
+    If the first attempt fails, retries after fixing invalid JSON escape sequences.
+    Models commonly emit LaTeX notation (\\(, \\[, \\lambda, \\frac, …) inside JSON
+    string values; these are not valid JSON escapes and cause JSONDecodeError.
+    """
     try:
         obj = json.loads(text)
         if isinstance(obj, dict):
             return obj
     except json.JSONDecodeError:
         pass
+
+    # Retry with escape-sequence repair.  Models commonly embed raw LaTeX
+    # (\\(, \\[, \\lambda, \\frac, …) inside JSON string values; these are not
+    # valid JSON escape sequences and cause JSONDecodeError.  We preserve only
+    # the escape characters that appear literally in model-generated JSON:
+    # \" \\ \/ \n \r \t and \uXXXX.  We intentionally do NOT exempt \b \f
+    # because they are virtually never used as JSON escapes in LLM output and
+    # frequently appear as the start of LaTeX commands (\\beta, \\frac, …).
+    try:
+        fixed = re.sub(r'\\(?!["\\/nrt]|u[0-9a-fA-F]{4})', r'\\\\', text)
+        obj = json.loads(fixed)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
+
     return None
 
 
