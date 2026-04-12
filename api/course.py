@@ -110,6 +110,43 @@ class handler(BaseHTTPRequestHandler):
         updated = Course.update(course_id, title=title, description=description)
         send_json(self, 200, {"course": updated})
 
+    # ---------------------------------------------------------------- PATCH --
+    def do_PATCH(self):
+        """Record course shell open for dashboard recency ordering."""
+        google_id, _ = authenticate_request(self)
+        if not google_id:
+            send_json(self, 401, {"error": "Unauthorized"})
+            return
+
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            data = json.loads(body) if body else {}
+        except (ValueError, json.JSONDecodeError):
+            send_json(self, 400, {"error": "Invalid request body"})
+            return
+
+        if data.get('action') != 'record_open':
+            send_json(self, 400, {"error": "Unsupported action"})
+            return
+
+        course_id = data.get('course_id')
+        if isinstance(course_id, str) and course_id.isdigit():
+            course_id = int(course_id)
+        if not isinstance(course_id, int):
+            send_json(self, 400, {"error": "course_id is required"})
+            return
+
+        user = User.get_by_google_id(google_id)
+        if not user:
+            send_json(self, 404, {"error": "User not found"})
+            return
+
+        if Course.record_course_open(user['id'], course_id):
+            send_json(self, 200, {"ok": True})
+        else:
+            send_json(self, 403, {"error": "Access denied"})
+
     # --------------------------------------------------------------- DELETE --
     def do_DELETE(self):
         google_id, _ = authenticate_request(self)

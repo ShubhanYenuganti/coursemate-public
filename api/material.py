@@ -420,6 +420,8 @@ class handler(BaseHTTPRequestHandler):
                     m.visibility,
                     m.uploaded_by,
                     m.source_type,
+                    m.external_id,
+                    m.outsourced_url,
                     COALESCE(ms.selected, (m.uploaded_by = %s)) AS selected,
                     ms.provider AS selection_provider,
                     CASE WHEN m.uploaded_by != %s THEN u.name  ELSE NULL END AS collaborator_name,

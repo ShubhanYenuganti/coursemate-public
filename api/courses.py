@@ -88,25 +88,50 @@ class Course:
             if include_co_created:
                 # Use JSONB containment operator to check co_creator_ids
                 query = """
-                    SELECT * FROM courses
-                    WHERE primary_creator = %s
-                       OR co_creator_ids @> %s::jsonb
+                    SELECT c.*, uco.opened_at AS user_last_opened_at
+                    FROM courses c
+                    LEFT JOIN user_course_opens uco
+                      ON uco.course_id = c.id AND uco.user_id = %s
+                    WHERE c.primary_creator = %s
+                       OR c.co_creator_ids @> %s::jsonb
                 """
-                params = [creator_id, json.dumps([creator_id])]
+                params = [creator_id, creator_id, json.dumps([creator_id])]
             else:
-                query = "SELECT * FROM courses WHERE primary_creator = %s"
-                params = [creator_id]
+                query = """
+                    SELECT c.*, uco.opened_at AS user_last_opened_at
+                    FROM courses c
+                    LEFT JOIN user_course_opens uco
+                      ON uco.course_id = c.id AND uco.user_id = %s
+                    WHERE c.primary_creator = %s
+                """
+                params = [creator_id, creator_id]
             
             if status_filter:
-                query += " AND status = %s"
+                query += " AND c.status = %s"
                 params.append(status_filter)
             
-            query += " ORDER BY updated_at DESC"
+            query += " ORDER BY uco.opened_at DESC NULLS LAST, c.updated_at DESC"
             
             cursor.execute(query, params)
             courses = cursor.fetchall()
             cursor.close()
             return [dict(course) for course in courses]
+
+    @staticmethod
+    def record_course_open(user_id: int, course_id: int) -> bool:
+        """Upsert last-open time for this user and course. No-op if user cannot access course."""
+        if not Course.verify_access(course_id, user_id):
+            return False
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO user_course_opens (user_id, course_id, opened_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id, course_id) DO UPDATE
+                SET opened_at = EXCLUDED.opened_at
+            """, (user_id, course_id))
+            cursor.close()
+        return True
 
     @staticmethod
     def update(

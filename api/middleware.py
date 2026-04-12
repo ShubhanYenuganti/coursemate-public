@@ -16,7 +16,7 @@ def get_cors_headers():
     origin = os.environ.get('ALLOWED_ORIGIN', 'http://localhost:5173')
     return {
         "Access-Control-Allow-Origin": origin,
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, X-CSRF-Token",
         "Access-Control-Allow-Credentials": "true",
     }

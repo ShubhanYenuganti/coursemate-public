@@ -182,6 +182,8 @@ class handler(BaseHTTPRequestHandler):
             self._list_or_search_messages(user, params, q)
         elif resource == 'chunks':
             self._get_message_chunks(user, params)
+        elif resource == 'pin':
+            self._list_pins(user, params)
         else:
             send_json(self, 400, {"error": f"Unknown resource '{resource}'"})
 
@@ -216,6 +218,13 @@ class handler(BaseHTTPRequestHandler):
                 self._archive_all_chats(user, data)
             else:
                 send_json(self, 400, {"error": f"Unknown action '{action}' for resource 'chat'"})
+        elif resource == 'pin':
+            if action == 'pin':
+                self._pin_message(user, data)
+            elif action == 'unpin':
+                self._unpin_message(user, data)
+            else:
+                send_json(self, 400, {"error": f"Unknown action '{action}' for resource 'pin'"})
         elif resource == 'message':
             if action == 'send':
                 if not check_rate_limit(self, max_rpm=10):
@@ -1885,6 +1894,126 @@ class handler(BaseHTTPRequestHandler):
             cursor.close()
 
         send_json(self, 200, {"success": True})
+
+    # ----------------------------------------------------------- pin helpers --
+
+    def _list_pins(self, user, params):
+        course_id_raw = params.get('course_id', [None])[0]
+        if not course_id_raw or not str(course_id_raw).isdigit():
+            send_json(self, 400, {"error": "course_id query parameter is required"})
+            return
+        course_id = int(course_id_raw)
+
+        if not Course.verify_access(course_id, user['id']):
+            send_json(self, 403, {"error": "Access denied to this course"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    pm.id,
+                    pm.user_message_id,
+                    pm.assistant_message_id,
+                    pm.chat_id,
+                    pm.course_id,
+                    pm.ai_summary,
+                    pm.pinned_at,
+                    ch.title AS chat_title,
+                    um.content AS user_content,
+                    am.content AS assistant_content,
+                    am.ai_provider,
+                    am.ai_model
+                FROM pinned_messages pm
+                JOIN chats ch ON ch.id = pm.chat_id
+                JOIN chat_messages um ON um.id = pm.user_message_id
+                JOIN chat_messages am ON am.id = pm.assistant_message_id
+                WHERE pm.user_id = %s AND pm.course_id = %s
+                ORDER BY pm.pinned_at DESC
+            """, (user['id'], course_id))
+            rows = cursor.fetchall()
+            cursor.close()
+
+        pins = [
+            {
+                "id": row['id'],
+                "user_message_id": row['user_message_id'],
+                "assistant_message_id": row['assistant_message_id'],
+                "chat_id": row['chat_id'],
+                "course_id": row['course_id'],
+                "ai_summary": row['ai_summary'],
+                "pinned_at": row['pinned_at'].isoformat() if row['pinned_at'] else None,
+                "chat_title": row['chat_title'],
+                "user_message": {"id": row['user_message_id'], "role": "user", "content": row['user_content']},
+                "assistant_message": {"id": row['assistant_message_id'], "role": "assistant", "content": row['assistant_content'], "ai_provider": row['ai_provider'], "ai_model": row['ai_model']},
+            }
+            for row in rows
+        ]
+        send_json(self, 200, {"pins": pins})
+
+    def _pin_message(self, user, data):
+        user_message_id = data.get('user_message_id')
+        assistant_message_id = data.get('assistant_message_id')
+        course_id = data.get('course_id')
+        chat_id = data.get('chat_id')
+        ai_summary = data.get('ai_summary', '')
+
+        if not all(isinstance(v, int) for v in [user_message_id, assistant_message_id, course_id, chat_id]):
+            send_json(self, 400, {"error": "user_message_id, assistant_message_id, course_id, and chat_id are required integers"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            # Verify ownership of both messages
+            cursor.execute(
+                "SELECT id FROM chat_messages WHERE id = %s AND user_id = %s",
+                (user_message_id, user['id'])
+            )
+            if not cursor.fetchone():
+                cursor.close()
+                send_json(self, 403, {"error": "Access denied: user message not owned by caller"})
+                return
+            cursor.execute(
+                "SELECT id FROM chat_messages WHERE id = %s AND user_id = %s",
+                (assistant_message_id, user['id'])
+            )
+            if not cursor.fetchone():
+                cursor.close()
+                send_json(self, 403, {"error": "Access denied: assistant message not owned by caller"})
+                return
+
+            cursor.execute("""
+                INSERT INTO pinned_messages
+                  (user_id, course_id, chat_id, user_message_id, assistant_message_id, ai_summary)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (user_id, assistant_message_id) DO NOTHING
+                RETURNING id, pinned_at
+            """, (user['id'], course_id, chat_id, user_message_id, assistant_message_id, ai_summary[:300] if ai_summary else ''))
+            row = cursor.fetchone()
+            cursor.close()
+
+        if row:
+            send_json(self, 200, {"pin": {"id": row['id'], "pinned_at": row['pinned_at'].isoformat()}})
+        else:
+            # Already pinned — idempotent success
+            send_json(self, 200, {"pin": None})
+
+    def _unpin_message(self, user, data):
+        assistant_message_id = data.get('assistant_message_id')
+        if not isinstance(assistant_message_id, int):
+            send_json(self, 400, {"error": "assistant_message_id is required"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM pinned_messages
+                WHERE user_id = %s AND assistant_message_id = %s
+            """, (user['id'], assistant_message_id))
+            deleted = cursor.rowcount > 0
+            cursor.close()
+
+        send_json(self, 200, {"deleted": deleted})
 
     def _delete_chat(self, user, data):
         chat_id = data.get('chat_id')

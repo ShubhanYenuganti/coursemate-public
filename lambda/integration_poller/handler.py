@@ -69,6 +69,14 @@ def _get_gdrive_token(user_id: int):
     access_token = payload.get('access_token')
     refresh_token = payload.get('refresh_token')
     expires_at = payload.get('expires_at', 0)
+    import time as _time
+    print(f'[integration_poller] gdrive token debug user_id={user_id} '
+          f'keys={list(payload.keys())} '
+          f'has_access_token={bool(access_token)} '
+          f'has_refresh_token={bool(refresh_token)} '
+          f'expires_at={expires_at} '
+          f'now={_time.time():.0f} '
+          f'near_expiry={_time.time() >= expires_at - 300}')
 
     # Refresh if within 5 minutes of expiry
     if time.time() >= expires_at - 300:
@@ -101,6 +109,9 @@ def _get_gdrive_token(user_id: int):
             else:
                 print(f'[integration_poller] gdrive token refresh failed user_id={user_id}: {resp.text}')
                 return None
+        else:
+            print(f'[integration_poller] gdrive token near expiry but no credentials to refresh user_id={user_id} — skipping')
+            return None
 
     return access_token
 

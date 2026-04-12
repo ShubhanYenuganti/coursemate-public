@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { formatDateTime, parseUTC } from './utils/dateUtils';
+import { getMaterialUrl } from './utils/materialUtils';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
@@ -35,22 +36,12 @@ function SendIcon() {
   );
 }
 
-function ThumbsUpIcon() {
+function PinIcon({ filled = false }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
-      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z" />
-      <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
-    </svg>
-  );
-}
-
-function ThumbsDownIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
-      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z" />
-      <path d="M17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17" />
+      fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="17" x2="12" y2="22" />
+      <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
     </svg>
   );
 }
@@ -420,7 +411,7 @@ function SourcesPanel({ open, chunks, focusIndex, onClose, materials }) {
           const n = idx + 1;
           const isFocused = n === focusIndex;
           const material = chunk.material_id != null ? materialMap[chunk.material_id] : null;
-          const downloadUrl = material?.download_url || null;
+          const downloadUrl = getMaterialUrl(material) || null;
           return (
             <div
               key={idx}
@@ -441,7 +432,7 @@ function SourcesPanel({ open, chunks, focusIndex, onClose, materials }) {
                   {chunk.chunk_type === 'visual' ? 'Slide' : 'Text'}
                 </span>
                 {material?.name && (
-                  <span className="text-gray-500 truncate text-[9px]" title={material.name}>{material.name}</span>
+                  <span className="text-gray-500 truncate text-[9px]">{material.name}</span>
                 )}
                 {chunk.page_number != null && (
                   <span className="text-gray-400">p.{chunk.page_number}</span>
@@ -455,7 +446,6 @@ function SourcesPanel({ open, chunks, focusIndex, onClose, materials }) {
                     href={downloadUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    title={material?.name || 'Open source'}
                     className="p-1 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors flex-shrink-0"
                   >
                     <ExternalLinkIcon />
@@ -493,6 +483,8 @@ function MessageBubble({
   onRegenerate,
   availableModels,
   materials,
+  onPin,
+  isPinned,
 }) {
   const isUser = msg.role === 'user';
   const modelLabel = getMessageModelLabel(msg);
@@ -703,12 +695,16 @@ function MessageBubble({
           </div>
         )}
         <div className="flex items-center gap-1 mt-3">
-          <button type="button" className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors" title="Helpful">
-            <ThumbsUpIcon />
-          </button>
-          <button type="button" className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="Not helpful">
-            <ThumbsDownIcon />
-          </button>
+          {onPin && (
+            <button
+              type="button"
+              onClick={onPin}
+              className={`p-1.5 rounded-lg transition-colors ${isPinned ? 'text-indigo-600 bg-indigo-50' : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
+              title={isPinned ? 'Unpin' : 'Pin response'}
+            >
+              <PinIcon filled={isPinned} />
+            </button>
+          )}
           <button
             type="button"
             onClick={handleCopy}
@@ -969,6 +965,122 @@ function StreamingHistoryBubble({ history, materials }) {
   );
 }
 
+// ─── pins panel ──────────────────────────────────────────────────────────────
+
+function PinsPanel({ pins, courseName, userData, materials }) {
+  const [expandedPin, setExpandedPin] = useState(null);
+
+  return (
+    <div className="flex-shrink-0 bg-white overflow-hidden" style={{ maxHeight: '220px' }}>
+      {/* Header */}
+      <div className="px-6 py-2 flex items-center gap-2 flex-shrink-0 border-b border-gray-100">
+        <span className="text-indigo-500"><PinIcon filled /></span>
+        <span className="text-xs font-semibold text-gray-700">Saved Pins</span>
+        {pins.length > 0 && (
+          <span className="px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-600 text-[10px] font-semibold">{pins.length}</span>
+        )}
+      </div>
+
+      {/* List */}
+      <div className="overflow-y-auto" style={{ maxHeight: '180px' }}>
+        {pins.length === 0 && (
+          <p className="px-6 py-2 text-xs text-gray-400 italic">No saved pins yet.</p>
+        )}
+        {pins.map((pin) => {
+          const isExpanded = expandedPin === pin.id;
+          const pinDate = pin.pinned_at ? formatDateTime(pin.pinned_at) : '';
+          return (
+            <div key={pin.id}>
+              {/* Row */}
+              <button
+                type="button"
+                onClick={() => setExpandedPin(isExpanded ? null : pin.id)}
+                className={`w-full flex gap-2 px-6 py-1.5 text-left hover:bg-gray-50 transition-colors ${
+                  isExpanded ? 'items-start py-2' : 'items-center'
+                }`}
+              >
+                {isExpanded ? (
+                  <>
+                    <span className="flex-1 min-w-0 text-[11px] font-medium text-gray-700 whitespace-normal break-words text-left">
+                      {pin.chat_title || 'Chat'}
+                    </span>
+                    <span className="text-[10px] text-gray-400 flex-shrink-0 ml-1">{pinDate}</span>
+                    <span className="flex-shrink-0 text-gray-400 transition-transform duration-200 rotate-180 mt-0.5">
+                      <ChevronDownIcon />
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[11px] font-medium text-gray-700 truncate max-w-[240px] flex-shrink-0">{pin.chat_title || 'Chat'}</span>
+                    <span className="text-[10px] text-gray-300">·</span>
+                    <span className="text-[10px] text-gray-500 truncate max-w-[200px] flex-shrink-0">{pin.assistant_message?.ai_model || ''}</span>
+                    <span className="text-[10px] text-gray-300">·</span>
+                    <span className="text-[10px] text-gray-600 flex-1 truncate">{pin.ai_summary}</span>
+                    <span className="text-[10px] text-gray-400 flex-shrink-0 ml-1">{pinDate}</span>
+                    <span className="flex-shrink-0 text-gray-400 transition-transform duration-200">
+                      <ChevronDownIcon />
+                    </span>
+                  </>
+                )}
+              </button>
+
+              {/* Expanded card */}
+              {isExpanded && pin.user_message && pin.assistant_message && (
+                <div className="px-4 pb-3 pt-1 space-y-3 bg-gray-50 border-t border-gray-100">
+                  <MessageBubble
+                    msg={pin.user_message}
+                    courseName={courseName}
+                    userPicture={userData?.picture}
+                    onCiteClick={null}
+                    webSearchUrls={null}
+                    isEditing={false}
+                    editingContent=""
+                    onEditStart={null}
+                    onEditChange={null}
+                    onEditSave={null}
+                    onEditCancel={null}
+                    canEdit={false}
+                    replyHistory={null}
+                    onRevert={null}
+                    onRestore={null}
+                    onRegenerate={null}
+                    availableModels={[]}
+                    materials={materials}
+                    onPin={null}
+                    isPinned={false}
+                  />
+                  <MessageBubble
+                    msg={pin.assistant_message}
+                    courseName={courseName}
+                    userPicture={userData?.picture}
+                    onCiteClick={null}
+                    webSearchUrls={null}
+                    isEditing={false}
+                    editingContent=""
+                    onEditStart={null}
+                    onEditChange={null}
+                    onEditSave={null}
+                    onEditCancel={null}
+                    canEdit={false}
+                    replyHistory={null}
+                    onRevert={null}
+                    onRestore={null}
+                    onRegenerate={null}
+                    availableModels={[]}
+                    materials={materials}
+                    onPin={null}
+                    isPinned={false}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── main component ───────────────────────────────────────────────────────────
 
 export default function ChatTab({ course, userData, onAddSource }) {
@@ -989,6 +1101,9 @@ export default function ChatTab({ course, userData, onAddSource }) {
   const [selectedModelId, setSelectedModelId] = useState(null);
   const [modelListDropdownOpen, setModelListDropdownOpen] = useState(false);
   const [switchBanner, setSwitchBanner] = useState('');
+  const [pinnedResponses, setPinnedResponses] = useState([]);
+  const [pinToast, setPinToast] = useState('');
+  const pinToastTimerRef = useRef(null);
   const [materials, setMaterials] = useState([]);
   const [materialsLoading, setMaterialsLoading] = useState(true);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -1096,6 +1211,15 @@ export default function ChatTab({ course, userData, onAddSource }) {
       .then((data) => setChats(data.chats || []))
       .catch(() => {})
       .finally(() => setChatsLoading(false));
+  }, [course?.id]);
+
+  // Load pinned responses for this course
+  useEffect(() => {
+    if (!course?.id) return;
+    fetch(`/api/chat?resource=pin&course_id=${course.id}`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((data) => setPinnedResponses(data.pins || []))
+      .catch(() => {});
   }, [course?.id]);
 
   // Fetch archived chats when the archived dropdown is opened
@@ -1233,14 +1357,10 @@ export default function ChatTab({ course, userData, onAddSource }) {
     }));
   }
 
-  function handleDownloadMaterial(m) {
-    if (!m.download_url) return;
-    const a = document.createElement('a');
-    a.href = m.download_url;
-    a.download = m.name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  function handleOpenMaterial(m) {
+    const url = getMaterialUrl(m);
+    if (!url) return;
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   function handleNewChat() {
@@ -1326,6 +1446,56 @@ export default function ChatTab({ course, userData, onAddSource }) {
     setActiveConv(id);
     setMessages([]);
     setEditingTitle(false);
+  }
+
+  function derivePinSummary(text) {
+    const words = (text || '').split(/\s+/).filter(Boolean);
+    if (words.length <= 5) return text || '';
+    return words.slice(0, 5).join(' ') + '…';
+  }
+
+  async function handlePinMessage(assistantMsg, userMsg) {
+    const isCurrentlyPinned = pinnedResponses.some((p) => p.assistant_message_id === assistantMsg.id);
+    const action = isCurrentlyPinned ? 'unpin' : 'pin';
+
+    setPinToast(action === 'pin' ? 'Saving…' : 'Pin removed');
+    if (pinToastTimerRef.current) clearTimeout(pinToastTimerRef.current);
+    pinToastTimerRef.current = setTimeout(() => setPinToast(''), 1500);
+
+    const body = action === 'pin'
+      ? { resource: 'pin', action: 'pin', user_message_id: userMsg.id, assistant_message_id: assistantMsg.id, course_id: course.id, chat_id: activeConv, ai_summary: derivePinSummary(assistantMsg.content) }
+      : { resource: 'pin', action: 'unpin', assistant_message_id: assistantMsg.id };
+
+    try {
+      const r = await fetch('/api/chat', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) return;
+      const responseData = await r.json();
+      if (action === 'pin' && responseData.pin) {
+        const chatTitle = chats.find((c) => c.id === activeConv)?.title || 'Chat';
+        setPinnedResponses((prev) => [
+          {
+            id: responseData.pin?.id,
+            user_message_id: userMsg.id,
+            assistant_message_id: assistantMsg.id,
+            course_id: course.id,
+            chat_id: activeConv,
+            ai_summary: body.ai_summary,
+            pinned_at: responseData.pin?.pinned_at,
+            chat_title: chatTitle,
+            user_message: userMsg,
+            assistant_message: assistantMsg,
+          },
+          ...prev,
+        ]);
+      } else if (responseData.deleted) {
+        setPinnedResponses((prev) => prev.filter((p) => p.assistant_message_id !== assistantMsg.id));
+      }
+    } catch {}
   }
 
   function handleConvDoubleClick(conv) {
@@ -1865,12 +2035,20 @@ export default function ChatTab({ course, userData, onAddSource }) {
   const { today, lastWeek, older } = groupChatsByDate(chats);
 
   return (
+    <div className="flex flex-col gap-4">
     <div className="relative flex gap-4" style={{ height: '68vh', minHeight: '520px' }}>
 
       {/* Switched-to banner — centred over the full modal */}
       {switchBanner && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full bg-gray-900 text-white text-xs font-medium shadow-lg whitespace-nowrap pointer-events-none select-none">
           Switched to {switchBanner} ⚡
+        </div>
+      )}
+
+      {/* Pin toast */}
+      {pinToast && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full bg-gray-900 text-white text-xs font-medium shadow-lg whitespace-nowrap pointer-events-none select-none">
+          {pinToast}
         </div>
       )}
 
@@ -2070,20 +2248,16 @@ export default function ChatTab({ course, userData, onAddSource }) {
                       {myMats.map((m) => (
                         <div
                           key={m.id}
-                          className={`relative group w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
+                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
                             m.selected ? 'border-indigo-400' : 'border-transparent'
                           }`}
                         >
                           <FileTypeBadge name={m.name} sourceType={m.source_type} />
                           <span
                             className="flex-1 truncate min-w-0 hover:underline cursor-pointer"
-                            onClick={() => handleDownloadMaterial(m)}
-                            title={m.name}
+                            onClick={() => handleOpenMaterial(m)}
                           >{m.name}</span>
                           <MaterialToggle checked={m.selected} onToggle={() => handleToggleMaterial(m.id)} />
-                          <div className="pointer-events-none absolute left-2 top-full mt-1.5 z-10 hidden group-hover:block w-56 rounded-lg bg-gray-800 px-2.5 py-2 shadow-lg">
-                            <p className="text-[10px] text-gray-200 whitespace-normal break-words">{m.name}</p>
-                          </div>
                         </div>
                       ))}
                       {collabMats.length > 0 && (
@@ -2094,20 +2268,16 @@ export default function ChatTab({ course, userData, onAddSource }) {
                           {collabMats.map((m) => (
                             <div
                               key={m.id}
-                              className={`relative group w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
+                              className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
                                 m.selected ? 'border-indigo-300' : 'border-transparent'
                               }`}
                             >
                               <FileTypeBadge name={m.name} sourceType={m.source_type} />
                               <span
                                 className="flex-1 truncate min-w-0 hover:underline cursor-pointer"
-                                onClick={() => handleDownloadMaterial(m)}
-                                title={m.name}
+                                onClick={() => handleOpenMaterial(m)}
                               >{m.name}</span>
                               <MaterialToggle checked={m.selected} onToggle={() => handleToggleMaterial(m.id)} />
-                              <div className="pointer-events-none absolute left-2 top-full mt-1.5 z-10 hidden group-hover:block w-56 rounded-lg bg-gray-800 px-2.5 py-2 shadow-lg">
-                                <p className="text-[10px] text-gray-200 whitespace-normal break-words">{m.name}</p>
-                              </div>
                             </div>
                           ))}
                         </>
@@ -2195,7 +2365,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
         })()}
 
         {/* Messages */}
-        <div className={`flex-1 overflow-y-auto overflow-x-auto px-6 pt-5 pb-20 space-y-6 transition-all duration-200 ${sourcesPanel.open ? 'mr-80' : ''}`}>
+        <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-auto px-6 pt-5 pb-4 space-y-6 transition-all duration-200 ${sourcesPanel.open ? 'mr-80' : ''}`}>
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center gap-2 text-center">
               <p className="text-base font-semibold text-gray-800">Ask me anything about {course?.title || 'this course'}</p>
@@ -2246,6 +2416,11 @@ export default function ChatTab({ course, userData, onAddSource }) {
                 onRegenerate={msg.role === 'assistant' && !sending ? handleRegenerateMessage : null}
                 availableModels={availableModels}
                 materials={materials}
+                onPin={msg.role === 'assistant' ? () => {
+                  const userMsg = messages.slice(0, i).reverse().find((m) => m.role === 'user');
+                  if (userMsg) handlePinMessage(msg, userMsg);
+                } : null}
+                isPinned={msg.role === 'assistant' ? pinnedResponses.some((p) => p.assistant_message_id === msg.id) : false}
               />
               );
             })
@@ -2256,8 +2431,8 @@ export default function ChatTab({ course, userData, onAddSource }) {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input bar - floating overlay */}
-        <div className="absolute bottom-0 left-0 right-0 px-4 pb-4 pt-6 bg-gradient-to-t from-white via-white/90 to-transparent">
+        {/* Input bar */}
+        <div className="flex-shrink-0 px-4 pb-4 pt-2 border-t border-gray-100 bg-white">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-gray-200 bg-white hover:shadow-lg focus-within:border-indigo-300 focus-within:shadow-lg transition-all" style={{ boxShadow: '0 4px 24px 0 rgba(0,0,0,0.13)' }}>
             <textarea
               ref={textareaRef}
@@ -2351,6 +2526,17 @@ export default function ChatTab({ course, userData, onAddSource }) {
           materials={materials}
         />
       </div>
+    </div>
+
+    {/* Saved pins — full width below chat + input */}
+    <div className="w-full rounded-2xl border border-gray-200 shadow-sm bg-white overflow-hidden">
+      <PinsPanel
+        pins={pinnedResponses}
+        courseName={course?.title}
+        userData={userData}
+        materials={materials}
+      />
+    </div>
     </div>
   );
 }

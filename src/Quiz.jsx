@@ -1,9 +1,20 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { formatDateTime } from './utils/dateUtils';
+import { getMaterialUrl } from './utils/materialUtils';
 import QuizViewer from './QuizViewer';
 import GenerationConfirmModal from './components/GenerationConfirmModal.jsx';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
+
+function ExternalLinkIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+  );
+}
 
 function PlusIcon() {
   return (
@@ -721,16 +732,18 @@ export default function Quiz({ course, onAddSource }) {
                 {myMats.map((m) => (
                   <div
                     key={m.id}
-                    className={`relative group flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
                       m.selected ? 'border-indigo-400' : 'border-transparent'
                     }`}
                   >
                     <FileTypeBadge name={m.name} sourceType={m.source_type} />
-                    <span className="flex-1 truncate min-w-0 text-xs" title={m.name}>{m.name}</span>
+                    <span className="flex-1 truncate min-w-0 text-xs">{m.name}</span>
+                    {(() => { const url = getMaterialUrl(m); return url ? (
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 p-0.5 rounded text-gray-300 hover:text-indigo-500 transition-colors" onClick={(e) => e.stopPropagation()}>
+                        <ExternalLinkIcon />
+                      </a>
+                    ) : null; })()}
                     <SourceToggle checked={m.selected} onToggle={() => toggleSource(m.id)} />
-                    <div className="pointer-events-none absolute left-2 top-full mt-1.5 z-10 hidden group-hover:block w-56 rounded-lg bg-gray-800 px-2.5 py-2 shadow-lg">
-                      <p className="text-[10px] text-gray-200 whitespace-normal break-words">{m.name}</p>
-                    </div>
                   </div>
                 ))}
                 {collabMats.length > 0 && (
@@ -741,16 +754,18 @@ export default function Quiz({ course, onAddSource }) {
                     {collabMats.map((m) => (
                       <div
                         key={m.id}
-                        className={`relative group flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
                           m.selected ? 'border-indigo-300' : 'border-transparent'
                         }`}
                       >
                         <FileTypeBadge name={m.name} sourceType={m.source_type} />
                         <span className="flex-1 truncate min-w-0 text-xs">{m.name}</span>
+                        {(() => { const url = getMaterialUrl(m); return url ? (
+                          <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 p-0.5 rounded text-gray-300 hover:text-indigo-500 transition-colors" onClick={(e) => e.stopPropagation()}>
+                            <ExternalLinkIcon />
+                          </a>
+                        ) : null; })()}
                         <SourceToggle checked={m.selected} onToggle={() => toggleSource(m.id)} />
-                        <div className="pointer-events-none absolute left-2 top-full mt-1.5 z-10 hidden group-hover:block w-56 rounded-lg bg-gray-800 px-2.5 py-2 shadow-lg">
-                          <p className="text-[10px] text-gray-200 whitespace-normal break-words">{m.name}</p>
-                        </div>
                       </div>
                     ))}
                   </>

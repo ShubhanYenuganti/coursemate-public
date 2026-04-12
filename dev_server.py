@@ -63,6 +63,7 @@ class Router(BaseHTTPRequestHandler):
     def do_GET(self):     self._dispatch('GET')
     def do_POST(self):    self._dispatch('POST')
     def do_PUT(self):     self._dispatch('PUT')
+    def do_PATCH(self):   self._dispatch('PATCH')
     def do_DELETE(self):  self._dispatch('DELETE')
     def do_OPTIONS(self): self._dispatch('OPTIONS')
 

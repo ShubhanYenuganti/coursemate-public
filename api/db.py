@@ -110,6 +110,7 @@ def init_db():
                 uploaded_by INTEGER NOT NULL,
                 course_id INTEGER,
                 visibility VARCHAR(20) NOT NULL DEFAULT 'private' CHECK (visibility IN ('public','private')),
+                outsourced_url TEXT,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -367,6 +368,7 @@ def init_db():
 
         # Add new columns to existing tables (idempotent)
         cursor.execute("ALTER TABLE materials ADD COLUMN IF NOT EXISTS doc_type TEXT NOT NULL DEFAULT 'general';")
+        cursor.execute("ALTER TABLE materials ADD COLUMN IF NOT EXISTS outsourced_url TEXT;")
         cursor.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS session_uuid UUID NOT NULL DEFAULT gen_random_uuid();")
 
         # Phase 1 migration: message embeddings for conversation grounding (Phase 2)
@@ -681,6 +683,19 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_report_gen_course_user ON report_generations(course_id, generated_by, created_at DESC);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_report_gen_status ON report_generations(status, created_at DESC);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_report_versions_gen ON report_versions(generation_id);")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_course_opens (
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+                opened_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, course_id)
+            );
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_course_opens_user_opened
+            ON user_course_opens (user_id, opened_at DESC);
+        """)
 
         cursor.close()
         print("Database initialized successfully")

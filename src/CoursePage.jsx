@@ -116,6 +116,17 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
     setPanelDismissed(saved.panelDismissed);
   }, [course?.id]);
 
+  // Record open for dashboard ordering (most recently opened first)
+  useEffect(() => {
+    if (!course?.id) return;
+    fetch('/api/course', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ action: 'record_open', course_id: course.id }),
+    }).catch(() => {});
+  }, [course?.id]);
+
   // Persist to localStorage on every change
   useEffect(() => {
     if (!course?.id) return;

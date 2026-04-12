@@ -91,40 +91,50 @@ function CourseCard({ course, onDelete, onClick, onRename }) {
   return (
     <div
       onClick={() => !editing && onClick(course)}
-      className="group relative bg-white/80 backdrop-blur-sm border border-gray-200 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer flex flex-col overflow-hidden min-h-[160px]"
+      className="group relative h-44 bg-white/80 backdrop-blur-sm border border-gray-200 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer flex flex-col overflow-hidden"
     >
-      {/* Card top: title + meta + menu */}
-      <div className="flex items-start justify-between p-4">
-        <div className="flex-1 min-w-0 pr-1">
-          {editing ? (
-            <input
-              ref={inputRef}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={commitEdit}
-              onKeyDown={handleKeyDown}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full text-base font-semibold text-gray-900 leading-snug bg-white border border-indigo-300 rounded-lg px-2 py-0.5 outline-none focus:ring-2 focus:ring-indigo-400 mb-1.5"
-              maxLength={200}
-            />
-          ) : (
-            <div className="flex items-center gap-1 mb-1.5">
-              <h3 className="text-base font-semibold text-gray-900 leading-snug line-clamp-2">
-                {course.title}
-              </h3>
-              {course.is_owner && (
-                <button
-                  type="button"
-                  onClick={startEdit}
-                  className="flex-shrink-0 p-0.5 text-gray-300 hover:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                  aria-label="Rename course"
-                >
-                  <EditIcon />
-                </button>
+      {/* Fixed height: title clamps to 3 lines; meta row pinned to bottom */}
+      <div className="flex flex-1 min-h-0 flex-col gap-2 p-4">
+        <div className="grid flex-1 min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-2">
+          <div className="min-h-0 flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1 min-h-0">
+              {editing ? (
+                <input
+                  ref={inputRef}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onBlur={commitEdit}
+                  onKeyDown={handleKeyDown}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full text-sm font-semibold text-gray-900 leading-snug bg-white border border-indigo-300 rounded-lg px-2 py-0.5 outline-none focus:ring-2 focus:ring-indigo-400"
+                  maxLength={200}
+                />
+              ) : (
+                <div className="flex items-start gap-1">
+                  <h3
+                    className="flex-1 min-w-0 text-sm font-semibold text-gray-900 leading-snug line-clamp-3 [overflow-wrap:anywhere]"
+                    title={course.title}
+                  >
+                    {course.title}
+                  </h3>
+                  {course.is_owner && (
+                    <button
+                      type="button"
+                      onClick={startEdit}
+                      className="flex-shrink-0 p-0.5 text-gray-300 hover:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                      aria-label="Rename course"
+                    >
+                      <EditIcon />
+                    </button>
+                  )}
+                </div>
               )}
             </div>
-          )}
-          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex-shrink-0 -mr-0.5 -mt-0.5">
+              <CourseMenu courseId={course.id} onDelete={onDelete} />
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap flex-shrink-0">
             {formatDate(course.created_at) && (
               <span className="text-xs text-gray-400">{formatDate(course.created_at)}</span>
             )}
@@ -144,7 +154,6 @@ function CourseCard({ course, onDelete, onClick, onRename }) {
             )}
           </div>
         </div>
-        <CourseMenu courseId={course.id} onDelete={onDelete} />
       </div>
     </div>
   );
@@ -244,7 +253,7 @@ export default function CardViewer({ onCreateNew }) {
         <button
           type="button"
           onClick={onCreateNew}
-          className="bg-white/60 border border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center gap-2 py-8 text-gray-400 hover:text-indigo-500 hover:border-indigo-300 hover:bg-indigo-50/40 transition-all duration-200 cursor-pointer min-h-[160px]"
+          className="h-44 bg-white/60 border border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center gap-2 text-gray-400 hover:text-indigo-500 hover:border-indigo-300 hover:bg-indigo-50/40 transition-all duration-200 cursor-pointer"
         >
           <div className="w-10 h-10 rounded-full border-2 border-current flex items-center justify-center">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
