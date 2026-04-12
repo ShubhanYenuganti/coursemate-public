@@ -402,7 +402,7 @@ class handler(BaseHTTPRequestHandler):
 
                 if before_raw and before_raw.isdigit():
                     cursor.execute("""
-                        SELECT id, chat_id, role, content, ai_provider, ai_model,
+                        SELECT id, chat_id, role, content, summary, ai_provider, ai_model,
                                context_material_ids, retrieved_chunk_ids, context_token_count,
                                response_token_count, response_time_ms, finish_reason, grounding_meta,
                                is_edited, reply_history, edited_at, message_index, created_at, tool_trace
@@ -415,7 +415,7 @@ class handler(BaseHTTPRequestHandler):
                     """, (chat_id, int(before_raw), limit))
                 else:
                     cursor.execute("""
-                        SELECT id, chat_id, role, content, ai_provider, ai_model,
+                        SELECT id, chat_id, role, content, summary, ai_provider, ai_model,
                                context_material_ids, retrieved_chunk_ids, context_token_count,
                                response_token_count, response_time_ms, finish_reason, grounding_meta,
                                is_edited, reply_history, edited_at, message_index, created_at, tool_trace
@@ -701,7 +701,7 @@ class handler(BaseHTTPRequestHandler):
             )
 
             try:
-                assistant_content, retrieved_ids, grounding_meta, tool_trace = synthesize(
+                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary = synthesize(
                     conn,
                     user['id'],
                     ai_provider,
@@ -743,16 +743,17 @@ class handler(BaseHTTPRequestHandler):
 
             cursor.execute("""
                 INSERT INTO chat_messages
-                    (chat_id, course_id, user_id, parent_message_id, role, content,
+                    (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                      ai_provider, ai_model, context_material_ids,
                      grounding_meta, tool_trace,
                      retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, chat_id, role, content, ai_provider, ai_model,
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at, tool_trace
             """, (
                 chat_id, chat['course_id'], user['id'], user_message['id'], assistant_content,
+                assistant_summary,
                 ai_provider, ai_model,
                 json.dumps(context_material_ids),
                 json.dumps(grounding_meta or {}),
@@ -900,7 +901,7 @@ class handler(BaseHTTPRequestHandler):
                 send_sse_event(self, evt)
 
             try:
-                assistant_content, retrieved_ids, grounding_meta, tool_trace = synthesize(
+                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary = synthesize(
                     conn,
                     user['id'],
                     ai_provider,
@@ -918,16 +919,17 @@ class handler(BaseHTTPRequestHandler):
 
             cursor.execute("""
                 INSERT INTO chat_messages
-                    (chat_id, course_id, user_id, parent_message_id, role, content,
+                    (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                      ai_provider, ai_model, context_material_ids,
                      grounding_meta, tool_trace,
                      retrieved_chunk_ids, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, chat_id, role, content, ai_provider, ai_model,
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at, tool_trace
             """, (
                 chat_id, chat['course_id'], user['id'], user_message['id'], assistant_content,
+                assistant_summary,
                 ai_provider, ai_model,
                 json.dumps(context_material_ids),
                 json.dumps(grounding_meta or {}),
@@ -1073,7 +1075,7 @@ class handler(BaseHTTPRequestHandler):
 
             on_event = (lambda evt: send_sse_event(self, evt)) if is_streaming else None
             try:
-                assistant_content, retrieved_ids, grounding_meta, tool_trace = synthesize(
+                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary = synthesize(
                     conn,
                     user['id'],
                     ai_provider,
@@ -1180,12 +1182,12 @@ class handler(BaseHTTPRequestHandler):
                         })
                 cursor.execute("""
                     INSERT INTO chat_messages
-                        (chat_id, course_id, user_id, parent_message_id, role, content,
+                        (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                          ai_provider, ai_model, context_material_ids,
                          grounding_meta, tool_trace,
                          retrieved_chunk_ids, message_index)
-                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id, chat_id, role, content, ai_provider, ai_model,
+                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                               retrieved_chunk_ids, context_token_count, response_token_count,
                               response_time_ms, finish_reason, message_index, created_at, tool_trace
                 """, (
@@ -1194,6 +1196,7 @@ class handler(BaseHTTPRequestHandler):
                     user['id'],
                     edited_user_message['id'],
                     assistant_content,
+                    assistant_summary,
                     ai_provider,
                     ai_model,
                     json.dumps(context_material_ids),
@@ -1370,9 +1373,10 @@ class handler(BaseHTTPRequestHandler):
             original_msg_id = reverted_entry.get('original_msg_id')
             reverted_provider = reverted_entry.get('ai_provider')
             reverted_model = reverted_entry.get('ai_model')
+            reverted_summary = None
             if original_msg_id:
                 cursor.execute(
-                    "SELECT retrieved_chunk_ids, ai_provider, ai_model, tool_trace FROM chat_messages WHERE id = %s",
+                    "SELECT retrieved_chunk_ids, ai_provider, ai_model, tool_trace, summary FROM chat_messages WHERE id = %s",
                     (original_msg_id,)
                 )
                 orig_row = cursor.fetchone()
@@ -1381,6 +1385,7 @@ class handler(BaseHTTPRequestHandler):
                 if orig_row:
                     reverted_provider = reverted_provider or orig_row.get('ai_provider')
                     reverted_model = reverted_model or orig_row.get('ai_model')
+                    reverted_summary = orig_row.get('summary')
             else:
                 reverted_chunk_ids = reverted_entry.get('retrieved_chunk_ids') or []
                 reverted_tool_trace = None
@@ -1390,10 +1395,10 @@ class handler(BaseHTTPRequestHandler):
             cursor.execute(
                 """
                 INSERT INTO chat_messages
-                    (chat_id, course_id, user_id, parent_message_id, role, content,
+                    (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                      ai_provider, ai_model, context_material_ids, retrieved_chunk_ids, tool_trace, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s::jsonb, %s)
-                RETURNING id, chat_id, role, content, ai_provider, ai_model,
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                           retrieved_chunk_ids, tool_trace, message_index, created_at
                 """,
                 (
@@ -1402,6 +1407,7 @@ class handler(BaseHTTPRequestHandler):
                     user['id'],
                     user_msg['id'],
                     reverted_content,
+                    reverted_summary,
                     reverted_provider,
                     reverted_model,
                     json.dumps(user_msg.get('context_material_ids') or []),
@@ -1537,9 +1543,10 @@ class handler(BaseHTTPRequestHandler):
             original_msg_id = restored_entry.get('original_msg_id')
             restored_provider = restored_entry.get('ai_provider')
             restored_model = restored_entry.get('ai_model')
+            restored_summary = None
             if original_msg_id:
                 cursor.execute(
-                    "SELECT retrieved_chunk_ids, ai_provider, ai_model, tool_trace FROM chat_messages WHERE id = %s",
+                    "SELECT retrieved_chunk_ids, ai_provider, ai_model, tool_trace, summary FROM chat_messages WHERE id = %s",
                     (original_msg_id,)
                 )
                 orig_row = cursor.fetchone()
@@ -1548,6 +1555,7 @@ class handler(BaseHTTPRequestHandler):
                 if orig_row:
                     restored_provider = restored_provider or orig_row.get('ai_provider')
                     restored_model = restored_model or orig_row.get('ai_model')
+                    restored_summary = orig_row.get('summary')
             else:
                 restored_chunk_ids = restored_entry.get('retrieved_chunk_ids') or []
                 restored_tool_trace = None
@@ -1557,10 +1565,10 @@ class handler(BaseHTTPRequestHandler):
             cursor.execute(
                 """
                 INSERT INTO chat_messages
-                    (chat_id, course_id, user_id, parent_message_id, role, content,
+                    (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                      ai_provider, ai_model, context_material_ids, retrieved_chunk_ids, tool_trace, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s::jsonb, %s)
-                RETURNING id, chat_id, role, content, ai_provider, ai_model,
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                           retrieved_chunk_ids, tool_trace, message_index, created_at
                 """,
                 (
@@ -1569,6 +1577,7 @@ class handler(BaseHTTPRequestHandler):
                     user['id'],
                     user_msg['id'],
                     restored_content,
+                    restored_summary,
                     restored_provider,
                     restored_model,
                     json.dumps(user_msg.get('context_material_ids') or []),
@@ -1727,7 +1736,7 @@ class handler(BaseHTTPRequestHandler):
 
             on_event = (lambda evt: send_sse_event(self, evt)) if is_streaming else None
             try:
-                assistant_content, retrieved_ids, grounding_meta, tool_trace = synthesize(
+                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary = synthesize(
                     conn,
                     user['id'],
                     ai_provider,
@@ -1815,11 +1824,11 @@ class handler(BaseHTTPRequestHandler):
                 cursor.execute(
                     """
                     INSERT INTO chat_messages
-                        (chat_id, course_id, user_id, parent_message_id, role, content,
+                        (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                          ai_provider, ai_model, context_material_ids, grounding_meta, tool_trace,
                          retrieved_chunk_ids, message_index)
-                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id, chat_id, role, content, ai_provider, ai_model, retrieved_chunk_ids,
+                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id, chat_id, role, content, summary, ai_provider, ai_model, retrieved_chunk_ids,
                               message_index, created_at, tool_trace
                     """,
                     (
@@ -1828,6 +1837,7 @@ class handler(BaseHTTPRequestHandler):
                         user['id'],
                         user_msg['id'],
                         assistant_content,
+                        assistant_summary,
                         ai_provider,
                         ai_model,
                         json.dumps(context_material_ids),
@@ -1917,11 +1927,12 @@ class handler(BaseHTTPRequestHandler):
                     pm.assistant_message_id,
                     pm.chat_id,
                     pm.course_id,
-                    pm.ai_summary,
+                    COALESCE(am.summary, pm.ai_summary, '') AS ai_summary,
                     pm.pinned_at,
                     ch.title AS chat_title,
                     um.content AS user_content,
                     am.content AS assistant_content,
+                    am.summary AS assistant_summary,
                     am.ai_provider,
                     am.ai_model
                 FROM pinned_messages pm
@@ -1945,7 +1956,14 @@ class handler(BaseHTTPRequestHandler):
                 "pinned_at": row['pinned_at'].isoformat() if row['pinned_at'] else None,
                 "chat_title": row['chat_title'],
                 "user_message": {"id": row['user_message_id'], "role": "user", "content": row['user_content']},
-                "assistant_message": {"id": row['assistant_message_id'], "role": "assistant", "content": row['assistant_content'], "ai_provider": row['ai_provider'], "ai_model": row['ai_model']},
+                "assistant_message": {
+                    "id": row['assistant_message_id'],
+                    "role": "assistant",
+                    "content": row['assistant_content'],
+                    "summary": row['assistant_summary'],
+                    "ai_provider": row['ai_provider'],
+                    "ai_model": row['ai_model'],
+                },
             }
             for row in rows
         ]
@@ -1956,7 +1974,6 @@ class handler(BaseHTTPRequestHandler):
         assistant_message_id = data.get('assistant_message_id')
         course_id = data.get('course_id')
         chat_id = data.get('chat_id')
-        ai_summary = data.get('ai_summary', '')
 
         if not all(isinstance(v, int) for v in [user_message_id, assistant_message_id, course_id, chat_id]):
             send_json(self, 400, {"error": "user_message_id, assistant_message_id, course_id, and chat_id are required integers"})
@@ -1974,13 +1991,15 @@ class handler(BaseHTTPRequestHandler):
                 send_json(self, 403, {"error": "Access denied: user message not owned by caller"})
                 return
             cursor.execute(
-                "SELECT id FROM chat_messages WHERE id = %s AND user_id = %s",
+                "SELECT COALESCE(summary, '') AS s FROM chat_messages WHERE id = %s AND user_id = %s",
                 (assistant_message_id, user['id'])
             )
-            if not cursor.fetchone():
+            asst = cursor.fetchone()
+            if not asst:
                 cursor.close()
                 send_json(self, 403, {"error": "Access denied: assistant message not owned by caller"})
                 return
+            pin_summary = (asst['s'] or '')[:300]
 
             cursor.execute("""
                 INSERT INTO pinned_messages
@@ -1988,7 +2007,7 @@ class handler(BaseHTTPRequestHandler):
                 VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id, assistant_message_id) DO NOTHING
                 RETURNING id, pinned_at
-            """, (user['id'], course_id, chat_id, user_message_id, assistant_message_id, ai_summary[:300] if ai_summary else ''))
+            """, (user['id'], course_id, chat_id, user_message_id, assistant_message_id, pin_summary))
             row = cursor.fetchone()
             cursor.close()
 
