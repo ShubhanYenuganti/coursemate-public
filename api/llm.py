@@ -174,7 +174,7 @@ def _extract_synthesis_obj(text: str) -> dict | None:
             return obj
     except json.JSONDecodeError:
         pass
-    repaired = re.sub(r'\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})', r'\\\\', text)
+    repaired = re.sub(r'\\(?!["\\\/n])', r'\\\\', text)
     try:
         obj = json.loads(repaired)
         if isinstance(obj, dict):
