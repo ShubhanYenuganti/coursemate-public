@@ -1889,12 +1889,25 @@ export default function ChatTab({ course, userData, onAddSource }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to revert');
 
-      const nextMessages = [...keptPrefix, data.user_message, data.assistant_message];
+      const newAsst = data.assistant_message;
+      const nextMessages = [...keptPrefix, data.user_message, newAsst];
+      const displayedIds = new Set(nextMessages.map((m) => m.id));
+      // Synchronously update pin state alongside messages so both render in the same pass.
+      // Remove pins for messages no longer displayed; add a minimal entry if the new row is pinned.
+      setPinnedResponses((prev) => {
+        const kept = prev.filter((p) => displayedIds.has(p.assistant_message_id));
+        return newAsst.is_pinned ? [...kept, { assistant_message_id: newAsst.id }] : kept;
+      });
       setMessages(nextMessages);
       setMsgChunks((prev) => {
         const keptIds = new Set(nextMessages.map((m) => m.id));
         return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
       });
+      // Background re-fetch replaces the minimal pin entry with the full object for PinsPanel.
+      fetch(`/api/chat?resource=pin&course_id=${course.id}`, { credentials: 'include' })
+        .then((r) => r.json())
+        .then((d) => setPinnedResponses(d.pins || []))
+        .catch(() => {});
     } catch {
       setMessages(prevMessages);
       setMsgChunks(prevMsgChunks);
@@ -1931,12 +1944,24 @@ export default function ChatTab({ course, userData, onAddSource }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to restore');
 
-      const nextMessages = [...keptPrefix, data.user_message, data.assistant_message];
+      const newAsst = data.assistant_message;
+      const nextMessages = [...keptPrefix, data.user_message, newAsst];
+      const displayedIds = new Set(nextMessages.map((m) => m.id));
+      // Synchronously update pin state alongside messages so both render in the same pass.
+      setPinnedResponses((prev) => {
+        const kept = prev.filter((p) => displayedIds.has(p.assistant_message_id));
+        return newAsst.is_pinned ? [...kept, { assistant_message_id: newAsst.id }] : kept;
+      });
       setMessages(nextMessages);
       setMsgChunks((prev) => {
         const keptIds = new Set(nextMessages.map((m) => m.id));
         return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
       });
+      // Background re-fetch replaces the minimal pin entry with the full object for PinsPanel.
+      fetch(`/api/chat?resource=pin&course_id=${course.id}`, { credentials: 'include' })
+        .then((r) => r.json())
+        .then((d) => setPinnedResponses(d.pins || []))
+        .catch(() => {});
     } catch {
       setMessages(prevMessages);
       setMsgChunks(prevMsgChunks);

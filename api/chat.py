@@ -1419,11 +1419,28 @@ class handler(BaseHTTPRequestHandler):
                 )
             )
             new_assistant = cursor.fetchone()
+
+            # Move any existing pin from the original row to the newly created row
+            # so pin state survives revert/restore cycles.
+            if original_msg_id:
+                cursor.execute(
+                    """
+                    UPDATE pinned_messages
+                    SET assistant_message_id = %s
+                    WHERE assistant_message_id = %s AND user_id = %s
+                    """,
+                    (new_assistant['id'], original_msg_id, user['id'])
+                )
+            cursor.execute(
+                "SELECT 1 FROM pinned_messages WHERE assistant_message_id = %s AND user_id = %s",
+                (new_assistant['id'], user['id'])
+            )
+            is_pinned = cursor.fetchone() is not None
             cursor.close()
 
         send_json(self, 200, {
             "user_message": updated_user_msg,
-            "assistant_message": new_assistant,
+            "assistant_message": {**new_assistant, "is_pinned": is_pinned},
         })
 
     def _restore_message(self, user, data):
@@ -1589,11 +1606,28 @@ class handler(BaseHTTPRequestHandler):
                 )
             )
             new_assistant = cursor.fetchone()
+
+            # Move any existing pin from the original row to the newly created row
+            # so pin state survives revert/restore cycles.
+            if original_msg_id:
+                cursor.execute(
+                    """
+                    UPDATE pinned_messages
+                    SET assistant_message_id = %s
+                    WHERE assistant_message_id = %s AND user_id = %s
+                    """,
+                    (new_assistant['id'], original_msg_id, user['id'])
+                )
+            cursor.execute(
+                "SELECT 1 FROM pinned_messages WHERE assistant_message_id = %s AND user_id = %s",
+                (new_assistant['id'], user['id'])
+            )
+            is_pinned = cursor.fetchone() is not None
             cursor.close()
 
         send_json(self, 200, {
             "user_message": updated_user_msg,
-            "assistant_message": new_assistant,
+            "assistant_message": {**new_assistant, "is_pinned": is_pinned},
         })
 
     def _stream_regenerate_message(self, user, data):
