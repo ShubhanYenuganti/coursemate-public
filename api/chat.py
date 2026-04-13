@@ -287,6 +287,8 @@ class handler(BaseHTTPRequestHandler):
         resource = data.get('resource', 'chat')
         if resource == 'chat':
             self._delete_chat(user, data)
+        elif resource == 'pin':
+            self._unpin_message(user, data)
         else:
             send_json(self, 400, {"error": f"Unknown resource '{resource}'"})
 

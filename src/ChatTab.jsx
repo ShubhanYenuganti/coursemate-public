@@ -116,8 +116,8 @@ function SparkleIcon() {
 
 function TrashIcon() {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24"
-      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg xmlns="http://www.w3.org/2000/svg" width="13.2" height="13.2" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="3 6 5 6 21 6" />
       <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
       <path d="M10 11v6M14 11v6" />
@@ -370,7 +370,7 @@ function ArchivedConvItem({ conv, onDelete, onUnarchive }) {
         type="button"
         onClick={() => onDelete(conv.id)}
         title="Delete permanently"
-        className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 transition-all text-gray-400 hover:text-red-500 hover:bg-red-50"
+        className="flex-shrink-0 p-0.5 rounded transition-all text-gray-400 hover:text-red-500 hover:bg-red-50"
       >
         <TrashIcon />
       </button>
@@ -967,7 +967,7 @@ function StreamingHistoryBubble({ history, materials }) {
 
 // ─── pins panel ──────────────────────────────────────────────────────────────
 
-function PinsPanel({ pins, courseName, userData, materials }) {
+function PinsPanel({ pins, courseName, userData, materials, onDeletePin }) {
   const [expandedPin, setExpandedPin] = useState(null);
 
   return (
@@ -992,10 +992,11 @@ function PinsPanel({ pins, courseName, userData, materials }) {
           return (
             <div key={pin.id}>
               {/* Row */}
+              <div className="flex items-center group hover:bg-gray-50 transition-colors">
               <button
                 type="button"
                 onClick={() => setExpandedPin(isExpanded ? null : pin.id)}
-                className={`w-full flex gap-2 px-6 py-1.5 text-left hover:bg-gray-50 transition-colors ${
+                className={`flex-1 flex gap-2 px-6 py-1.5 text-left min-w-0 ${
                   isExpanded ? 'items-start py-2' : 'items-center'
                 }`}
               >
@@ -1023,6 +1024,15 @@ function PinsPanel({ pins, courseName, userData, materials }) {
                   </>
                 )}
               </button>
+              <button
+                type="button"
+                onClick={() => onDeletePin && onDeletePin(pin)}
+                className="flex-shrink-0 pl-1 pr-2.5 py-1.5 text-gray-400 hover:text-red-500 transition-colors"
+                aria-label="Delete pin"
+              >
+                <TrashIcon />
+              </button>
+              </div>
 
               {/* Expanded card */}
               {isExpanded && pin.user_message && pin.assistant_message && (
@@ -1446,6 +1456,21 @@ export default function ChatTab({ course, userData, onAddSource }) {
     setActiveConv(id);
     setMessages([]);
     setEditingTitle(false);
+  }
+
+  async function handleDeletePin(pin) {
+    try {
+      const r = await fetch('/api/chat', {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resource: 'pin', assistant_message_id: pin.assistant_message_id }),
+      });
+      if (!r.ok) return;
+      setPinnedResponses((prev) => prev.filter((p) => p.assistant_message_id !== pin.assistant_message_id));
+    } catch {
+      // ignore network errors
+    }
   }
 
   async function handlePinMessage(assistantMsg, userMsg) {
@@ -2529,6 +2554,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
         courseName={course?.title}
         userData={userData}
         materials={materials}
+        onDeletePin={handleDeletePin}
       />
     </div>
     </div>
