@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { formatDateTime, parseUTC } from './utils/dateUtils';
 import { getMaterialUrl } from './utils/materialUtils';
+import SearchChat from './SearchChat';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
@@ -1097,6 +1098,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
   const [activeConv, setActiveConv] = useState(null);
   const [chats, setChats] = useState([]);
   const [chatsLoading, setChatsLoading] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [archivedChats, setArchivedChats] = useState([]);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archivedLoading, setArchivedLoading] = useState(false);
@@ -1889,12 +1891,25 @@ export default function ChatTab({ course, userData, onAddSource }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to revert');
 
-      const nextMessages = [...keptPrefix, data.user_message, data.assistant_message];
+      const newAsst = data.assistant_message;
+      const nextMessages = [...keptPrefix, data.user_message, newAsst];
+      const displayedIds = new Set(nextMessages.map((m) => m.id));
+      // Synchronously update pin state alongside messages so both render in the same pass.
+      // Remove pins for messages no longer displayed; add a minimal entry if the new row is pinned.
+      setPinnedResponses((prev) => {
+        const kept = prev.filter((p) => displayedIds.has(p.assistant_message_id));
+        return newAsst.is_pinned ? [...kept, { assistant_message_id: newAsst.id }] : kept;
+      });
       setMessages(nextMessages);
       setMsgChunks((prev) => {
         const keptIds = new Set(nextMessages.map((m) => m.id));
         return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
       });
+      // Background re-fetch replaces the minimal pin entry with the full object for PinsPanel.
+      fetch(`/api/chat?resource=pin&course_id=${course.id}`, { credentials: 'include' })
+        .then((r) => r.json())
+        .then((d) => setPinnedResponses(d.pins || []))
+        .catch(() => {});
     } catch {
       setMessages(prevMessages);
       setMsgChunks(prevMsgChunks);
@@ -1931,12 +1946,24 @@ export default function ChatTab({ course, userData, onAddSource }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to restore');
 
-      const nextMessages = [...keptPrefix, data.user_message, data.assistant_message];
+      const newAsst = data.assistant_message;
+      const nextMessages = [...keptPrefix, data.user_message, newAsst];
+      const displayedIds = new Set(nextMessages.map((m) => m.id));
+      // Synchronously update pin state alongside messages so both render in the same pass.
+      setPinnedResponses((prev) => {
+        const kept = prev.filter((p) => displayedIds.has(p.assistant_message_id));
+        return newAsst.is_pinned ? [...kept, { assistant_message_id: newAsst.id }] : kept;
+      });
       setMessages(nextMessages);
       setMsgChunks((prev) => {
         const keptIds = new Set(nextMessages.map((m) => m.id));
         return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
       });
+      // Background re-fetch replaces the minimal pin entry with the full object for PinsPanel.
+      fetch(`/api/chat?resource=pin&course_id=${course.id}`, { credentials: 'include' })
+        .then((r) => r.json())
+        .then((d) => setPinnedResponses(d.pins || []))
+        .catch(() => {});
     } catch {
       setMessages(prevMessages);
       setMsgChunks(prevMsgChunks);
@@ -2097,6 +2124,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
               type="button"
               className="flex-shrink-0 p-1.5 text-gray-600 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-colors"
               title="Search"
+              onClick={() => setSearchOpen(true)}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="11" cy="11" r="8" />
@@ -2557,6 +2585,15 @@ export default function ChatTab({ course, userData, onAddSource }) {
         onDeletePin={handleDeletePin}
       />
     </div>
+
+    {searchOpen && (
+      <SearchChat
+        courseId={course.id}
+        chats={chats.filter(c => c.id !== '__new__')}
+        onSelectChat={handleConvSelect}
+        onClose={() => setSearchOpen(false)}
+      />
+    )}
     </div>
   );
 }

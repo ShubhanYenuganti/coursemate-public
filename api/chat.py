@@ -4,6 +4,7 @@
 # GET    /api/chat?resource=message&chat_id=<id>             → list messages
 # GET    /api/chat?resource=message&chat_id=<id>&q=<query>   → search within chat
 # GET    /api/chat?resource=message&course_id=<id>&q=<query> → search across course
+# GET    /api/chat?resource=chat_search&course_id=<id>&q=<query> → FTS title+content search
 # POST   /api/chat  resource="chat"    action="create"       → create chat
 # POST   /api/chat  resource="chat"    action="update"       → rename chat
 # POST   /api/chat  resource="chat"    action="archive"      → archive/unarchive chat
@@ -15,6 +16,7 @@
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
@@ -184,6 +186,8 @@ class handler(BaseHTTPRequestHandler):
             self._get_message_chunks(user, params)
         elif resource == 'pin':
             self._list_pins(user, params)
+        elif resource == 'chat_search':
+            self._search_chats(user, params)
         else:
             send_json(self, 400, {"error": f"Unknown resource '{resource}'"})
 
@@ -333,6 +337,86 @@ class handler(BaseHTTPRequestHandler):
             cursor.close()
 
         send_json(self, 200, {"chats": chats})
+
+    def _search_chats(self, user, params):
+        course_id_raw = params.get('course_id', [None])[0]
+        if not course_id_raw or not course_id_raw.isdigit():
+            send_json(self, 400, {"error": "course_id query parameter is required"})
+            return
+        course_id = int(course_id_raw)
+
+        if not Course.verify_access(course_id, user['id']):
+            send_json(self, 403, {"error": "Access denied to this course"})
+            return
+
+        q = params.get('q', [None])[0]
+        if not q or not q.strip():
+            send_json(self, 400, {"error": "q query parameter is required"})
+            return
+
+        # Build a prefix tsquery for title matching so partial words like "robo"
+        # match "Robotics". The last token gets :* appended; earlier tokens go
+        # through plainto_tsquery for normal stemming/stop-word handling.
+        words = q.strip().split()
+        last = re.sub(r"[&|!():*\\ ]", "", words[-1]) or words[-1]
+        if len(words) == 1:
+            title_tsq_sql = "to_tsquery('english', %s)"
+            title_tsq_params = [f"{last}:*"]
+        else:
+            title_tsq_sql = "plainto_tsquery('english', %s) && to_tsquery('english', %s)"
+            title_tsq_params = [" ".join(words[:-1]), f"{last}:*"]
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                WITH title_matches AS (
+                    SELECT id,
+                           title,
+                           last_message_at,
+                           ts_rank(to_tsvector('english', title), {title_tsq_sql}) * 3.0 AS score
+                    FROM chats
+                    WHERE course_id = %s
+                      AND user_id = %s
+                      AND is_archived = FALSE
+                      AND to_tsvector('english', title) @@ {title_tsq_sql}
+                    ORDER BY score DESC
+                    LIMIT 20
+                ),
+                content_matches AS (
+                    SELECT c.id,
+                           c.title,
+                           c.last_message_at,
+                           COUNT(*) AS hit_count,
+                           MAX(ts_rank(to_tsvector('english', cm.content), plainto_tsquery('english', %s))) AS best_rank
+                    FROM chat_messages cm
+                    JOIN chats c ON c.id = cm.chat_id
+                    WHERE c.course_id = %s
+                      AND c.user_id = %s
+                      AND c.is_archived = FALSE
+                      AND to_tsvector('english', cm.content) @@ plainto_tsquery('english', %s)
+                      AND cm.chat_id != ALL(ARRAY(SELECT id FROM title_matches))
+                    GROUP BY c.id, c.title, c.last_message_at
+                    ORDER BY (1 + ln(COUNT(*))) * MAX(ts_rank(to_tsvector('english', cm.content), plainto_tsquery('english', %s))) DESC
+                    LIMIT 20
+                )
+                SELECT 'title' AS match_type, id, title, last_message_at, NULL AS hit_count FROM title_matches
+                UNION ALL
+                SELECT 'content' AS match_type, id, title, last_message_at, hit_count FROM content_matches
+            """, (*title_tsq_params, course_id, user['id'], *title_tsq_params, q, course_id, user['id'], q, q))
+
+            rows = cursor.fetchall()
+            cursor.close()
+
+        title_matches = [
+            {"id": r["id"], "title": r["title"], "last_message_at": r["last_message_at"]}
+            for r in rows if r["match_type"] == "title"
+        ]
+        content_matches = [
+            {"id": r["id"], "title": r["title"], "last_message_at": r["last_message_at"], "hit_count": r["hit_count"]}
+            for r in rows if r["match_type"] == "content"
+        ]
+
+        send_json(self, 200, {"title_matches": title_matches, "content_matches": content_matches})
 
     def _list_or_search_messages(self, user, params, q):
         chat_id_raw = params.get('chat_id', [None])[0]
@@ -1419,11 +1503,28 @@ class handler(BaseHTTPRequestHandler):
                 )
             )
             new_assistant = cursor.fetchone()
+
+            # Move any existing pin from the original row to the newly created row
+            # so pin state survives revert/restore cycles.
+            if original_msg_id:
+                cursor.execute(
+                    """
+                    UPDATE pinned_messages
+                    SET assistant_message_id = %s
+                    WHERE assistant_message_id = %s AND user_id = %s
+                    """,
+                    (new_assistant['id'], original_msg_id, user['id'])
+                )
+            cursor.execute(
+                "SELECT 1 FROM pinned_messages WHERE assistant_message_id = %s AND user_id = %s",
+                (new_assistant['id'], user['id'])
+            )
+            is_pinned = cursor.fetchone() is not None
             cursor.close()
 
         send_json(self, 200, {
             "user_message": updated_user_msg,
-            "assistant_message": new_assistant,
+            "assistant_message": {**new_assistant, "is_pinned": is_pinned},
         })
 
     def _restore_message(self, user, data):
@@ -1589,11 +1690,28 @@ class handler(BaseHTTPRequestHandler):
                 )
             )
             new_assistant = cursor.fetchone()
+
+            # Move any existing pin from the original row to the newly created row
+            # so pin state survives revert/restore cycles.
+            if original_msg_id:
+                cursor.execute(
+                    """
+                    UPDATE pinned_messages
+                    SET assistant_message_id = %s
+                    WHERE assistant_message_id = %s AND user_id = %s
+                    """,
+                    (new_assistant['id'], original_msg_id, user['id'])
+                )
+            cursor.execute(
+                "SELECT 1 FROM pinned_messages WHERE assistant_message_id = %s AND user_id = %s",
+                (new_assistant['id'], user['id'])
+            )
+            is_pinned = cursor.fetchone() is not None
             cursor.close()
 
         send_json(self, 200, {
             "user_message": updated_user_msg,
-            "assistant_message": new_assistant,
+            "assistant_message": {**new_assistant, "is_pinned": is_pinned},
         })
 
     def _stream_regenerate_message(self, user, data):
