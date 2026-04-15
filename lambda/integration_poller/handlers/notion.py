@@ -77,6 +77,30 @@ def _notion_post(path, token, body):
     return resp.json()
 
 
+def _list_all_database_pages(database_id: str, token: str) -> list[dict]:
+    """
+    Return all pages in a Notion database.
+    Each entry is the raw Notion page object (id, last_edited_time, properties, url).
+    Paginates automatically via has_more / next_cursor.
+    """
+    pages = []
+    start_cursor = None
+    while True:
+        body: dict = {"page_size": 100}
+        if start_cursor:
+            body["start_cursor"] = start_cursor
+        try:
+            data = _notion_post(f"databases/{database_id}/query", token, body)
+        except Exception as exc:
+            print(f"[notion_handler] _list_all_database_pages error: {exc}")
+            break
+        pages.extend(data.get("results", []))
+        if not data.get("has_more"):
+            break
+        start_cursor = data.get("next_cursor")
+    return pages
+
+
 def _fetch_all_blocks(page_id, token):
     """Fetch all blocks for a page, following pagination."""
     blocks = []
@@ -283,6 +307,34 @@ def _notion_page_to_pdf(page_id, blocks, token):
 # ─── Ingestion helpers ───────────────────────────────────────────────────────
 
 
+def _register_new_material(
+    user_id, course_id, source_point_id, page_id, page_title, outsourced_url=None
+) -> int | None:
+    """
+    INSERT a newly discovered Notion page into materials with sync=TRUE.
+    Uses ON CONFLICT DO NOTHING so a race with bulk_upsert_sync is safe.
+    Returns the new material_id, or None if the row already existed.
+    """
+    placeholder_url = f'notion/{page_id}.pdf'
+    with get_db() as db:
+        row = db.execute(
+            """
+            INSERT INTO materials
+                (course_id, name, file_url, uploaded_by, file_type, source_type,
+                 external_id, integration_source_point_id, sync, doc_type, outsourced_url)
+            VALUES (%s, %s, %s, %s, 'application/pdf', 'notion', %s, %s, TRUE, 'general', %s)
+            ON CONFLICT (external_id, course_id) DO NOTHING
+            RETURNING id
+            """,
+            (course_id, page_title or page_id, placeholder_url, user_id,
+             page_id, source_point_id, outsourced_url),
+        ).fetchone()
+    if row:
+        print(f'[notion_handler] Discovered new page page_id={page_id} title={page_title!r} → material_id={row["id"]}')
+        return row['id']
+    return None
+
+
 def _upsert_material(
     user_id,
     course_id,
@@ -392,7 +444,7 @@ def _update_material_after_upload(material_id, s3_key, last_edited_time):
         db.execute(
             """
             UPDATE materials
-            SET file_url = %s, external_last_edited = %s
+            SET file_url = %s, external_last_edited = %s, updated_at = CURRENT_TIMESTAMP
             WHERE id = %s
         """,
             (file_url, last_edited_time, material_id),
@@ -457,6 +509,38 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
         work_ids = external_ids
         print(f"[notion_handler] Sync Now path: processing {len(work_ids)} targeted page(s)")
     else:
+        # ── Discovery sweep: find pages in the database not yet in the DB ─────
+        database_id = source_point["external_id"]
+        print(f"[notion_handler] Discovery sweep: listing database_id={database_id}")
+        remote_pages = _list_all_database_pages(database_id, token)
+        remote_ids = {p["id"] for p in remote_pages}
+
+        with get_db() as db:
+            known_rows = db.execute(
+                "SELECT external_id FROM materials WHERE integration_source_point_id = %s",
+                (source_point_id,),
+            ).fetchall()
+        known_ids = {r["external_id"] for r in known_rows}
+
+        new_page_ids = remote_ids - known_ids
+        if new_page_ids:
+            print(f"[notion_handler] Discovery: found {len(new_page_ids)} new page(s)")
+            remote_by_id = {p["id"]: p for p in remote_pages}
+            for pid in new_page_ids:
+                p = remote_by_id[pid]
+                title = ""
+                for prop in p.get("properties", {}).values():
+                    if prop.get("type") == "title":
+                        title = _plain_text(prop.get("title", []))
+                        break
+                _register_new_material(
+                    user_id, course_id, source_point_id, pid, title,
+                    outsourced_url=p.get("url")
+                )
+        else:
+            print(f"[notion_handler] Discovery: no new pages found")
+        # ── End discovery sweep ────────────────────────────────────────────────
+
         # Background sweep path: query DB for all sync=TRUE materials for this source point
         with get_db() as db:
             rows = db.execute(
@@ -468,7 +552,7 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
                 (source_point_id,)
             ).fetchall()
         work_ids = [r["external_id"] for r in rows]
-        print(f"[notion_handler] Background sweep path: processing {len(work_ids)} sync=TRUE page(s)")
+        print(f"[notion_handler] Background sweep path: processing {len(work_ids)} sync=TRUE page(s) (includes {len(new_page_ids)} newly discovered)")
 
     # Process each page by fetching its metadata individually
     pages_processed = 0
