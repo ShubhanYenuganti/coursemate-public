@@ -486,6 +486,7 @@ function MessageBubble({
   materials,
   onPin,
   isPinned,
+  onFollowUpClick,
 }) {
   const isUser = msg.role === 'user';
   const modelLabel = getMessageModelLabel(msg);
@@ -693,6 +694,20 @@ function MessageBubble({
                 </a>
               );
             })}
+          </div>
+        )}
+        {Array.isArray(msg.follow_ups) && msg.follow_ups.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-3">
+            {msg.follow_ups.map((q, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => onFollowUpClick && onFollowUpClick(q)}
+                className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50 hover:border-indigo-300 transition-colors"
+              >
+                {q}
+              </button>
+            ))}
           </div>
         )}
         <div className="flex items-center gap-1 mt-3">
@@ -1094,6 +1109,11 @@ function PinsPanel({ pins, courseName, userData, materials, onDeletePin }) {
 
 // ─── main component ───────────────────────────────────────────────────────────
 
+/** Max height (px) for the composer textarea before it scrolls internally. */
+const CHAT_COMPOSER_MAX_HEIGHT_PX = 280;
+/** Min height (px) — matches the send row (~h-6) so single-line text isn’t short vs controls. */
+const CHAT_COMPOSER_MIN_HEIGHT_PX = 24;
+
 export default function ChatTab({ course, userData, onAddSource }) {
   const [activeConv, setActiveConv] = useState(null);
   const [chats, setChats] = useState([]);
@@ -1127,6 +1147,16 @@ export default function ChatTab({ course, userData, onAddSource }) {
   const [sourcesPanel, setSourcesPanel] = useState({ open: false, messageId: null, focusIndex: null });
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const h = Math.min(
+      Math.max(el.scrollHeight, CHAT_COMPOSER_MIN_HEIGHT_PX),
+      CHAT_COMPOSER_MAX_HEIGHT_PX,
+    );
+    el.style.height = `${h}px`;
+  }, [input]);
   const dropdownRef = useRef(null);
   const modelListDropdownRef = useRef(null);
   const titleInputRef = useRef(null);
@@ -2468,6 +2498,10 @@ export default function ChatTab({ course, userData, onAddSource }) {
                   if (userMsg) handlePinMessage(msg, userMsg);
                 } : null}
                 isPinned={msg.role === 'assistant' ? pinnedResponses.some((p) => p.assistant_message_id === msg.id) : false}
+                onFollowUpClick={msg.role === 'assistant' ? (q) => {
+                  setInput(q);
+                  setTimeout(() => textareaRef.current?.focus(), 0);
+                } : null}
               />
               );
             })
@@ -2480,7 +2514,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
 
         {/* Input bar */}
         <div className="flex-shrink-0 px-4 pb-4 pt-2 border-t border-gray-100 bg-white">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-gray-200 bg-white hover:shadow-lg focus-within:border-indigo-300 focus-within:shadow-lg transition-all" style={{ boxShadow: '0 4px 24px 0 rgba(0,0,0,0.13)' }}>
+          <div className="flex items-stretch gap-2 pl-4 pr-3 py-2 rounded-2xl border border-gray-200 bg-white hover:shadow-lg focus-within:border-indigo-300 focus-within:shadow-lg transition-all" style={{ boxShadow: '0 4px 24px 0 rgba(0,0,0,0.13)' }}>
             <textarea
               ref={textareaRef}
               value={input}
@@ -2488,77 +2522,81 @@ export default function ChatTab({ course, userData, onAddSource }) {
               onKeyDown={handleKeyDown}
               placeholder="Reply…"
               rows={1}
-              className="flex-1 bg-transparent resize-none text-xs text-gray-800 placeholder-gray-400 focus:outline-none leading-relaxed self-center"
-              style={{ maxHeight: '80px', overflowY: 'auto' }}
-              onInput={(e) => {
-                e.target.style.height = 'auto';
-                e.target.style.height = Math.min(e.target.scrollHeight, 80) + 'px';
+              className="flex-1 min-h-0 min-w-0 bg-transparent resize-none text-xs text-gray-800 placeholder-gray-400 focus:outline-none leading-relaxed py-0.5"
+              style={{
+                minHeight: CHAT_COMPOSER_MIN_HEIGHT_PX,
+                maxHeight: CHAT_COMPOSER_MAX_HEIGHT_PX,
+                overflowY: 'auto',
               }}
             />
-            {/* Model selector */}
-            {availableModels.length > 0 && (
-              <div className="flex items-center gap-1 flex-shrink-0">
-                {/* Provider dropdown */}
-                <div className="relative" ref={dropdownRef}>
-                  <button
-                    type="button"
-                    onClick={() => setModelDropdownOpen((o) => !o)}
-                    className="flex items-center gap-0.5 text-gray-400 text-xs hover:text-gray-600 transition-colors"
-                  >
-                    <span>{MODEL_LABELS[selectedModel] || selectedModel}</span>
-                    <ChevronDownIcon />
-                  </button>
-                  {modelDropdownOpen && (
-                    <div className="absolute bottom-full right-0 mb-2 bg-gray-900 rounded-xl shadow-xl py-1 min-w-[130px] z-50 border border-gray-700/60">
-                      {availableModels.map((provider) => (
-                        <button key={provider} type="button" onClick={() => handleModelSelect(provider)}
-                          className="w-full flex items-center justify-between px-3 py-2 text-[11px] text-left transition-colors rounded-lg hover:bg-gray-700/70">
-                          <span className={selectedModel === provider ? 'text-white font-medium' : 'text-gray-300'}>
-                            {MODEL_LABELS[provider] || provider}
-                          </span>
-                          {selectedModel === provider && <span className="text-indigo-400"><CheckIcon /></span>}
-                        </button>
-                      ))}
+            <div className="flex flex-col justify-end flex-shrink-0">
+              <div className="flex items-center gap-1">
+                {/* Model selector */}
+                {availableModels.length > 0 && (
+                  <>
+                    {/* Provider dropdown */}
+                    <div className="relative" ref={dropdownRef}>
+                      <button
+                        type="button"
+                        onClick={() => setModelDropdownOpen((o) => !o)}
+                        className="flex items-center gap-0.5 text-gray-400 text-xs hover:text-gray-600 transition-colors"
+                      >
+                        <span>{MODEL_LABELS[selectedModel] || selectedModel}</span>
+                        <ChevronDownIcon />
+                      </button>
+                      {modelDropdownOpen && (
+                        <div className="absolute bottom-full right-0 mb-2 bg-gray-900 rounded-xl shadow-xl py-1 min-w-[130px] z-50 border border-gray-700/60">
+                          {availableModels.map((provider) => (
+                            <button key={provider} type="button" onClick={() => handleModelSelect(provider)}
+                              className="w-full flex items-center justify-between px-3 py-2 text-[11px] text-left transition-colors rounded-lg hover:bg-gray-700/70">
+                              <span className={selectedModel === provider ? 'text-white font-medium' : 'text-gray-300'}>
+                                {MODEL_LABELS[provider] || provider}
+                              </span>
+                              {selectedModel === provider && <span className="text-indigo-400"><CheckIcon /></span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
 
-                {/* Specific model dropdown */}
-                {selectedModel && PROVIDER_MODELS[selectedModel] && (
-                  <div className="relative ml-1" ref={modelListDropdownRef}>
-                    <button
-                      type="button"
-                      onClick={() => setModelListDropdownOpen((o) => !o)}
-                      className="flex items-center gap-0.5 text-gray-400 text-xs hover:text-gray-600 transition-colors"
-                    >
-                      <span>{PROVIDER_MODELS[selectedModel]?.find((m) => m.id === selectedModelId)?.label || selectedModelId}</span>
-                      <ChevronDownIcon />
-                    </button>
-                    {modelListDropdownOpen && (
-                      <div className="absolute bottom-full right-0 mb-2 bg-gray-900 rounded-xl shadow-xl py-1 min-w-[180px] z-50 border border-gray-700/60 max-h-48 overflow-y-auto">
-                        {PROVIDER_MODELS[selectedModel].map((m) => (
-                          <button key={m.id} type="button" onClick={() => handleModelIdSelect(m.id)}
-                            className="w-full flex items-center justify-between px-3 py-2 text-[11px] text-left transition-colors rounded-lg hover:bg-gray-700/70">
-                            <span className={selectedModelId === m.id ? 'text-white font-medium' : 'text-gray-300'}>
-                              {m.label}
-                            </span>
-                            {selectedModelId === m.id && <span className="text-indigo-400"><CheckIcon /></span>}
-                          </button>
-                        ))}
+                    {/* Specific model dropdown */}
+                    {selectedModel && PROVIDER_MODELS[selectedModel] && (
+                      <div className="relative ml-1" ref={modelListDropdownRef}>
+                        <button
+                          type="button"
+                          onClick={() => setModelListDropdownOpen((o) => !o)}
+                          className="flex items-center gap-0.5 text-gray-400 text-xs hover:text-gray-600 transition-colors"
+                        >
+                          <span>{PROVIDER_MODELS[selectedModel]?.find((m) => m.id === selectedModelId)?.label || selectedModelId}</span>
+                          <ChevronDownIcon />
+                        </button>
+                        {modelListDropdownOpen && (
+                          <div className="absolute bottom-full right-0 mb-2 bg-gray-900 rounded-xl shadow-xl py-1 min-w-[180px] z-50 border border-gray-700/60 max-h-48 overflow-y-auto">
+                            {PROVIDER_MODELS[selectedModel].map((m) => (
+                              <button key={m.id} type="button" onClick={() => handleModelIdSelect(m.id)}
+                                className="w-full flex items-center justify-between px-3 py-2 text-[11px] text-left transition-colors rounded-lg hover:bg-gray-700/70">
+                                <span className={selectedModelId === m.id ? 'text-white font-medium' : 'text-gray-300'}>
+                                  {m.label}
+                                </span>
+                                {selectedModelId === m.id && <span className="text-indigo-400"><CheckIcon /></span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
-                  </div>
+                  </>
                 )}
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={!input.trim() || sending || !selectedModel}
+                  className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
+                >
+                  <SendIcon />
+                </button>
               </div>
-            )}
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={!input.trim() || sending || !selectedModel}
-              className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
-            >
-              <SendIcon />
-            </button>
+            </div>
           </div>
           <p className="text-center text-[10px] text-gray-400 mt-1.5">
             AI responses are based on your uploaded course materials.

@@ -64,6 +64,35 @@ def _fetch_file_metadata(file_id: str, token: str) -> dict | None:
         return None
 
 
+def _list_all_folder_files(folder_id: str, token: str) -> list[dict]:
+    """
+    Return all non-folder, non-trashed files directly inside folder_id.
+    Each entry has: id, name, mimeType, modifiedTime.
+    Paginates automatically via nextPageToken.
+    """
+    files = []
+    next_page_token = None
+    while True:
+        params = {
+            'q': f"'{folder_id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false",
+            'fields': 'nextPageToken,files(id,name,mimeType,modifiedTime)',
+            'pageSize': 100,
+        }
+        if next_page_token:
+            params['pageToken'] = next_page_token
+        try:
+            resp = _drive_get('files', token, params=params)
+            data = resp.json()
+        except Exception as exc:
+            print(f'[gdrive_handler] _list_all_folder_files error: {exc}')
+            break
+        files.extend(data.get('files', []))
+        next_page_token = data.get('nextPageToken')
+        if not next_page_token:
+            break
+    return files
+
+
 def _get_drive_file_as_pdf(file_id, mime_type, token):
     """
     Export or download a Drive file as PDF bytes.
@@ -92,6 +121,33 @@ def _get_drive_file_as_pdf(file_id, mime_type, token):
 
 
 # ─── Ingestion helpers ───────────────────────────────────────────────────────
+
+def _register_new_material(
+    user_id, course_id, source_point_id, file_id, file_name
+) -> int | None:
+    """
+    INSERT a newly discovered Drive file into materials with sync=TRUE.
+    Uses ON CONFLICT DO NOTHING so a race with bulk_upsert_sync is safe.
+    Returns the new material_id, or None if the row already existed.
+    """
+    placeholder_url = f'gdrive/{file_id}.pdf'
+    with get_db() as db:
+        row = db.execute(
+            """
+            INSERT INTO materials
+                (course_id, name, file_url, uploaded_by, file_type, source_type,
+                 external_id, integration_source_point_id, sync, doc_type)
+            VALUES (%s, %s, %s, %s, 'application/pdf', 'gdrive', %s, %s, TRUE, 'general')
+            ON CONFLICT (external_id, course_id) DO NOTHING
+            RETURNING id
+            """,
+            (course_id, file_name, placeholder_url, user_id, file_id, source_point_id),
+        ).fetchone()
+    if row:
+        print(f'[gdrive_handler] Discovered new file file_id={file_id} name={file_name!r} → material_id={row["id"]}')
+        return row['id']
+    return None
+
 
 def _upsert_material(
     user_id, course_id, source_point_id, file_id, file_name, modified_time
@@ -185,7 +241,7 @@ def _update_material_after_upload(material_id, s3_key, modified_time):
     with get_db() as db:
         db.execute("""
             UPDATE materials
-            SET file_url = %s, external_last_edited = %s
+            SET file_url = %s, external_last_edited = %s, updated_at = CURRENT_TIMESTAMP
             WHERE id = %s
         """, (file_url, modified_time, material_id))
     print(f'[gdrive_handler] Updated material after upload material_id={material_id} file_url={file_url}')
@@ -240,6 +296,30 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
         work_ids = external_ids
         print(f'[gdrive_handler] Sync Now path: processing {len(work_ids)} targeted file(s)')
     else:
+        # ── Discovery sweep: find files in the folder not yet in the DB ────────
+        folder_id = source_point['external_id']
+        print(f'[gdrive_handler] Discovery sweep: listing folder_id={folder_id}')
+        remote_files = _list_all_folder_files(folder_id, token)
+        remote_ids = {f['id'] for f in remote_files}
+
+        with get_db() as db:
+            known_rows = db.execute(
+                "SELECT external_id FROM materials WHERE integration_source_point_id = %s",
+                (source_point_id,),
+            ).fetchall()
+        known_ids = {r['external_id'] for r in known_rows}
+
+        new_file_ids = remote_ids - known_ids
+        if new_file_ids:
+            print(f'[gdrive_handler] Discovery: found {len(new_file_ids)} new file(s)')
+            remote_by_id = {f['id']: f for f in remote_files}
+            for fid in new_file_ids:
+                f = remote_by_id[fid]
+                _register_new_material(user_id, course_id, source_point_id, fid, f.get('name', fid))
+        else:
+            print(f'[gdrive_handler] Discovery: no new files found')
+        # ── End discovery sweep ────────────────────────────────────────────────
+
         # Background sweep path: query DB for all sync=TRUE materials for this source point
         with get_db() as db:
             rows = db.execute(
@@ -251,7 +331,7 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
                 (source_point_id,)
             ).fetchall()
         work_ids = [r['external_id'] for r in rows]
-        print(f'[gdrive_handler] Background sweep path: processing {len(work_ids)} sync=TRUE file(s)')
+        print(f'[gdrive_handler] Background sweep path: processing {len(work_ids)} sync=TRUE file(s) (includes {len(new_file_ids)} newly discovered)')
 
     # Process each file by fetching its metadata individually
     files_processed = 0

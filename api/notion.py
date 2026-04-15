@@ -1223,13 +1223,13 @@ def _handle_add_source_point(handler_self, user_id: int, body: dict):
         send_json(handler_self, 400, {"error": "course_id and external_id required"})
         return
 
-    resolved_id = _resolve_notion_data_source_id(external_id, token)
+    resolved_id = _resolve_notion_database_id(external_id, token)
     if not resolved_id:
         send_json(
             handler_self,
             400,
             {
-                "error": "Could not resolve a queryable Notion data source from the provided ID. Make sure you are selecting a database or data source shared with this integration."
+                "error": "Could not resolve a queryable Notion database from the provided ID. Make sure you are selecting a database shared with this integration."
             },
         )
         return
