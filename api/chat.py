@@ -28,7 +28,7 @@ try:
     from .courses import Course
     from .db import get_db
     from .rag import retrieve_chunks
-    from .llm import synthesize
+    from .llm import synthesize, synthesize_with_clarification
     from services.query.retrieval import _fetch_chunk_context
 except ImportError:
     from middleware import send_json, send_sse_headers, send_sse_event, handle_options, authenticate_request, sanitize_string, check_rate_limit
@@ -36,7 +36,7 @@ except ImportError:
     from courses import Course
     from db import get_db
     from rag import retrieve_chunks
-    from llm import synthesize
+    from llm import synthesize, synthesize_with_clarification
     from services.query.retrieval import _fetch_chunk_context
 
 try:
@@ -59,6 +59,67 @@ def _get_chat(conn, chat_id):
     row = cursor.fetchone()
     cursor.close()
     return row
+
+
+def _get_prior_user_message(conn, chat_id):
+    """Return content of the most recent non-deleted user message for this chat, or None."""
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT content FROM chat_messages
+        WHERE chat_id = %s AND role = 'user' AND is_deleted = FALSE
+        ORDER BY message_index DESC
+        LIMIT 1
+        """,
+        (chat_id,),
+    )
+    row = cursor.fetchone()
+    cursor.close()
+    return row["content"] if row else None
+
+
+def _get_prior_clarification_state(conn, chat_id):
+    """
+    Return (is_clarification_request, clarification_skipped, clarification_depth,
+             clarification_question, content) of the most recent non-deleted assistant
+    message for this chat, or (False, False, 0, None, None) if none.
+
+    Returns the safe default tuple on any DB error (e.g. columns not yet migrated)
+    so the stream handler degrades gracefully instead of crashing.
+    """
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT is_clarification_request, clarification_skipped, clarification_depth,
+                   clarification_question, content
+            FROM chat_messages
+            WHERE chat_id = %s
+              AND role = 'assistant'
+              AND is_deleted = FALSE
+            ORDER BY message_index DESC
+            LIMIT 1
+            """,
+            (chat_id,),
+        )
+        row = cursor.fetchone()
+        cursor.close()
+    except Exception:
+        logger.exception("_get_prior_clarification_state query failed — returning safe default")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False, False, 0, None, None
+    if not row:
+        return False, False, 0, None, None
+    return (
+        bool(row["is_clarification_request"]),
+        bool(row["clarification_skipped"]),
+        row["clarification_depth"] or 0,
+        row["clarification_question"],
+        row["content"],
+    )
 
 
 def _next_message_index(conn, chat_id):
@@ -266,6 +327,8 @@ class handler(BaseHTTPRequestHandler):
                 self._stream_regenerate_message(user, data)
             elif action == 'delete':
                 self._delete_message(user, data)
+            elif action == 'clarification_skip':
+                self._skip_clarification(user, data)
             else:
                 send_json(self, 400, {"error": f"Unknown action '{action}' for resource 'message'"})
         else:
@@ -492,7 +555,8 @@ class handler(BaseHTTPRequestHandler):
                                context_material_ids, retrieved_chunk_ids, context_token_count,
                                response_token_count, response_time_ms, finish_reason, grounding_meta,
                                is_edited, reply_history, edited_at, message_index, created_at, tool_trace,
-                               follow_ups
+                               follow_ups, clarification_question, is_clarification_request,
+                               clarification_skipped, clarification_depth
                         FROM chat_messages
                         WHERE chat_id = %s
                           AND is_deleted = FALSE
@@ -506,7 +570,8 @@ class handler(BaseHTTPRequestHandler):
                                context_material_ids, retrieved_chunk_ids, context_token_count,
                                response_token_count, response_time_ms, finish_reason, grounding_meta,
                                is_edited, reply_history, edited_at, message_index, created_at, tool_trace,
-                               follow_ups
+                               follow_ups, clarification_question, is_clarification_request,
+                               clarification_skipped, clarification_depth
                         FROM chat_messages
                         WHERE chat_id = %s
                           AND is_deleted = FALSE
@@ -772,6 +837,12 @@ class handler(BaseHTTPRequestHandler):
 
             # RAG retrieval + LLM synthesis
             chunks = retrieve_chunks(conn, content, context_material_ids)
+
+            # Check if the prior assistant message has a pending clarification.
+            prior_is_clarification, prior_clarification_skipped, prior_clarification_depth, \
+                prior_clarification_question, prior_reply_content = _get_prior_clarification_state(conn, chat_id)
+            clarification_pending = prior_is_clarification and not prior_clarification_skipped
+
             request_id = f"send-{uuid4().hex[:10]}"
             logger.info(
                 "chat_synthesize_start",
@@ -785,20 +856,38 @@ class handler(BaseHTTPRequestHandler):
                     "agentic_enabled": _is_agentic_request(ai_provider, ai_model),
                     "retrieved_seed_chunks": len(chunks),
                     "context_material_count": len(context_material_ids),
+                    "clarification_pending": clarification_pending,
                 },
             )
 
             try:
-                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups = synthesize(
-                    conn,
-                    user['id'],
-                    ai_provider,
-                    ai_model,
-                    content,
-                    chunks,
-                    chat_id=chat_id,
-                    context_material_ids=context_material_ids,
-                )
+                if clarification_pending:
+                    original_prompt = _get_prior_user_message(conn, chat_id) or content
+                    assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize_with_clarification(
+                        conn=conn,
+                        user_id=user['id'],
+                        ai_provider=ai_provider,
+                        ai_model=ai_model,
+                        original_prompt=original_prompt,
+                        prior_reply=prior_reply_content or "",
+                        clarifying_question=prior_clarification_question or "",
+                        user_clarification=content,
+                        clarification_depth=prior_clarification_depth,
+                        chunks=chunks,
+                        chat_id=chat_id,
+                        context_material_ids=context_material_ids,
+                    )
+                else:
+                    assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize(
+                        conn,
+                        user['id'],
+                        ai_provider,
+                        ai_model,
+                        content,
+                        chunks,
+                        chat_id=chat_id,
+                        context_material_ids=context_material_ids,
+                    )
                 logger.info(
                     "chat_synthesize_done",
                     extra={
@@ -829,16 +918,19 @@ class handler(BaseHTTPRequestHandler):
                     return
                 raise
 
+            new_clarification_depth = (prior_clarification_depth + 1) if assistant_clarifying_question else 0
             cursor.execute("""
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                      ai_provider, ai_model, context_material_ids,
                      grounding_meta, tool_trace,
-                     retrieved_chunk_ids, follow_ups, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     retrieved_chunk_ids, follow_ups, message_index,
+                     clarification_question, is_clarification_request, clarification_depth)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
-                          response_time_ms, finish_reason, message_index, created_at, tool_trace, follow_ups
+                          response_time_ms, finish_reason, message_index, created_at, tool_trace, follow_ups,
+                          clarification_question, is_clarification_request, clarification_skipped, clarification_depth
             """, (
                 chat_id, chat['course_id'], user['id'], user_message['id'], assistant_content,
                 assistant_summary,
@@ -849,6 +941,9 @@ class handler(BaseHTTPRequestHandler):
                 json.dumps(retrieved_ids),
                 json.dumps(assistant_follow_ups or []),
                 next_idx + 1,
+                assistant_clarifying_question,
+                bool(assistant_clarifying_question),
+                new_clarification_depth,
             ))
             assistant_message = cursor.fetchone()
             if embed_text_via_lambda and write_chat_message_embedding:
@@ -970,6 +1065,12 @@ class handler(BaseHTTPRequestHandler):
             send_sse_event(self, {"type": "user_message", "message": dict(user_message)})
 
             chunks = retrieve_chunks(conn, content, context_material_ids)
+
+            # Check if the prior assistant message has a pending clarification.
+            prior_is_clarification, prior_clarification_skipped, prior_clarification_depth, \
+                prior_clarification_question, prior_reply_content = _get_prior_clarification_state(conn, chat_id)
+            clarification_pending = prior_is_clarification and not prior_clarification_skipped
+
             request_id = f"stream-{uuid4().hex[:10]}"
             logger.info(
                 "chat_synthesize_start",
@@ -983,6 +1084,7 @@ class handler(BaseHTTPRequestHandler):
                     "agentic_enabled": _is_agentic_request(ai_provider, ai_model),
                     "retrieved_seed_chunks": len(chunks),
                     "context_material_count": len(context_material_ids),
+                    "clarification_pending": clarification_pending,
                 },
             )
 
@@ -990,32 +1092,53 @@ class handler(BaseHTTPRequestHandler):
                 send_sse_event(self, evt)
 
             try:
-                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups = synthesize(
-                    conn,
-                    user['id'],
-                    ai_provider,
-                    ai_model,
-                    content,
-                    chunks,
-                    chat_id=chat_id,
-                    context_material_ids=context_material_ids,
-                    on_event=on_event,
-                )
+                if clarification_pending:
+                    original_prompt = _get_prior_user_message(conn, chat_id) or content
+                    assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize_with_clarification(
+                        conn=conn,
+                        user_id=user['id'],
+                        ai_provider=ai_provider,
+                        ai_model=ai_model,
+                        original_prompt=original_prompt,
+                        prior_reply=prior_reply_content or "",
+                        clarifying_question=prior_clarification_question or "",
+                        user_clarification=content,
+                        clarification_depth=prior_clarification_depth,
+                        chunks=chunks,
+                        chat_id=chat_id,
+                        context_material_ids=context_material_ids,
+                        on_event=on_event,
+                    )
+                else:
+                    assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize(
+                        conn,
+                        user['id'],
+                        ai_provider,
+                        ai_model,
+                        content,
+                        chunks,
+                        chat_id=chat_id,
+                        context_material_ids=context_material_ids,
+                        on_event=on_event,
+                    )
             except Exception as e:
                 send_sse_event(self, {"type": "error", "message": str(e)})
                 cursor.close()
                 return
 
+            new_clarification_depth = (prior_clarification_depth + 1) if assistant_clarifying_question else 0
             cursor.execute("""
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                      ai_provider, ai_model, context_material_ids,
                      grounding_meta, tool_trace,
-                     retrieved_chunk_ids, follow_ups, message_index)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     retrieved_chunk_ids, follow_ups, message_index,
+                     clarification_question, is_clarification_request, clarification_depth)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
-                          response_time_ms, finish_reason, message_index, created_at, tool_trace, follow_ups
+                          response_time_ms, finish_reason, message_index, created_at, tool_trace, follow_ups,
+                          clarification_question, is_clarification_request, clarification_skipped, clarification_depth
             """, (
                 chat_id, chat['course_id'], user['id'], user_message['id'], assistant_content,
                 assistant_summary,
@@ -1026,6 +1149,9 @@ class handler(BaseHTTPRequestHandler):
                 json.dumps(retrieved_ids),
                 json.dumps(assistant_follow_ups or []),
                 next_idx + 1,
+                assistant_clarifying_question,
+                bool(assistant_clarifying_question),
+                new_clarification_depth,
             ))
             assistant_message = cursor.fetchone()
             if embed_text_via_lambda and write_chat_message_embedding:
@@ -1165,7 +1291,7 @@ class handler(BaseHTTPRequestHandler):
 
             on_event = (lambda evt: send_sse_event(self, evt)) if is_streaming else None
             try:
-                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups = synthesize(
+                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize(
                     conn,
                     user['id'],
                     ai_provider,
@@ -1270,16 +1396,19 @@ class handler(BaseHTTPRequestHandler):
                             "chat_id": msg['chat_id'],
                             "message_id": edited_user_message.get('id'),
                         })
+                edit_clarification_depth = 1 if assistant_clarifying_question else 0
                 cursor.execute("""
                     INSERT INTO chat_messages
                         (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                          ai_provider, ai_model, context_material_ids,
                          grounding_meta, tool_trace,
-                         retrieved_chunk_ids, follow_ups, message_index)
-                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         retrieved_chunk_ids, follow_ups, message_index,
+                         clarification_question, is_clarification_request, clarification_depth)
+                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                               retrieved_chunk_ids, context_token_count, response_token_count,
-                              response_time_ms, finish_reason, message_index, created_at, tool_trace, follow_ups
+                              response_time_ms, finish_reason, message_index, created_at, tool_trace, follow_ups,
+                              clarification_question, is_clarification_request, clarification_skipped, clarification_depth
                 """, (
                     msg['chat_id'],
                     chat['course_id'],
@@ -1295,6 +1424,9 @@ class handler(BaseHTTPRequestHandler):
                     json.dumps(retrieved_ids),
                     json.dumps(assistant_follow_ups or []),
                     next_idx,
+                    assistant_clarifying_question,
+                    bool(assistant_clarifying_question),
+                    edit_clarification_depth,
                 ))
                 assistant_message = cursor.fetchone()
 
@@ -1869,7 +2001,7 @@ class handler(BaseHTTPRequestHandler):
 
             on_event = (lambda evt: send_sse_event(self, evt)) if is_streaming else None
             try:
-                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups = synthesize(
+                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize(
                     conn,
                     user['id'],
                     ai_provider,
@@ -1954,15 +2086,18 @@ class handler(BaseHTTPRequestHandler):
 
                 next_idx = _next_message_index(conn, msg['chat_id'])
 
+                regen_clarification_depth = 1 if assistant_clarifying_question else 0
                 cursor.execute(
                     """
                     INSERT INTO chat_messages
                         (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                          ai_provider, ai_model, context_material_ids, grounding_meta, tool_trace,
-                         retrieved_chunk_ids, follow_ups, message_index)
-                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         retrieved_chunk_ids, follow_ups, message_index,
+                         clarification_question, is_clarification_request, clarification_depth)
+                    VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id, chat_id, role, content, summary, ai_provider, ai_model, retrieved_chunk_ids,
-                              message_index, created_at, tool_trace, follow_ups
+                              message_index, created_at, tool_trace, follow_ups,
+                              clarification_question, is_clarification_request, clarification_skipped, clarification_depth
                     """,
                     (
                         msg['chat_id'],
@@ -1979,6 +2114,9 @@ class handler(BaseHTTPRequestHandler):
                         json.dumps(retrieved_ids),
                         json.dumps(assistant_follow_ups or []),
                         next_idx,
+                        assistant_clarifying_question,
+                        bool(assistant_clarifying_question),
+                        regen_clarification_depth,
                     )
                 )
                 new_assistant = cursor.fetchone()
@@ -2004,6 +2142,50 @@ class handler(BaseHTTPRequestHandler):
                 "assistant_message": new_assistant,
                 "suggested_title": suggested_title,
             })
+
+    def _skip_clarification(self, user, data):
+        """Mark a clarification request as skipped, revealing follow-up chips."""
+        message_id = data.get('message_id')
+        if not isinstance(message_id, int):
+            send_json(self, 400, {"error": "message_id is required"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM chat_messages WHERE id = %s AND is_deleted = FALSE",
+                (message_id,)
+            )
+            msg = cursor.fetchone()
+            if not msg:
+                send_json(self, 404, {"error": "Message not found"})
+                cursor.close()
+                return
+            if msg['user_id'] != user['id']:
+                send_json(self, 403, {"error": "Access denied"})
+                cursor.close()
+                return
+            if not msg.get('is_clarification_request'):
+                send_json(self, 400, {"error": "Message is not a clarification request"})
+                cursor.close()
+                return
+
+            cursor.execute(
+                """
+                UPDATE chat_messages
+                SET clarification_skipped = TRUE
+                WHERE id = %s
+                RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
+                          retrieved_chunk_ids, context_token_count, response_token_count,
+                          response_time_ms, finish_reason, message_index, created_at, tool_trace, follow_ups,
+                          clarification_question, is_clarification_request, clarification_skipped, clarification_depth
+                """,
+                (message_id,)
+            )
+            updated_message = cursor.fetchone()
+            cursor.close()
+
+        send_json(self, 200, {"message": dict(updated_message)})
 
     def _delete_message(self, user, data):
         message_id = data.get('message_id')

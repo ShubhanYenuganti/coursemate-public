@@ -487,6 +487,8 @@ function MessageBubble({
   onPin,
   isPinned,
   onFollowUpClick,
+  onSkipClarification,
+  isLastAssistantMsg,
 }) {
   const isUser = msg.role === 'user';
   const modelLabel = getMessageModelLabel(msg);
@@ -696,8 +698,24 @@ function MessageBubble({
             })}
           </div>
         )}
-        {Array.isArray(msg.follow_ups) && msg.follow_ups.length > 0 && (
+        {isLastAssistantMsg && msg.is_clarification_request && !msg.clarification_skipped && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-xs font-medium text-amber-700 mb-1">Clarifying question</p>
+            <p className="text-sm text-amber-900">{msg.clarification_question}</p>
+            <button
+              type="button"
+              onClick={() => onSkipClarification && onSkipClarification()}
+              className="mt-2 inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border border-amber-300 text-amber-700 bg-white hover:bg-amber-100 transition-colors"
+            >
+              Skip clarification
+            </button>
+          </div>
+        )}
+        {Array.isArray(msg.follow_ups) && msg.follow_ups.length > 0 && !(msg.is_clarification_request && !msg.clarification_skipped) && (
           <div className="flex flex-wrap gap-1.5 mt-3">
+            {isLastAssistantMsg && msg.is_clarification_request && msg.clarification_skipped && (
+              <p className="w-full text-xs text-gray-500 mb-0.5">Would you like to discuss any of these further?</p>
+            )}
             {msg.follow_ups.map((q, idx) => (
               <button
                 key={idx}
@@ -2108,6 +2126,30 @@ export default function ChatTab({ course, userData, onAddSource }) {
     }
   }
 
+  async function handleSkipClarification(messageId) {
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          resource: 'message',
+          action: 'clarification_skip',
+          message_id: messageId,
+        }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.message) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === messageId ? { ...m, ...data.message } : m))
+        );
+      }
+    } catch {
+      // silently ignore
+    }
+  }
+
   const { today, lastWeek, older } = groupChatsByDate(chats);
 
   return (
@@ -2449,7 +2491,9 @@ export default function ChatTab({ course, userData, onAddSource }) {
               <p className="text-sm text-gray-400 max-w-xs">I can explain concepts, quiz you on the material, summarize lectures, and more.</p>
             </div>
           ) : (
-            messages.map((msg, i) => {
+            (() => {
+              const lastAssistantIdx = messages.reduce((acc, m, idx) => m.role === 'assistant' ? idx : acc, -1);
+              return messages.map((msg, i) => {
               const prevMsg = messages[i - 1];
               const rawHistory = msg.role === 'assistant' ? prevMsg?.reply_history : null;
               const replyHistory = (() => {
@@ -2502,9 +2546,12 @@ export default function ChatTab({ course, userData, onAddSource }) {
                   setInput(q);
                   setTimeout(() => textareaRef.current?.focus(), 0);
                 } : null}
+                onSkipClarification={msg.role === 'assistant' ? () => handleSkipClarification(msg.id) : null}
+                isLastAssistantMsg={msg.role === 'assistant' && i === lastAssistantIdx && !sending}
               />
               );
-            })
+            });
+            })()
           )}
           {sending && (
             <StreamingHistoryBubble history={streamingHistory} materials={materials} />
