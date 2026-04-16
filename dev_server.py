@@ -6,7 +6,7 @@ Runs on port 3001 (matches vite.config.js proxy target).
 import importlib
 import os
 import sys
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 
 # Load .env before importing any api modules so env vars are available
@@ -73,7 +73,7 @@ class Router(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     port = int(os.environ.get('DEV_API_PORT', 3001))
-    server = HTTPServer(('', port), Router)
+    server = ThreadingHTTPServer(('', port), Router)
     print(f'API dev server → http://localhost:{port}')
     print(f'DEV_BYPASS_AUTH = {os.environ.get("DEV_BYPASS_AUTH", "not set")}')
     server.serve_forever()

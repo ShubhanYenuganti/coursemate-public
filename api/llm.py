@@ -83,11 +83,13 @@ SYSTEM_PROMPT = _SYSTEM_PROMPT_BASE + _SYSTEM_PROMPT_TOOL_USE
 
 _JSON_SYNTHESIS_INSTRUCTION = (
     "\n\n**Response format**: Respond with a single raw JSON object — no code fences, "
-    "no ```json wrapper, no text before or after. The object must have exactly three keys: "
+    "no ```json wrapper, no text before or after. The object must have exactly four keys: "
     "`reply` (your full markdown answer following the rules above), "
-    "`summary` (a concise phrase of about 5–6 words highlighting key concepts from this turn), and "
+    "`summary` (a concise phrase of about 5–6 words highlighting key concepts from this turn), "
     "`follow_ups` (an array of 2–3 short follow-up questions the user might naturally want to ask "
-    "next, as plain strings). "
+    "next, as plain strings), and `clarifying_question` (string or null). "
+    "For `clarifying_question`: only emit a non-null value if you cannot provide a useful answer "
+    "without knowing this one specific thing. Most prompts should have `clarifying_question: null`. "
     "**Escaping**: `reply` is a JSON string value, so every backslash must be doubled. "
     "Write $\\\\frac{}{}$ not $\\frac{}{}$, and $\\\\lambda$ not $\\lambda$. "
     "Never emit a bare single backslash inside a JSON string value."
@@ -96,8 +98,10 @@ _JSON_SYNTHESIS_INSTRUCTION = (
 _AGENTIC_JSON_FINAL_INSTRUCTION = (
     "\n\n**Final answer format**: When you respond with your final answer to the user and you are not "
     "calling any tools in that turn, respond with ONLY a valid JSON object with keys `reply` (string, full markdown), "
-    "`summary` (string, about 5–6 words), and `follow_ups` (array of 2–3 short follow-up questions the user might "
-    "naturally want to ask next, as plain strings). No prose outside the JSON."
+    "`summary` (string, about 5–6 words), `follow_ups` (array of 2–3 short follow-up questions the user might "
+    "naturally want to ask next, as plain strings), and `clarifying_question` (string or null). "
+    "For `clarifying_question`: only emit a non-null value if you cannot provide a useful answer without knowing "
+    "this one specific thing. Most prompts should have `clarifying_question: null`. No prose outside the JSON."
 )
 
 # Agentic loop: same as SYSTEM_PROMPT plus JSON final-answer requirement.
@@ -187,12 +191,12 @@ def _extract_synthesis_obj(text: str) -> dict | None:
     return None
 
 
-def _parse_synthesis_json(raw: str) -> tuple[str, str | None, list]:
-    """Parse `{"reply": "...", "summary": "...", "follow_ups": [...]}` from model output; fallback to plain markdown."""
+def _parse_synthesis_json(raw: str) -> tuple[str, str | None, list, str | None]:
+    """Parse `{"reply": "...", "summary": "...", "follow_ups": [...], "clarifying_question": ...}` from model output; fallback to plain markdown."""
     original = (raw or "").strip()
     text = original
     if not text:
-        return "", None, []
+        return "", None, [], None
 
     # Strip code fence wrapper (```json ... ```) — handles both regex match and
     # cases where the regex fails by also trying a brace-scan fallback below.
@@ -204,7 +208,7 @@ def _parse_synthesis_json(raw: str) -> tuple[str, str | None, list]:
             # Regex missed (e.g. prose before/after the fence); strip fences explicitly
             text = re.sub(r"```(?:json)?", "", text).replace("```", "").strip()
 
-    def _obj_to_result(obj: dict) -> tuple[str, str | None, list] | None:
+    def _obj_to_result(obj: dict) -> tuple[str, str | None, list, str | None] | None:
         reply = obj.get("reply") or obj.get("content") or obj.get("answer")
         if not isinstance(reply, str):
             return None
@@ -214,7 +218,10 @@ def _parse_synthesis_json(raw: str) -> tuple[str, str | None, list]:
             follow_ups = [q for q in raw_follow_ups if isinstance(q, str)]
         else:
             follow_ups = []
-        return reply.strip(), (_cap_summary(summ) if isinstance(summ, str) else None), follow_ups
+        clarifying_question = obj.get("clarifying_question")
+        if not isinstance(clarifying_question, str) or not clarifying_question.strip():
+            clarifying_question = None
+        return reply.strip(), (_cap_summary(summ) if isinstance(summ, str) else None), follow_ups, clarifying_question
 
     # 1. Try parsing the (possibly unwrapped) text directly
     obj = _extract_synthesis_obj(text)
@@ -235,7 +242,7 @@ def _parse_synthesis_json(raw: str) -> tuple[str, str | None, list]:
                 return result
 
     logger.debug("synthesis_json_parse_failed", extra={"excerpt": _truncate_text(text, 200)})
-    return original, None, []
+    return original, None, [], None
 
 
 _INLINE_TOKEN_PATTERN = re.compile(
@@ -971,6 +978,7 @@ def run_agent_openai(
     final_text = ""
     assistant_reply_summary = None
     assistant_follow_ups: list = []
+    assistant_clarifying_question: str | None = None
 
     for iteration in range(1, max_iterations + 1):
         started = time.time()
@@ -1025,11 +1033,12 @@ def run_agent_openai(
             raw_final = _message_text(message).strip()
             if not raw_final:
                 raw_final = "I could not synthesize a response from the available context."
-            reply_body, assistant_reply_summary, assistant_follow_ups = _parse_synthesis_json(raw_final)
+            reply_body, assistant_reply_summary, assistant_follow_ups, assistant_clarifying_question = _parse_synthesis_json(raw_final)
             if not (reply_body or "").strip():
                 reply_body = raw_final
                 assistant_reply_summary = None
                 assistant_follow_ups = []
+                assistant_clarifying_question = None
             final_text = reply_body
             tool_trace.append(
                 {
@@ -1173,7 +1182,7 @@ def run_agent_openai(
                 required_entities=required_entities,
             )
             # Repair calls inherit the JSON system prompt, so parse its output too
-            repaired_reply, _, _ = _parse_synthesis_json(raw_repair)
+            repaired_reply, _, _, _ = _parse_synthesis_json(raw_repair)
             final_text = repaired_reply if (repaired_reply or "").strip() else raw_repair
             verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
 
@@ -1214,7 +1223,7 @@ def run_agent_openai(
         "web_handoff_low_conf_override": low_conf_not_needed_override,
         "web_search_allowed_by_handoff": web_search_allowed_by_handoff,
     }
-    return final_text, grounding_refs, tool_trace, metadata, assistant_reply_summary, assistant_follow_ups
+    return final_text, grounding_refs, tool_trace, metadata, assistant_reply_summary, assistant_follow_ups, assistant_clarifying_question
 
 
 _TITLE_MODEL = "gpt-4o-mini"
@@ -1342,7 +1351,7 @@ def synthesize(
         context = _format_context(chunks)
         fn = _PROVIDERS[ai_provider]
         selected_model_draft = fn(context, user_message, ai_model, selected_provider_api_key)
-        draft_reply, _, _ = _parse_synthesis_json(selected_model_draft)
+        draft_reply, _, _, _ = _parse_synthesis_json(selected_model_draft)
         if draft_reply and str(draft_reply).strip():
             selected_model_draft = draft_reply
         web_handoff_enabled = _is_enabled("AGENTIC_WEB_HANDOFF_ENABLED", default=True)
@@ -1356,7 +1365,7 @@ def synthesize(
                 selected_model_draft=selected_model_draft,
             )
         agentic_api_key = _get_api_key(conn, user_id, DEFAULT_AGENTIC_PROVIDER)
-        text, grounding_refs, tool_trace, metadata, msg_summary, follow_ups = run_agent_openai(
+        text, grounding_refs, tool_trace, metadata, msg_summary, follow_ups, clarifying_question = run_agent_openai(
             conn=conn,
             user_message=user_message,
             model=DEFAULT_AGENTIC_MODEL,
@@ -1388,12 +1397,12 @@ def synthesize(
                 "web_search_allowed_by_handoff": metadata.get("web_search_allowed_by_handoff"),
             },
         )
-        return text, grounding_refs, metadata, tool_trace, msg_summary, follow_ups
+        return text, grounding_refs, metadata, tool_trace, msg_summary, follow_ups, clarifying_question
 
     context = _format_context(chunks)
     fn = _PROVIDERS[ai_provider]
     raw = fn(context, user_message, ai_model, selected_provider_api_key)
-    reply, msg_summary, follow_ups = _parse_synthesis_json(raw)
+    reply, msg_summary, follow_ups, clarifying_question = _parse_synthesis_json(raw)
     reply = _normalize_llm_markdown(reply)
     chunk_ids = [
         _json_safe_chunk_id(c.get("id"))
@@ -1407,4 +1416,81 @@ def synthesize(
         "repair_invoked": False,
         "carryover_ref_count": 0,
         "fresh_ref_count": len(chunk_ids),
-    }, [], msg_summary, follow_ups
+    }, [], msg_summary, follow_ups, clarifying_question
+
+
+# Depth-aware prompt pressure for clarification rounds.
+_CLARIFICATION_DEPTH_INSTRUCTION = {
+    0: (
+        "Only emit `clarifying_question` if you cannot provide a useful answer without knowing this "
+        "one specific thing. Most prompts should have `clarifying_question: null`."
+    ),
+    1: (
+        "You have already asked one clarifying question. Only ask another if the answer would be "
+        "fundamentally different across possible interpretations and you have no reasonable default. "
+        "Prefer `clarifying_question: null`."
+    ),
+}
+
+
+def synthesize_with_clarification(
+    conn,
+    user_id: int,
+    ai_provider: str | None,
+    ai_model: str | None,
+    original_prompt: str,
+    prior_reply: str,
+    clarifying_question: str,
+    user_clarification: str,
+    clarification_depth: int,
+    chunks: list,
+    chat_id: int | None = None,
+    context_material_ids: list | None = None,
+    on_event=None,
+) -> tuple:
+    """
+    Synthesize a refined answer (R2+) using the full clarification context bundle.
+
+    Constructs a structured prompt: original question + prior answer + clarifying question
+    + user's clarification, then calls the normal synthesis path.
+
+    Returns the same 7-tuple as synthesize():
+        (text, chunk_ids_or_grounding_refs, metadata, tool_trace, summary, follow_ups, clarifying_question)
+
+    The returned clarifying_question is hard-capped to None when clarification_depth >= 2.
+    """
+    depth_note = _CLARIFICATION_DEPTH_INSTRUCTION.get(
+        clarification_depth,
+        _CLARIFICATION_DEPTH_INSTRUCTION[1],
+    )
+
+    structured_prompt = (
+        f"## Original Question\n{original_prompt}\n\n"
+        f"## Your Prior Answer\n{prior_reply}\n\n"
+        f"## Clarifying Question You Asked\n{clarifying_question}\n\n"
+        f"## User's Clarification\n{user_clarification}\n\n"
+        "---\n"
+        "Using the original question, your prior answer, and the user's clarification above, "
+        "write a complete, cohesive final answer. Incorporate the clarification fully — do not "
+        "just append to the prior answer. "
+        f"{depth_note}"
+    )
+
+    result = synthesize(
+        conn=conn,
+        user_id=user_id,
+        ai_provider=ai_provider,
+        ai_model=ai_model,
+        user_message=structured_prompt,
+        chunks=chunks,
+        chat_id=chat_id,
+        context_material_ids=context_material_ids,
+        on_event=on_event,
+    )
+
+    # Hard-cap: force clarifying_question to None once depth reaches 2.
+    text, chunk_ids, metadata, tool_trace, msg_summary, follow_ups, new_clarifying_question = result
+    if clarification_depth >= 2:
+        new_clarifying_question = None
+
+    return text, chunk_ids, metadata, tool_trace, msg_summary, follow_ups, new_clarifying_question
