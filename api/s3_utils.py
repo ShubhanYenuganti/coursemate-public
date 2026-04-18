@@ -77,6 +77,17 @@ def generate_upload_presigned_url(s3_key: str, file_type: str, max_size: int = 5
     return response  # {'url': ..., 'fields': {...}}
 
 
+def generate_put_presigned_url(s3_key: str, content_type: str, expiration: int = 300) -> str:
+    """Generate a presigned PUT URL for direct browser-to-S3 upload. Default expiry: 5 minutes."""
+    client = _get_client()
+    bucket = os.environ.get('AWS_S3_BUCKET_NAME')
+    return client.generate_presigned_url(
+        'put_object',
+        Params={'Bucket': bucket, 'Key': s3_key, 'ContentType': content_type},
+        ExpiresIn=expiration,
+    )
+
+
 def generate_download_presigned_url(s3_key: str, expiration: int = 3600) -> str:
     """Generate a presigned GET URL for downloading an object. Default expiry: 1 hour."""
     client = _get_client()

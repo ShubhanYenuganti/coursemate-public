@@ -1,2 +1,3 @@
 voyageai>=0.3.2
 awslambdaric>=2.0.0
+Pillow>=10.0.0

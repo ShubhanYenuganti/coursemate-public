@@ -29,6 +29,32 @@ try:
 except ImportError:
     from tools import execute_rerank, execute_search_materials, execute_web_search, pull_grounding_context, resolve_references_llm
 
+
+def _fetch_images_as_base64(s3_keys: list) -> list:
+    """Fetch S3 images and return list of (mime_type, base64_data) tuples."""
+    import base64
+    import boto3
+
+    region = os.environ.get('AWS_REGION', 'us-east-1')
+    client = boto3.client(
+        's3',
+        region_name=region,
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+    )
+    bucket = os.environ.get('AWS_S3_BUCKET_NAME')
+    result = []
+    for key in (s3_keys or []):
+        try:
+            obj = client.get_object(Bucket=bucket, Key=key)
+            data = obj['Body'].read()
+            mime = 'image/png' if key.endswith('.png') else 'image/jpeg'
+            result.append((mime, base64.standard_b64encode(data).decode('utf-8')))
+        except Exception:
+            logging.getLogger(__name__).warning("Failed to fetch S3 image %s", key)
+    return result
+
+
 _SYSTEM_PROMPT_BASE = (
     "You are a helpful course assistant. Answer the user's question using the "
     "provided course material excerpts.\n\n"
@@ -57,6 +83,7 @@ _SYSTEM_PROMPT_BASE = (
     "- Headers (## or ###) to organise longer multi-section responses.\n\n"
     "**Math**: Wrap mathematical expressions in LaTeX delimiters: "
     "$...$ for inline math and $$...$$ for display/block equations. "
+    "NEVER use \\[ \\] or \\( \\) — the renderer only recognises $ and $$ delimiters. "
     "Never use LaTeX delimiters for code-like tokens (e.g. env.step(action), file paths, "
     "class names, API identifiers) — these must use inline backticks.\n\n"
     "If the materials don't contain enough information to answer fully, say so clearly."
@@ -82,26 +109,34 @@ _SYSTEM_PROMPT_TOOL_USE = (
 SYSTEM_PROMPT = _SYSTEM_PROMPT_BASE + _SYSTEM_PROMPT_TOOL_USE
 
 _JSON_SYNTHESIS_INSTRUCTION = (
-    "\n\n**Response format**: Respond with a single raw JSON object — no code fences, "
-    "no ```json wrapper, no text before or after. The object must have exactly four keys: "
-    "`reply` (your full markdown answer following the rules above), "
-    "`summary` (a concise phrase of about 5–6 words highlighting key concepts from this turn), "
-    "`follow_ups` (an array of 2–3 short follow-up questions the user might naturally want to ask "
-    "next, as plain strings), and `clarifying_question` (string or null). "
-    "For `clarifying_question`: only emit a non-null value if you cannot provide a useful answer "
-    "without knowing this one specific thing. Most prompts should have `clarifying_question: null`. "
-    "**Escaping**: `reply` is a JSON string value, so every backslash must be doubled. "
-    "Write $\\\\frac{}{}$ not $\\frac{}{}$, and $\\\\lambda$ not $\\lambda$. "
-    "Never emit a bare single backslash inside a JSON string value."
+    "\n\n**Response format**: Respond using this exact two-block structure — nothing before or after:\n"
+    "<REPLY>\n"
+    "your full markdown answer here (plain markdown, never JSON-encoded)\n"
+    "</REPLY>\n"
+    "<META>\n"
+    '{\"summary\": \"5-6 word phrase\", \"follow_ups\": [\"q1\", \"q2\", \"q3\"], \"clarifying_question\": null}\n'
+    "</META>\n\n"
+    "Rules: The REPLY block is plain markdown — write LaTeX exactly as-is (e.g. $\\frac{a}{b}$, $\\lambda$), "
+    "never double backslashes. Use $...$ for inline math and $$...$$ for display equations — NEVER \\[ \\] or \\( \\). "
+    "The META block is a raw JSON object with keys `summary` (string, ~5–6 words), "
+    "`follow_ups` (array of 2–3 short follow-up question strings), and `clarifying_question` (string or null — "
+    "only non-null if you genuinely cannot answer without knowing one specific thing)."
 )
 
 _AGENTIC_JSON_FINAL_INSTRUCTION = (
     "\n\n**Final answer format**: When you respond with your final answer to the user and you are not "
-    "calling any tools in that turn, respond with ONLY a valid JSON object with keys `reply` (string, full markdown), "
-    "`summary` (string, about 5–6 words), `follow_ups` (array of 2–3 short follow-up questions the user might "
-    "naturally want to ask next, as plain strings), and `clarifying_question` (string or null). "
-    "For `clarifying_question`: only emit a non-null value if you cannot provide a useful answer without knowing "
-    "this one specific thing. Most prompts should have `clarifying_question: null`. No prose outside the JSON."
+    "calling any tools in that turn, use this exact two-block structure — nothing before or after:\n"
+    "<REPLY>\n"
+    "your full markdown answer here (plain markdown, never JSON-encoded)\n"
+    "</REPLY>\n"
+    "<META>\n"
+    '{\"summary\": \"5-6 word phrase\", \"follow_ups\": [\"q1\", \"q2\", \"q3\"], \"clarifying_question\": null}\n'
+    "</META>\n\n"
+    "Rules: The REPLY block is plain markdown — write LaTeX exactly as-is (e.g. $\\frac{a}{b}$, $\\lambda$), "
+    "never double backslashes. Use $...$ for inline math and $$...$$ for display equations — NEVER \\[ \\] or \\( \\). "
+    "The META block is a raw JSON object with keys `summary` (string, ~5–6 words), "
+    "`follow_ups` (array of 2–3 short follow-up question strings), and `clarifying_question` (string or null — "
+    "only non-null if you genuinely cannot answer without knowing one specific thing)."
 )
 
 # Agentic loop: same as SYSTEM_PROMPT plus JSON final-answer requirement.
@@ -173,76 +208,76 @@ def _cap_summary(value: str | None) -> str | None:
     return s
 
 
-def _extract_synthesis_obj(text: str) -> dict | None:
-    """Try json.loads on text; return dict on success, None otherwise."""
+def _normalize_math_delimiters(text: str) -> str:
+    """Convert \[...\] and \(...\) to $$...$$ and $...$ so remark-math renders them."""
+    text = re.sub(r'\\\[([\s\S]*?)\\\]', r'$$\1$$', text)
+    text = re.sub(r'\\\(([\s\S]*?)\\\)', r'$\1$', text)
+    return text
+
+
+def _parse_meta_block(meta_text: str) -> tuple[str | None, list, str | None]:
+    """Parse the META JSON block and return (summary, follow_ups, clarifying_question)."""
     try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            return obj
+        obj = json.loads(meta_text.strip())
     except json.JSONDecodeError:
-        pass
-    repaired = re.sub(r'\\(?!["\\\/n])', r'\\\\', text)
-    try:
-        obj = json.loads(repaired)
-        if isinstance(obj, dict):
-            return obj
-    except json.JSONDecodeError:
-        pass
-    return None
+        return None, [], None
+    if not isinstance(obj, dict):
+        return None, [], None
+    summ = obj.get("summary")
+    raw_follow_ups = obj.get("follow_ups")
+    follow_ups = [q for q in raw_follow_ups if isinstance(q, str)] if isinstance(raw_follow_ups, list) else []
+    clarifying_question = obj.get("clarifying_question")
+    if not isinstance(clarifying_question, str) or not clarifying_question.strip():
+        clarifying_question = None
+    return (_cap_summary(summ) if isinstance(summ, str) else None), follow_ups, clarifying_question
 
 
 def _parse_synthesis_json(raw: str) -> tuple[str, str | None, list, str | None]:
-    """Parse `{"reply": "...", "summary": "...", "follow_ups": [...], "clarifying_question": ...}` from model output; fallback to plain markdown."""
+    """Three-stage parser: tagged → brace-boundary → whole-text fallback."""
     original = (raw or "").strip()
-    text = original
-    if not text:
+    logger.debug("llm_raw_reply\n%s", original)
+    if not original:
         return "", None, [], None
 
-    # Strip code fence wrapper (```json ... ```) — handles both regex match and
-    # cases where the regex fails by also trying a brace-scan fallback below.
-    if "```" in text:
-        m = re.match(r"^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$", text)
-        if m:
-            text = m.group(1).strip()
+    # Stage 1: Tagged format — <REPLY>…</REPLY><META>…</META>
+    reply_match = re.search(r"<REPLY>(.*?)</REPLY>", original, re.DOTALL)
+    meta_match = re.search(r"<META>(.*?)</META>", original, re.DOTALL)
+    if reply_match:
+        reply = _normalize_math_delimiters(reply_match.group(1).strip())
+        if meta_match:
+            summary, follow_ups, clarifying_question = _parse_meta_block(meta_match.group(1))
         else:
-            # Regex missed (e.g. prose before/after the fence); strip fences explicitly
-            text = re.sub(r"```(?:json)?", "", text).replace("```", "").strip()
+            summary, follow_ups, clarifying_question = None, [], None
+        return reply, summary, follow_ups, clarifying_question
 
-    def _obj_to_result(obj: dict) -> tuple[str, str | None, list, str | None] | None:
-        reply = obj.get("reply") or obj.get("content") or obj.get("answer")
-        if not isinstance(reply, str):
-            return None
-        summ = obj.get("summary")
-        raw_follow_ups = obj.get("follow_ups")
-        if isinstance(raw_follow_ups, list):
-            follow_ups = [q for q in raw_follow_ups if isinstance(q, str)]
-        else:
-            follow_ups = []
-        clarifying_question = obj.get("clarifying_question")
-        if not isinstance(clarifying_question, str) or not clarifying_question.strip():
-            clarifying_question = None
-        return reply.strip(), (_cap_summary(summ) if isinstance(summ, str) else None), follow_ups, clarifying_question
+    # Stage 2: Brace-boundary — trailing JSON object appended without tags.
+    # Walk backward from the last '}' to find a balanced '{...}' candidate.
+    end = original.rfind('}')
+    if end != -1:
+        depth = 0
+        start = -1
+        for i in range(end, -1, -1):
+            if original[i] == '}':
+                depth += 1
+            elif original[i] == '{':
+                depth -= 1
+                if depth == 0:
+                    start = i
+                    break
+        if start != -1:
+            candidate = original[start:end + 1]
+            try:
+                obj = json.loads(candidate)
+                if isinstance(obj, dict) and ("summary" in obj or "follow_ups" in obj):
+                    reply = _normalize_math_delimiters(original[:start].strip())
+                    summary, follow_ups, clarifying_question = _parse_meta_block(candidate)
+                    return reply, summary, follow_ups, clarifying_question
+            except json.JSONDecodeError:
+                pass
 
-    # 1. Try parsing the (possibly unwrapped) text directly
-    obj = _extract_synthesis_obj(text)
-    if obj:
-        result = _obj_to_result(obj)
-        if result:
-            return result
-
-    # 2. Fallback: scan for the outermost { ... } embedded in surrounding text
-    start = text.find('{')
-    end = text.rfind('}')
-    if start != -1 and end > start:
-        candidate = text[start:end + 1]
-        obj = _extract_synthesis_obj(candidate)
-        if obj:
-            result = _obj_to_result(obj)
-            if result:
-                return result
-
-    logger.debug("synthesis_json_parse_failed", extra={"excerpt": _truncate_text(text, 200)})
-    return original, None, [], None
+    # Stage 3: Whole-text — treat entire output as reply with empty metadata.
+    logger.debug("synthesis_parse_whole_text_fallback", extra={"excerpt": _truncate_text(original, 200)})
+    return _normalize_math_delimiters(original), None, [], None
 
 
 _INLINE_TOKEN_PATTERN = re.compile(
@@ -677,7 +712,15 @@ def _assess_web_search_handoff(
         return fallback
 
 
-def _synthesize_claude(context: str, user_message: str, model: str, api_key: str) -> str:
+def _synthesize_claude(context: str, user_message: str, model: str, api_key: str, image_s3_keys: list | None = None) -> str:
+    images = _fetch_images_as_base64(image_s3_keys) if image_s3_keys else []
+    if images:
+        content = [
+            {"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}}
+            for mime, data in images
+        ] + [{"type": "text", "text": user_message}]
+    else:
+        content = user_message
     response = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={
@@ -689,7 +732,7 @@ def _synthesize_claude(context: str, user_message: str, model: str, api_key: str
             "model": model,
             "max_tokens": 4096,
             "system": f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}",
-            "messages": [{"role": "user", "content": user_message}],
+            "messages": [{"role": "user", "content": content}],
         },
         timeout=_TIMEOUT,
     )
@@ -697,7 +740,15 @@ def _synthesize_claude(context: str, user_message: str, model: str, api_key: str
     return response.json()["content"][0]["text"]
 
 
-def _synthesize_openai(context: str, user_message: str, model: str, api_key: str) -> str:
+def _synthesize_openai(context: str, user_message: str, model: str, api_key: str, image_s3_keys: list | None = None) -> str:
+    images = _fetch_images_as_base64(image_s3_keys) if image_s3_keys else []
+    if images:
+        user_content = [
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
+            for mime, data in images
+        ] + [{"type": "text", "text": user_message}]
+    else:
+        user_content = user_message
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
@@ -711,7 +762,7 @@ def _synthesize_openai(context: str, user_message: str, model: str, api_key: str
                     "role": "system",
                     "content": f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}",
                 },
-                {"role": "user", "content": user_message},
+                {"role": "user", "content": user_content},
             ],
             "response_format": {"type": "json_object"},
         },
@@ -721,7 +772,15 @@ def _synthesize_openai(context: str, user_message: str, model: str, api_key: str
     return response.json()["choices"][0]["message"]["content"]
 
 
-def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str) -> str:
+def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str, image_s3_keys: list | None = None) -> str:
+    images = _fetch_images_as_base64(image_s3_keys) if image_s3_keys else []
+    if images:
+        parts = [
+            {"inline_data": {"mime_type": mime, "data": data}}
+            for mime, data in images
+        ] + [{"text": user_message}]
+    else:
+        parts = [{"text": user_message}]
     response = requests.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         headers={
@@ -732,7 +791,7 @@ def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str
             "system_instruction": {
                 "parts": [{"text": f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}"}]
             },
-            "contents": [{"parts": [{"text": user_message}]}],
+            "contents": [{"parts": parts}],
         },
         timeout=_TIMEOUT,
     )
@@ -767,6 +826,7 @@ def run_agent_openai(
     selected_model_draft: str = "",
     model_web_handoff: dict | None = None,
     on_event=None,
+    image_s3_keys: list | None = None,
 ) -> tuple[str, list, list, dict, str | None]:
     debug = _is_enabled("AGENTIC_LOOP_DEBUG", default=False)
     resolver_enabled = _is_enabled("GROUNDING_RESOLVER_ENABLED", default=True)
@@ -804,6 +864,7 @@ def run_agent_openai(
         mode=mode if fusion_enabled else "fresh",
         anchor_chunk_ids=resolver_result.get("carryover_chunk_ids") or [],
         resolved_entities=resolved_entities,
+        chat_id=chat_id,
     )
     initial_chunks = chunks or []
     if initial_search.get("chunk_ids"):
@@ -909,6 +970,35 @@ def run_agent_openai(
         },
         {"role": "user", "content": resolved_query},
     ]
+
+    # Build multimodal user content: current-message images → retrieved prior images → text.
+    all_image_blocks = []
+
+    if image_s3_keys:
+        try:
+            current_pairs = _fetch_images_as_base64(image_s3_keys)
+            all_image_blocks.extend(
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
+                for mime, data in current_pairs
+            )
+        except Exception:
+            logger.warning("Failed to inject current-message images into agentic context")
+
+    retrieved_chat_images = initial_search.get("chat_image_chunks") or []
+    if retrieved_chat_images:
+        prior_keys = [c["s3_key"] for c in retrieved_chat_images if c.get("s3_key")]
+        try:
+            prior_pairs = _fetch_images_as_base64(prior_keys) if prior_keys else []
+            all_image_blocks.extend(
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
+                for mime, data in prior_pairs
+            )
+        except Exception:
+            logger.warning("Failed to inject retrieved chat images into agentic context")
+
+    if all_image_blocks:
+        messages[1]["content"] = all_image_blocks + [{"type": "text", "text": resolved_query or user_message}]
+
     tools = [
         {
             "type": "function",
@@ -1326,6 +1416,7 @@ def synthesize(
     context_material_ids: list | None = None,
     on_event=None,
     force_context_only: bool = False,
+    image_s3_keys: list | None = None,
 ) -> tuple:
     """
     Synthesize an LLM response using the user's chosen provider and model.
@@ -1376,6 +1467,7 @@ def synthesize(
             selected_model_draft=selected_model_draft,
             model_web_handoff=selected_model_handoff,
             on_event=on_event,
+            image_s3_keys=image_s3_keys,
         )
         logger.info(
             "agentic_loop_trace",
@@ -1401,7 +1493,7 @@ def synthesize(
 
     context = _format_context(chunks)
     fn = _PROVIDERS[ai_provider]
-    raw = fn(context, user_message, ai_model, selected_provider_api_key)
+    raw = fn(context, user_message, ai_model, selected_provider_api_key, image_s3_keys=image_s3_keys)
     reply, msg_summary, follow_ups, clarifying_question = _parse_synthesis_json(raw)
     reply = _normalize_llm_markdown(reply)
     chunk_ids = [
@@ -1447,6 +1539,7 @@ def synthesize_with_clarification(
     chat_id: int | None = None,
     context_material_ids: list | None = None,
     on_event=None,
+    image_s3_keys: list | None = None,
 ) -> tuple:
     """
     Synthesize a refined answer (R2+) using the full clarification context bundle.
@@ -1486,6 +1579,7 @@ def synthesize_with_clarification(
         chat_id=chat_id,
         context_material_ids=context_material_ids,
         on_event=on_event,
+        image_s3_keys=image_s3_keys,
     )
 
     # Hard-cap: force clarifying_question to None once depth reaches 2.

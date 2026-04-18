@@ -406,6 +406,7 @@ def execute_search_materials(
     mode: str = "fresh",
     anchor_chunk_ids: list | None = None,
     resolved_entities: list | None = None,
+    chat_id: int | None = None,
 ) -> dict:
     """
     Execute scoped material search for the agent loop.
@@ -434,7 +435,9 @@ def execute_search_materials(
             "meta": {"tool": "search_materials", "query": "", "result_count": 0, "latency_ms": 0},
         }
 
-    fresh_chunks = retrieve_chunks(conn, cleaned_query, scoped_material_ids, top_k=safe_top_k)
+    all_fresh = retrieve_chunks(conn, cleaned_query, scoped_material_ids, top_k=safe_top_k, chat_id=chat_id)
+    chat_image_chunks = [c for c in all_fresh if c.get('chunk_type') == 'chat_image']
+    fresh_chunks = [c for c in all_fresh if c.get('chunk_type') != 'chat_image']
     carryover_chunks = _fetch_chunk_context(conn, anchor_chunk_ids) if (_fetch_chunk_context and anchor_chunk_ids) else []
 
     anchor_set = {str(cid) for cid in anchor_chunk_ids}
@@ -510,6 +513,7 @@ def execute_search_materials(
         "text": _format_search_payload(cleaned_query, chunks),
         "chunk_ids": chunk_ids,
         "chunks": top_chunks_preview,
+        "chat_image_chunks": chat_image_chunks,
         "meta": {
             "tool": "search_materials",
             "mode": mode,

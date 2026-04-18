@@ -35,11 +35,11 @@
 - [x] 6.2 Verify normal (non-clarification) messages still render follow-up chips without the header
 
 ## 7. Verification
-
+/ops
 - [x] 7.1 Test: send an ambiguous prompt — confirm Q block appears below R1, chips hidden
 - [x] 7.2 Test: click Skip — confirm Q block disappears, chips appear with header, page reload preserves state
-- [ ] 7.3 Test: respond to clarifying question — confirm refined answer is generated with its own follow-up chips
-- [ ] 7.4 Test: respond to round-1 clarification with still-ambiguous answer — confirm round-2 Q block appears (depth=2 permitted)
+- [x] 7.3 Test: respond to clarifying question — confirm refined answer is generated with its own follow-up chips
+- [x] 7.4 Test: respond to round-1 clarification with still-ambiguous answer — confirm round-2 Q block appears (depth=2 permitted)
 - [x] 7.5 Test: round-2 clarification response — confirm final answer has no Q block regardless of model output (hard cap enforced)
 - [x] 7.6 Test: unambiguous prompt — confirm normal flow (no Q block, chips shown normally)
-- [ ] 7.7 Test: send an "unrelated" message while clarification is pending — confirm synthesis is routed through clarification path and handles mixed context gracefully
+- [x] 7.7 Test: send an "unrelated" message while clarification is pending — confirm synthesis is routed through clarification path and handles mixed context gracefully
