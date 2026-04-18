@@ -4,6 +4,7 @@ Usage: python dev_server.py
 Runs on port 3001 (matches vite.config.js proxy target).
 """
 import importlib
+import logging
 import os
 import sys
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -11,6 +12,14 @@ from dotenv import load_dotenv
 
 # Load .env before importing any api modules so env vars are available
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(levelname)s %(name)s: %(message)s',
+)
+# Silence noisy third-party loggers
+for _noisy in ('urllib3', 'httpx', 'openai', 'anthropic', 'botocore', 'boto3'):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 # Ensure both the project root and the api/ directory are on sys.path so that
 # both relative imports (Vercel style) and bare imports (fallback) resolve.

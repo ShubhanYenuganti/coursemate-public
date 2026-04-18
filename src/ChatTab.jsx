@@ -187,6 +187,25 @@ function CheckIcon() {
   );
 }
 
+function PaperclipIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+      className="animate-spin">
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  );
+}
+
 const FILE_TYPE_MAP = {
   pdf:  { label: 'PDF', bg: 'bg-rose-100',   text: 'text-rose-600'   },
   doc:  { label: 'DOC', bg: 'bg-blue-100',   text: 'text-blue-600'   },
@@ -295,6 +314,12 @@ const PROVIDER_MODELS = {
     { label: 'GPT-OSS 120B',          id: 'gpt-oss-120b' },
   ],
 };
+
+const NON_VISION_MODEL_IDS = new Set([
+  'deep-research-pro-preview-12-2025',
+  'o3-deep-research',
+  'o4-mini-deep-research',
+]);
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -626,13 +651,30 @@ function MessageBubble({
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
-              <p className="text-sm text-gray-800 leading-relaxed">{msg.content}</p>
-              {msg.is_edited && (
-                <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">
-                  Edited
-                </span>
+            <div className="space-y-1">
+              {msg.image_download_urls?.length > 0 && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                  <span className="text-gray-400 flex-shrink-0"><PaperclipIcon /></span>
+                  {msg.image_download_urls.map((img, i) => (
+                    <a
+                      key={i}
+                      href={img.url}
+                      download={img.filename}
+                      className="text-[11px] text-gray-400 hover:text-indigo-500 truncate max-w-[160px]"
+                    >
+                      {img.filename}
+                    </a>
+                  ))}
+                </div>
               )}
+              <div className="flex items-center gap-2">
+                <p className="text-sm text-gray-800 leading-relaxed">{msg.content}</p>
+                {msg.is_edited && (
+                  <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">
+                    Edited
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -1180,6 +1222,10 @@ export default function ChatTab({ course, userData, onAddSource }) {
   const titleInputRef = useRef(null);
   const bannerTimerRef = useRef(null);
   const sendingRef = useRef(false);
+  const [images, setImages] = useState([]);
+  const [imageUploadStates, setImageUploadStates] = useState({});
+  const [visionBanner, setVisionBanner] = useState('');
+  const fileInputRef = useRef(null);
 
   // Sidebar resize / collapse
   const SIDEBAR_DEFAULT_WIDTH = 280;
@@ -1704,18 +1750,110 @@ export default function ChatTab({ course, userData, onAddSource }) {
     }
   }
 
+  function addImages(files) {
+    const MAX_SIZE = 10 * 1024 * 1024;
+    const MAX_COUNT = 5;
+    setImages((prev) => {
+      const valid = Array.from(files).filter((f) => f.size <= MAX_SIZE);
+      const combined = [...prev, ...valid];
+      return combined.slice(0, MAX_COUNT);
+    });
+  }
+
+  function removeImage(index) {
+    setImages((prev) => prev.filter((_, i) => i !== index));
+    setImageUploadStates((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
+  }
+
+  function handleFileInputChange(e) {
+    addImages(e.target.files);
+    e.target.value = '';
+  }
+
+  function handlePaste(e) {
+    const items = Array.from(e.clipboardData?.items || []);
+    const imageItems = items.filter((it) => it.type.startsWith('image/'));
+    if (imageItems.length === 0) return;
+    e.preventDefault();
+    const files = imageItems.map((it) => it.getAsFile()).filter(Boolean);
+    addImages(files);
+  }
+
   async function handleSend() {
     const text = input.trim();
-    if (!text || sending || !selectedModel) return;
+    const hasImages = images.length > 0;
+    if ((!text && !hasImages) || sending || !selectedModel) return;
+
+    if (hasImages && NON_VISION_MODEL_IDS.has(selectedModelId || selectedModel)) {
+      const modelEntry = (PROVIDER_MODELS[selectedModel] || []).find((m) => m.id === (selectedModelId || selectedModel));
+      const label = modelEntry?.label || selectedModelId || selectedModel;
+      setVisionBanner(`${label} does not support image inputs. Please select a different model.`);
+      return;
+    }
+
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setSending(true);
     sendingRef.current = true;
     setStreamingHistory([{ phase: 'init' }]);
 
+    const stagedImages = [...images];
+    setImages([]);
+    setImageUploadStates({});
+
     const tempId = Date.now();
     const tempUserMsg = { id: tempId, role: 'user', content: text };
     setMessages((prev) => [...prev, tempUserMsg]);
+
+    let imageAttachments = [];
+    try {
+      if (stagedImages.length > 0) {
+        const uploadResults = await Promise.all(
+          stagedImages.map(async (file, idx) => {
+            setImageUploadStates((prev) => ({ ...prev, [idx]: 'uploading' }));
+            const buf = await file.arrayBuffer();
+            const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+            const sha256 = Array.from(new Uint8Array(hashBuf))
+              .map((b) => b.toString(16).padStart(2, '0'))
+              .join('');
+            const res = await fetch('/api/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({
+                resource: 'message',
+                action: 'upload_image',
+                filename: file.name,
+                content_type: file.type,
+                sha256,
+              }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Upload failed');
+            if (data.upload_url) {
+              await fetch(data.upload_url, {
+                method: 'PUT',
+                headers: { 'Content-Type': file.type },
+                body: file,
+              });
+            }
+            setImageUploadStates((prev) => ({ ...prev, [idx]: 'done' }));
+            return { s3_key: data.s3_key, filename: file.name };
+          })
+        );
+        imageAttachments = uploadResults;
+      }
+    } catch {
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      setSending(false);
+      sendingRef.current = false;
+      setVisionBanner('Image upload failed. Please try again.');
+      return;
+    }
 
     try {
       let chatId = activeConv;
@@ -1754,6 +1892,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
           context_material_ids: contextIds,
           ai_provider: selectedModel,
           ai_model: selectedModelId || selectedModel,
+          ...(imageAttachments.length > 0 ? { image_attachments: imageAttachments } : {}),
         }),
       });
 
@@ -2170,6 +2309,16 @@ export default function ChatTab({ course, userData, onAddSource }) {
         </div>
       )}
 
+      {/* Vision model banner */}
+      {visionBanner && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-1.5 rounded-full bg-red-600 text-white text-xs font-medium shadow-lg whitespace-nowrap select-none">
+          <span>{visionBanner}</span>
+          <button type="button" onClick={() => setVisionBanner('')} className="hover:opacity-70 transition-opacity">
+            <XIcon />
+          </button>
+        </div>
+      )}
+
       {/* ── Sidebar ── */}
       {!sidebarCollapsed ? (
         <div
@@ -2561,12 +2710,57 @@ export default function ChatTab({ course, userData, onAddSource }) {
 
         {/* Input bar */}
         <div className="flex-shrink-0 px-4 pb-4 pt-2 border-t border-gray-100 bg-white">
+          {/* Image preview strip */}
+          {images.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {images.map((file, idx) => {
+                const uploading = imageUploadStates[idx] === 'uploading';
+                return (
+                  <div key={idx} className="relative flex flex-col items-center gap-0.5">
+                    <div className="relative w-14 h-14 rounded-lg overflow-hidden border border-gray-200 bg-gray-50 flex-shrink-0">
+                      <img
+                        src={URL.createObjectURL(file)}
+                        alt={file.name}
+                        className="w-full h-full object-cover"
+                      />
+                      {uploading && (
+                        <div className="absolute inset-0 bg-white/70 flex items-center justify-center">
+                          <SpinnerIcon />
+                        </div>
+                      )}
+                    </div>
+                    <span className="text-[9px] text-gray-400 max-w-[56px] truncate">{file.name}</span>
+                    {!uploading && (
+                      <button
+                        type="button"
+                        onClick={() => removeImage(idx)}
+                        className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-gray-600 text-white flex items-center justify-center hover:bg-red-500 transition-colors"
+                      >
+                        <XIcon />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg"
+            multiple
+            className="hidden"
+            onChange={handleFileInputChange}
+          />
+
           <div className="flex items-stretch gap-2 pl-4 pr-3 py-2 rounded-2xl border border-gray-200 bg-white hover:shadow-lg focus-within:border-indigo-300 focus-within:shadow-lg transition-all" style={{ boxShadow: '0 4px 24px 0 rgba(0,0,0,0.13)' }}>
             <textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               placeholder="Reply…"
               rows={1}
               className="flex-1 min-h-0 min-w-0 bg-transparent resize-none text-xs text-gray-800 placeholder-gray-400 focus:outline-none leading-relaxed py-0.5"
@@ -2578,6 +2772,16 @@ export default function ChatTab({ course, userData, onAddSource }) {
             />
             <div className="flex flex-col justify-end flex-shrink-0">
               <div className="flex items-center gap-1">
+                {/* Attachment button */}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-shrink-0 p-1 rounded text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 transition-colors"
+                  title="Attach image"
+                >
+                  <PaperclipIcon />
+                </button>
+
                 {/* Model selector */}
                 {availableModels.length > 0 && (
                   <>
@@ -2637,7 +2841,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
                 <button
                   type="button"
                   onClick={handleSend}
-                  disabled={!input.trim() || sending || !selectedModel}
+                  disabled={(!input.trim() && images.length === 0) || sending || !selectedModel}
                   className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
                 >
                   <SendIcon />

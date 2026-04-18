@@ -40,10 +40,16 @@ except ImportError:
     from services.query.retrieval import _fetch_chunk_context
 
 try:
-    from services.query.persistence import embed_text_via_lambda, write_chat_message_embedding
+    from services.query.persistence import embed_text_via_lambda, write_chat_message_embedding, embed_image_via_lambda
 except ImportError:
     embed_text_via_lambda = None
     write_chat_message_embedding = None
+    embed_image_via_lambda = None
+
+try:
+    from .s3_utils import generate_put_presigned_url, generate_download_presigned_url, get_file_extension, verify_file_exists
+except ImportError:
+    from s3_utils import generate_put_presigned_url, generate_download_presigned_url, get_file_extension, verify_file_exists
 
 
 logger = logging.getLogger(__name__)
@@ -217,6 +223,73 @@ def _is_agentic_request(ai_provider: str, ai_model: str) -> bool:
     return _is_enabled("AGENTIC_LOOP_ENABLED", default=False)
 
 
+def _fetch_s3_bytes(s3_key: str) -> bytes:
+    import boto3
+    region = os.environ.get('AWS_REGION', 'us-east-1')
+    client = boto3.client(
+        's3',
+        region_name=region,
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+    )
+    bucket = os.environ.get('AWS_S3_BUCKET_NAME')
+    obj = client.get_object(Bucket=bucket, Key=s3_key)
+    return obj['Body'].read()
+
+
+def _enrich_messages_with_image_urls(conn, messages: list) -> list:
+    """Add image_download_urls to messages that have image_s3_keys."""
+    ids_with_images = [m['id'] for m in messages if m.get('image_s3_keys')]
+    if not ids_with_images:
+        return [dict(m, image_download_urls=[]) for m in messages]
+
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT message_id, s3_key, filename
+        FROM chat_image_embeddings
+        WHERE message_id = ANY(%s::int[])
+    """, (ids_with_images,))
+    rows = cursor.fetchall()
+    cursor.close()
+
+    filename_map = {}
+    for row in rows:
+        filename_map.setdefault(row['message_id'], {})[row['s3_key']] = row['filename']
+
+    enriched = []
+    for m in messages:
+        m = dict(m)
+        keys = m.get('image_s3_keys') or []
+        key_to_filename = filename_map.get(m['id'], {})
+        m['image_download_urls'] = [
+            {'filename': key_to_filename.get(k, k.split('/')[-1]), 'url': generate_download_presigned_url(k)}
+            for k in keys
+        ]
+        enriched.append(m)
+    return enriched
+
+
+def embed_and_store_chat_images(conn, chat_id: int, message_id: int, image_s3_keys_with_filenames: list) -> None:
+    """Embed each uploaded image and store in chat_image_embeddings before synthesis."""
+    if not embed_image_via_lambda:
+        return
+    vec_str = lambda emb: '[' + ','.join(str(x) for x in emb) + ']'
+    cursor = conn.cursor()
+    for s3_key, filename in image_s3_keys_with_filenames:
+        try:
+            image_bytes = _fetch_s3_bytes(s3_key)
+            embedding = embed_image_via_lambda(image_bytes)
+            if not embedding:
+                continue
+            cursor.execute("""
+                INSERT INTO chat_image_embeddings (s3_key, chat_id, message_id, filename, embedding)
+                VALUES (%s, %s, %s, %s, %s::vector)
+            """, (s3_key, chat_id, message_id, filename, vec_str(embedding)))
+        except Exception:
+            logger.exception("Failed to embed chat image %s", s3_key)
+    cursor.close()
+
+
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         handle_options(self)
@@ -329,6 +402,8 @@ class handler(BaseHTTPRequestHandler):
                 self._delete_message(user, data)
             elif action == 'clarification_skip':
                 self._skip_clarification(user, data)
+            elif action == 'upload_image':
+                self._upload_image(user, data)
             else:
                 send_json(self, 400, {"error": f"Unknown action '{action}' for resource 'message'"})
         else:
@@ -556,7 +631,7 @@ class handler(BaseHTTPRequestHandler):
                                response_token_count, response_time_ms, finish_reason, grounding_meta,
                                is_edited, reply_history, edited_at, message_index, created_at, tool_trace,
                                follow_ups, clarification_question, is_clarification_request,
-                               clarification_skipped, clarification_depth
+                               clarification_skipped, clarification_depth, image_s3_keys
                         FROM chat_messages
                         WHERE chat_id = %s
                           AND is_deleted = FALSE
@@ -571,7 +646,7 @@ class handler(BaseHTTPRequestHandler):
                                response_token_count, response_time_ms, finish_reason, grounding_meta,
                                is_edited, reply_history, edited_at, message_index, created_at, tool_trace,
                                follow_ups, clarification_question, is_clarification_request,
-                               clarification_skipped, clarification_depth
+                               clarification_skipped, clarification_depth, image_s3_keys
                         FROM chat_messages
                         WHERE chat_id = %s
                           AND is_deleted = FALSE
@@ -580,6 +655,7 @@ class handler(BaseHTTPRequestHandler):
                     """, (chat_id, limit))
                 messages = cursor.fetchall()
                 cursor.close()
+                messages = _enrich_messages_with_image_urls(conn, messages)
                 send_json(self, 200, {"messages": messages})
 
     def _get_message_chunks(self, user, params):
@@ -995,11 +1071,14 @@ class handler(BaseHTTPRequestHandler):
             ai_model = DEFAULT_AI_MODEL
         temperature = data.get('temperature')
         max_tokens = data.get('max_tokens')
+        image_attachments = data.get('image_attachments') or []
+        image_s3_keys = [a['s3_key'] for a in image_attachments if isinstance(a, dict) and a.get('s3_key')]
+        image_s3_keys_with_filenames = [(a['s3_key'], a.get('filename', '')) for a in image_attachments if isinstance(a, dict) and a.get('s3_key')]
 
         if not isinstance(chat_id, int):
             send_json(self, 400, {"error": "chat_id is required"})
             return
-        if not content:
+        if not content and not image_s3_keys:
             send_json(self, 400, {"error": "content is required"})
             return
         if ai_provider not in ('gemini', 'openai', 'claude'):
@@ -1042,17 +1121,18 @@ class handler(BaseHTTPRequestHandler):
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, role, content,
                      ai_provider, ai_model, temperature, max_tokens,
-                     context_material_ids, message_index)
-                VALUES (%s, %s, %s, 'user', %s, %s, %s, %s, %s, %s, %s)
+                     context_material_ids, message_index, image_s3_keys)
+                VALUES (%s, %s, %s, 'user', %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, context_material_ids,
-                          ai_provider, ai_model, message_index, created_at
+                          ai_provider, ai_model, message_index, created_at, image_s3_keys
             """, (
                 chat_id, chat['course_id'], user['id'], content,
                 ai_provider, ai_model, temperature, max_tokens,
                 json.dumps(context_material_ids), next_idx,
+                image_s3_keys or [],
             ))
             user_message = cursor.fetchone()
-            if embed_text_via_lambda and write_chat_message_embedding:
+            if embed_text_via_lambda and write_chat_message_embedding and content:
                 try:
                     user_embedding = embed_text_via_lambda(content)
                     if user_embedding:
@@ -1060,11 +1140,21 @@ class handler(BaseHTTPRequestHandler):
                 except Exception:
                     logger.exception("Failed to persist user message embedding (stream_send)")
 
+            if image_s3_keys_with_filenames:
+                try:
+                    embed_and_store_chat_images(conn, chat_id, user_message['id'], image_s3_keys_with_filenames)
+                except Exception:
+                    logger.exception("Failed to embed chat images (stream_send)")
+
             # All validation passed — now commit to SSE headers
             send_sse_headers(self)
             send_sse_event(self, {"type": "user_message", "message": dict(user_message)})
 
-            chunks = retrieve_chunks(conn, content, context_material_ids)
+            chunks = retrieve_chunks(
+                conn, content or "", context_material_ids,
+                image_s3_keys=image_s3_keys or [],
+                current_message_id=user_message['id'],
+            )
 
             # Check if the prior assistant message has a pending clarification.
             prior_is_clarification, prior_clarification_skipped, prior_clarification_depth, \
@@ -1108,6 +1198,7 @@ class handler(BaseHTTPRequestHandler):
                         chat_id=chat_id,
                         context_material_ids=context_material_ids,
                         on_event=on_event,
+                        image_s3_keys=image_s3_keys or None,
                     )
                 else:
                     assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize(
@@ -1120,6 +1211,7 @@ class handler(BaseHTTPRequestHandler):
                         chat_id=chat_id,
                         context_material_ids=context_material_ids,
                         on_event=on_event,
+                        image_s3_keys=image_s3_keys or None,
                     )
             except Exception as e:
                 send_sse_event(self, {"type": "error", "message": str(e)})
@@ -2186,6 +2278,34 @@ class handler(BaseHTTPRequestHandler):
             cursor.close()
 
         send_json(self, 200, {"message": dict(updated_message)})
+
+    def _upload_image(self, user, data):
+        filename = data.get('filename', '')
+        content_type = data.get('content_type', '')
+        sha256 = data.get('sha256', '').strip().lower()
+
+        if content_type not in ('image/png', 'image/jpeg'):
+            send_json(self, 400, {"error": "content_type must be image/png or image/jpeg"})
+            return
+
+        ext = 'png' if content_type == 'image/png' else 'jpg'
+
+        if sha256:
+            s3_key = f"chat-images/{user['id']}/{sha256}.{ext}"
+            if verify_file_exists(s3_key):
+                send_json(self, 200, {"upload_url": None, "s3_key": s3_key})
+                return
+        else:
+            s3_key = f"chat-images/{user['id']}/{uuid4()}.{ext}"
+
+        try:
+            upload_url = generate_put_presigned_url(s3_key, content_type)
+        except Exception:
+            logger.exception("upload_image: generate_put_presigned_url failed", extra={"s3_key": s3_key, "content_type": content_type})
+            send_json(self, 500, {"error": "Failed to generate upload URL"})
+            return
+
+        send_json(self, 200, {"upload_url": upload_url, "s3_key": s3_key})
 
     def _delete_message(self, user, data):
         message_id = data.get('message_id')
