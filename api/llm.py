@@ -1316,6 +1316,221 @@ def run_agent_openai(
     return final_text, grounding_refs, tool_trace, metadata, assistant_reply_summary, assistant_follow_ups, assistant_clarifying_question
 
 
+def run_agent_pageindex(
+    conn,
+    user_message: str,
+    model: str,
+    api_key: str,
+    chat_id: int | None,
+    course_id: int | None,
+    context_material_ids: list,
+    on_event=None,
+) -> tuple:
+    try:
+        from .services.query.pageindex_retrieval import (
+            get_course_routing_index,
+            get_material_structure,
+            get_page_content,
+        )
+    except ImportError:
+        from services.query.pageindex_retrieval import (
+            get_course_routing_index,
+            get_material_structure,
+            get_page_content,
+        )
+
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_course_materials",
+                "description": (
+                    "Get a summary index of all course materials. "
+                    "Call this first to identify which files are relevant to the question."
+                ),
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_material_structure",
+                "description": (
+                    "Get the hierarchical section/problem index for one material. "
+                    "Call after search_course_materials to see what's inside a relevant file before fetching pages."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "material_id": {
+                            "type": "integer",
+                            "description": "Material ID from search_course_materials",
+                        },
+                    },
+                    "required": ["material_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_page_content",
+                "description": (
+                    "Fetch raw text of specific pages. "
+                    "Use ranges like '5-7', comma lists like '3,8', or single pages like '12'. "
+                    "Cite answers as 'Material X, page Y'."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "material_id": {"type": "integer"},
+                        "pages": {
+                            "type": "string",
+                            "description": "Page spec: '5-7', '3,8', or '12'",
+                        },
+                    },
+                    "required": ["material_id", "pages"],
+                },
+            },
+        },
+    ]
+
+    messages = [
+        {"role": "system", "content": AGENTIC_SYSTEM_PROMPT},
+        {"role": "user", "content": user_message},
+    ]
+    grounding_refs: list = []
+    tool_trace: list = []
+    final_text = ""
+    assistant_follow_ups: list = []
+    assistant_clarifying_question = None
+    assistant_reply_summary = None
+
+    for iteration in range(MAX_TOOL_ITERATIONS):
+        started = time.time()
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": "auto",
+                "temperature": 0.2,
+            },
+            timeout=_TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        choice = payload["choices"][0]
+        message = choice.get("message", {})
+        tool_calls = message.get("tool_calls") or []
+
+        if not tool_calls:
+            raw_final = (
+                _message_text(message).strip()
+                or "I could not find relevant content in the course materials."
+            )
+            (
+                reply_body,
+                assistant_reply_summary,
+                assistant_follow_ups,
+                assistant_clarifying_question,
+            ) = _parse_synthesis_json(raw_final)
+            final_text = reply_body if (reply_body or "").strip() else raw_final
+            tool_trace.append(
+                {
+                    "iteration": iteration,
+                    "finish_reason": choice.get("finish_reason"),
+                    "tool_calls": 0,
+                    "latency_ms": int((time.time() - started) * 1000),
+                }
+            )
+            break
+
+        messages.append(
+            {
+                "role": "assistant",
+                "content": message.get("content") or "",
+                "tool_calls": tool_calls,
+            }
+        )
+
+        for call in tool_calls:
+            name = call.get("function", {}).get("name")
+            raw_args = call.get("function", {}).get("arguments") or "{}"
+            try:
+                args = json.loads(raw_args)
+            except json.JSONDecodeError:
+                args = {}
+
+            if name == "search_course_materials":
+                tool_result = get_course_routing_index(
+                    conn, course_id, context_material_ids or None
+                )
+                if on_event:
+                    on_event({"type": "tool_call", "tool": "search_course_materials"})
+            elif name == "get_material_structure":
+                material_id = args.get("material_id")
+                tool_result = json.dumps(
+                    get_material_structure(conn, material_id), indent=2
+                )
+            elif name == "get_page_content":
+                material_id = args.get("material_id")
+                pages_spec = args.get("pages", "")
+                rows = get_page_content(conn, material_id, pages_spec)
+                if rows:
+                    parts = [
+                        f"--- Page {row['page_number']} ---\n"
+                        f"{row['text_content'] or '[No text extracted]'}"
+                        for row in rows
+                    ]
+                    tool_result = "\n\n".join(parts)
+                    grounding_refs.append(f"material:{material_id}")
+                else:
+                    tool_result = "No content found for the requested pages."
+                if on_event:
+                    on_event(
+                        {
+                            "type": "tool_call",
+                            "tool": "get_page_content",
+                            "material_id": material_id,
+                            "pages": pages_spec,
+                        }
+                    )
+            else:
+                tool_result = f"Unknown tool: {name}"
+
+            tool_trace.append({"tool": name, "args": args, "iteration": iteration})
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "name": name,
+                    "content": str(tool_result),
+                }
+            )
+
+    if not final_text:
+        final_text = (
+            "I ran out of page-navigation tool-call iterations before finishing. "
+            "Please ask a narrower follow-up."
+        )
+
+    return (
+        final_text,
+        grounding_refs,
+        tool_trace,
+        {"intent_type": "pageindex", "verifier_passed": True, "repair_invoked": False},
+        assistant_reply_summary,
+        assistant_follow_ups or [],
+        assistant_clarifying_question,
+    )
+
+
 _TITLE_MODEL = "gpt-4o-mini"
 _TITLE_URL = "https://api.openai.com/v1/chat/completions"
 

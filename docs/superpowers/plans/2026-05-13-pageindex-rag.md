@@ -1901,7 +1901,7 @@ git commit -m "feat: llm_client — OpenAI REST node/doc summarization + tag ext
 
 No unit test here — integration behavior (S3 + DB + LLM). Tested end-to-end by deploying and triggering with a real PDF.
 
-- [ ] **Step 1: Implement worker.py**
+- [x] **Step 1: Implement worker.py**
 
 `lambda/index_materials/worker.py`:
 ```python
@@ -2072,6 +2072,12 @@ def _sync_store(conn, material_id, course_id, material_title, doc_type,
 
 - [ ] **Step 2: Smoke test with a local PDF (optional but recommended)**
 
+Not verified locally: the optional smoke test requires `DATABASE_URL` and
+`OPENAI_API_KEY_INDEXER`, which were not set in this environment. A direct
+import check was also not verified because local dependencies were missing:
+`ModuleNotFoundError: No module named 'fitz'` (`pymupdf` is declared in
+`lambda/index_materials/requirements.txt`).
+
 ```bash
 cd lambda/index_materials
 DATABASE_URL=<your-db-url> OPENAI_API_KEY_INDEXER=<key> python -c "
@@ -2085,7 +2091,7 @@ print('done')
 "
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add lambda/index_materials/worker.py
@@ -2279,14 +2285,14 @@ git commit -m "feat: pageindex_retrieval — get_course_routing_index, get_mater
 
 `run_agent_pageindex` follows the same OpenAI tool-calling loop as `run_agent_openai` but uses three page-navigation tools instead of `search_materials`/`web_search`. It returns the same 7-tuple.
 
-- [ ] **Step 1: Read the return signature of run_agent_openai**
+- [x] **Step 1: Read the return signature of run_agent_openai**
 
 Confirm the return tuple at the bottom of `run_agent_openai` in `api/llm.py`. It should match:
 ```python
 return (final_text, grounding_refs, tool_trace, metadata_dict, assistant_reply_summary, assistant_follow_ups, assistant_clarifying_question)
 ```
 
-- [ ] **Step 2: Add run_agent_pageindex to api/llm.py**
+- [x] **Step 2: Add run_agent_pageindex to api/llm.py**
 
 Find the line `def synthesize(` in `api/llm.py` and insert the following function immediately before it:
 
@@ -2438,7 +2444,7 @@ def run_agent_pageindex(
     )
 ```
 
-- [ ] **Step 3: Verify no syntax errors**
+- [x] **Step 3: Verify no syntax errors**
 
 ```bash
 cd /Users/shubhan/OneShotCourseMate && python -c "import api.llm; print('ok')"
@@ -2446,7 +2452,7 @@ cd /Users/shubhan/OneShotCourseMate && python -c "import api.llm; print('ok')"
 
 Expected: `ok`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add api/llm.py
