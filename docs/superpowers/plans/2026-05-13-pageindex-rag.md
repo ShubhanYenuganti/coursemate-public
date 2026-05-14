@@ -55,7 +55,7 @@
 **Files:**
 - Run SQL directly in DB (no migration script needed — 3 tables)
 
-- [ ] **Step 1: Run migrations**
+- [x] **Step 1: Run migrations**
 
 Execute in your Postgres DB (Supabase SQL editor or `psql`):
 
@@ -108,7 +108,7 @@ CREATE TABLE course_material_relations (
 );
 ```
 
-- [ ] **Step 2: Verify tables exist**
+- [x] **Step 2: Verify tables exist**
 
 ```sql
 SELECT table_name FROM information_schema.tables
@@ -117,7 +117,7 @@ WHERE table_name IN ('material_page_index','material_page_text','course_material
 
 Expected: 4 rows.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add -A
