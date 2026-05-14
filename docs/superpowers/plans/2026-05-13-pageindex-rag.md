@@ -2466,14 +2466,14 @@ git commit -m "feat: run_agent_pageindex — page-navigation agentic loop for Pa
 **Files:**
 - Modify: `api/llm.py` (add feature flag branch inside `synthesize()`)
 
-- [ ] **Step 1: Locate the AGENTIC_LOOP_ENABLED check in synthesize()**
+- [x] **Step 1: Locate the AGENTIC_LOOP_ENABLED check in synthesize()**
 
 In `api/llm.py`, find:
 ```python
 use_agentic = _is_enabled("AGENTIC_LOOP_ENABLED", default=False)
 ```
 
-- [ ] **Step 2: Add PageIndex branch before the agentic check**
+- [x] **Step 2: Add PageIndex branch before the agentic check**
 
 Add this block immediately before the `use_agentic = _is_enabled(...)` line:
 
@@ -2505,13 +2505,13 @@ Add this block immediately before the `use_agentic = _is_enabled(...)` line:
         return text, grounding_refs, metadata, tool_trace, msg_summary, follow_ups, clarifying_question
 ```
 
-- [ ] **Step 3: Verify import still works**
+- [x] **Step 3: Verify import still works**
 
 ```bash
 cd /Users/shubhan/OneShotCourseMate && python -c "import api.llm; print('ok')"
 ```
 
-- [ ] **Step 4: Smoke test — toggle env var**
+- [x] **Step 4: Smoke test — toggle env var**
 
 Set `PAGEINDEX_RETRIEVAL_ENABLED=true` locally and verify the flag is picked up:
 
@@ -2525,7 +2525,7 @@ print(llm._is_enabled('PAGEINDEX_RETRIEVAL_ENABLED'))  # should print True
 
 Expected: `True`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add api/llm.py

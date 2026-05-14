@@ -1649,6 +1649,47 @@ def synthesize(
 
     selected_provider_api_key = _get_api_key(conn, user_id, ai_provider)
     material_scope = context_material_ids if isinstance(context_material_ids, list) else []
+    use_pageindex = _is_enabled("PAGEINDEX_RETRIEVAL_ENABLED", default=False)
+    if use_pageindex and not force_context_only:
+        agentic_api_key = _get_api_key(conn, user_id, DEFAULT_AGENTIC_PROVIDER)
+        pageindex_course_id = None
+        if context_material_ids:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT course_id FROM materials WHERE id = %s",
+                (context_material_ids[0],),
+            )
+            row = cursor.fetchone()
+            cursor.close()
+            if row:
+                pageindex_course_id = row["course_id"]
+        (
+            text,
+            grounding_refs,
+            tool_trace,
+            metadata,
+            msg_summary,
+            follow_ups,
+            clarifying_question,
+        ) = run_agent_pageindex(
+            conn=conn,
+            user_message=user_message,
+            model=DEFAULT_AGENTIC_MODEL,
+            api_key=agentic_api_key,
+            chat_id=chat_id,
+            course_id=pageindex_course_id,
+            context_material_ids=material_scope,
+            on_event=on_event,
+        )
+        return (
+            text,
+            grounding_refs,
+            metadata,
+            tool_trace,
+            msg_summary,
+            follow_ups,
+            clarifying_question,
+        )
     use_agentic = _is_enabled("AGENTIC_LOOP_ENABLED", default=False)
     if force_context_only:
         use_agentic = False
