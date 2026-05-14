@@ -1,0 +1,39 @@
+{
+  "Comment": "PageIndex material indexing — loops until status is done",
+  "StartAt": "IndexWorker",
+  "States": {
+    "IndexWorker": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "index_materials",
+        "Payload.$": "$"
+      },
+      "ResultSelector": { "body.$": "$.Payload" },
+      "ResultPath": "$.result",
+      "Next": "CheckDone"
+    },
+    "CheckDone": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.result.body.status",
+          "StringEquals": "done",
+          "Next": "Done"
+        }
+      ],
+      "Default": "PrepareNext"
+    },
+    "PrepareNext": {
+      "Type": "Pass",
+      "Parameters": {
+        "s3_key.$": "$.result.body.s3_key",
+        "cursor.$": "$.result.body.cursor"
+      },
+      "Next": "IndexWorker"
+    },
+    "Done": {
+      "Type": "Succeed"
+    }
+  }
+}
