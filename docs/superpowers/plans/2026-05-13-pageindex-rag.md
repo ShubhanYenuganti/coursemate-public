@@ -3047,7 +3047,7 @@ git commit -m "feat: pageindex_retrieval — get_material_relations for knowledg
 
 Exposes the `get_related_materials` tool to the agentic loop so the LLM can traverse knowledge graph edges when the initial material doesn't contain a complete answer — e.g., finding the lecture that corresponds to a hw problem.
 
-- [ ] **Step 1: Add tool definition to run_agent_pageindex tools list**
+- [x] **Step 1: Add tool definition to run_agent_pageindex tools list**
 
 In `api/llm.py`, inside `run_agent_pageindex`, append to the `tools` list:
 
@@ -3075,7 +3075,7 @@ In `api/llm.py`, inside `run_agent_pageindex`, append to the `tools` list:
         },
 ```
 
-- [ ] **Step 2: Add handler for get_related_materials in the tool dispatch loop**
+- [x] **Step 2: Add handler for get_related_materials in the tool dispatch loop**
 
 In `run_agent_pageindex`, inside the `for call in tool_calls:` loop, add after the `get_page_content` branch:
 
@@ -3100,13 +3100,13 @@ In `run_agent_pageindex`, inside the `for call in tool_calls:` loop, add after t
                     on_event({"type": "tool_call", "tool": "get_related_materials", "material_id": mid})
 ```
 
-- [ ] **Step 3: Verify no syntax errors**
+- [x] **Step 3: Verify no syntax errors**
 
 ```bash
 cd /Users/shubhan/OneShotCourseMate && python -c "import api.llm; print('ok')"
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add api/llm.py

@@ -1393,6 +1393,27 @@ def run_agent_pageindex(
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_related_materials",
+                "description": (
+                    "Get materials related to a specific material via the knowledge graph. "
+                    "Use when initial material doesn't fully answer the question - "
+                    "e.g., find the lecture behind a homework problem, or a solution for a hw."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "material_id": {
+                            "type": "integer",
+                            "description": "Material ID to find neighbors for",
+                        },
+                    },
+                    "required": ["material_id"],
+                },
+            },
+        },
     ]
 
     messages = [
@@ -1499,6 +1520,36 @@ def run_agent_pageindex(
                             "tool": "get_page_content",
                             "material_id": material_id,
                             "pages": pages_spec,
+                        }
+                    )
+            elif name == "get_related_materials":
+                try:
+                    from .services.query.pageindex_retrieval import get_material_relations
+                except ImportError:
+                    from services.query.pageindex_retrieval import get_material_relations
+
+                material_id = args.get("material_id")
+                relations = get_material_relations(conn, course_id, material_id)
+                if relations:
+                    lines = []
+                    for relation in relations:
+                        score = relation.get("similarity_score")
+                        score_text = f"{score:.2f}" if score is not None else "?"
+                        shared_tags = ", ".join(relation.get("shared_tags") or []) or "none"
+                        lines.append(
+                            f"  [{relation['other_material_id']}] "
+                            f"{relation['relation_type']} (confidence: {score_text})"
+                            f" | shared topics: {shared_tags}"
+                        )
+                    tool_result = f"Related materials for {material_id}:\n" + "\n".join(lines)
+                else:
+                    tool_result = f"No known relations for material {material_id}."
+                if on_event:
+                    on_event(
+                        {
+                            "type": "tool_call",
+                            "tool": "get_related_materials",
+                            "material_id": material_id,
                         }
                     )
             else:
