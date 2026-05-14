@@ -2543,7 +2543,7 @@ git commit -m "feat: PAGEINDEX_RETRIEVAL_ENABLED feature flag — routes synthes
 
 The runner measures page hit rate and answer quality (LLM judge) for both the vector RAG path and the PageIndex path.
 
-- [ ] **Step 1: Create seed test cases**
+- [x] **Step 1: Create seed test cases**
 
 `tests/pageindex_eval/test_cases.jsonl`:
 ```jsonl
@@ -2555,7 +2555,7 @@ The runner measures page hit rate and answer quality (LLM judge) for both the ve
 {"id":"tc_006","question":"How does the midterm assess students' understanding of backprop vs forward pass?","doc_type":"exam","expected_material_title":"midterm","expected_pages":[2,3,4],"difficulty":"multi_hop","judge_criteria":"Identifies questions about both forward and backward pass steps and how they are tested"}
 ```
 
-- [ ] **Step 2: Create eval_runner.py**
+- [x] **Step 2: Create eval_runner.py**
 
 `tests/pageindex_eval/eval_runner.py`:
 ```python
@@ -2724,7 +2724,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 3: Verify runner parses without error**
+- [x] **Step 3: Verify runner parses without error**
 
 ```bash
 cd /Users/shubhan/OneShotCourseMate && python tests/pageindex_eval/eval_runner.py --help
@@ -2732,7 +2732,7 @@ cd /Users/shubhan/OneShotCourseMate && python tests/pageindex_eval/eval_runner.p
 
 Expected: prints usage without ImportError.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/pageindex_eval/
