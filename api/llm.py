@@ -1316,6 +1316,27 @@ def run_agent_openai(
     return final_text, grounding_refs, tool_trace, metadata, assistant_reply_summary, assistant_follow_ups, assistant_clarifying_question
 
 
+def _format_routing_index_block(materials: list[dict]) -> str:
+    if not materials:
+        return "<course_materials>\n(no materials available)\n</course_materials>"
+    lines = ["<course_materials>"]
+    for m in materials:
+        mid = m.get("material_id")
+        title = m.get("title") or ""
+        doc_type = m.get("doc_type") or "unknown"
+        page_count = m.get("page_count")
+        pages_str = f"{page_count}p" if page_count else "?p"
+        tags = ", ".join(m.get("tags") or []) or "none"
+        summary = (m.get("summary") or "").strip().replace("\n", " ")
+        if len(summary) > 240:
+            summary = summary[:237] + "..."
+        lines.append(
+            f"[{mid}] {title} | {doc_type} | {pages_str} | tags: {tags} | summary: {summary}"
+        )
+    lines.append("</course_materials>")
+    return "\n".join(lines)
+
+
 def run_agent_pageindex(
     conn,
     user_message: str,
@@ -1326,18 +1347,11 @@ def run_agent_pageindex(
     context_material_ids: list,
     on_event=None,
 ) -> tuple:
-    try:
-        from .services.query.pageindex_retrieval import (
-            get_course_routing_index,
-            get_material_structure,
-            get_page_content,
-        )
-    except ImportError:
-        from services.query.pageindex_retrieval import (
-            get_course_routing_index,
-            get_material_structure,
-            get_page_content,
-        )
+    from pageindex_retrieval import (
+        get_course_routing_index,
+        get_material_structure,
+        get_page_content,
+    )
 
     tools = [
         {
@@ -1523,10 +1537,7 @@ def run_agent_pageindex(
                         }
                     )
             elif name == "get_related_materials":
-                try:
-                    from .services.query.pageindex_retrieval import get_material_relations
-                except ImportError:
-                    from services.query.pageindex_retrieval import get_material_relations
+                from pageindex_retrieval import get_material_relations
 
                 material_id = args.get("material_id")
                 relations = get_material_relations(conn, course_id, material_id)
