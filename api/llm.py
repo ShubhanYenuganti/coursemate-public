@@ -1357,28 +1357,17 @@ def run_agent_pageindex(
         {
             "type": "function",
             "function": {
-                "name": "search_course_materials",
-                "description": (
-                    "Get a summary index of all course materials. "
-                    "Call this first to identify which files are relevant to the question."
-                ),
-                "parameters": {"type": "object", "properties": {}, "required": []},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
                 "name": "get_material_structure",
                 "description": (
                     "Get the hierarchical section/problem index for one material. "
-                    "Call after search_course_materials to see what's inside a relevant file before fetching pages."
+                    "Call to see what's inside a relevant file before fetching pages."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "material_id": {
                             "type": "integer",
-                            "description": "Material ID from search_course_materials",
+                            "description": "Material ID from the course materials index",
                         },
                     },
                     "required": ["material_id"],
@@ -1430,8 +1419,19 @@ def run_agent_pageindex(
         },
     ]
 
+    routing_materials = get_course_routing_index(
+        conn, course_id, context_material_ids or None
+    )
+    routing_block = _format_routing_index_block(routing_materials)
+    system_content = (
+        AGENTIC_SYSTEM_PROMPT
+        + "\n\n"
+        + routing_block
+        + "\n\nUse the material IDs above when calling get_material_structure or get_page_content."
+    )
+
     messages = [
-        {"role": "system", "content": AGENTIC_SYSTEM_PROMPT},
+        {"role": "system", "content": system_content},
         {"role": "user", "content": user_message},
     ]
     grounding_refs: list = []
@@ -1502,13 +1502,7 @@ def run_agent_pageindex(
             except json.JSONDecodeError:
                 args = {}
 
-            if name == "search_course_materials":
-                tool_result = get_course_routing_index(
-                    conn, course_id, context_material_ids or None
-                )
-                if on_event:
-                    on_event({"type": "tool_call", "tool": "search_course_materials"})
-            elif name == "get_material_structure":
+            if name == "get_material_structure":
                 material_id = args.get("material_id")
                 tool_result = json.dumps(
                     get_material_structure(conn, material_id), indent=2
