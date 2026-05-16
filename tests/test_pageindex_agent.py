@@ -33,6 +33,8 @@ def test_format_routing_index_block_basic():
     assert "42p" in block
     assert "networking" in block
     assert "Subnetting practice problems." in block
+    assert "[624] Lecture 1 - Intro | lecture | 42p" in block
+    assert "tags: networking, intro" in block
 
 
 def test_format_routing_index_block_empty():
@@ -55,3 +57,6 @@ def test_format_routing_index_block_handles_missing_optional_fields():
     block = _format_routing_index_block(materials)
     assert "[1]" in block
     assert "T" in block
+    assert "unknown" in block
+    assert "?p" in block
+    assert "tags: none" in block

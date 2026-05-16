@@ -1321,11 +1321,11 @@ def _format_routing_index_block(materials: list[dict]) -> str:
         return "<course_materials>\n(no materials available)\n</course_materials>"
     lines = ["<course_materials>"]
     for m in materials:
-        mid = m.get("material_id")
+        mid = m.get("material_id", "??")
         title = m.get("title") or ""
         doc_type = m.get("doc_type") or "unknown"
         page_count = m.get("page_count")
-        pages_str = f"{page_count}p" if page_count else "?p"
+        pages_str = f"{page_count}p" if page_count is not None else "?p"
         tags = ", ".join(m.get("tags") or []) or "none"
         summary = (m.get("summary") or "").strip().replace("\n", " ")
         if len(summary) > 240:
