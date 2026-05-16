@@ -3140,7 +3140,46 @@ Before running the eval:
     --environment 'Variables={AWS_S3_BUCKET_NAME=coursemate-materials,DATABASE_URL=<YOUR_DATABASE_URL>,INDEX_STATE_MACHINE_ARN=<STATE_MACHINE_ARN>,OPENAI_API_KEY_INDEXER=<YOUR_KEY>}' \
     --region us-east-1
   ```
-- [ ] Grant S3 permission to invoke the Lambda, then configure the `coursemate-materials` bucket notification to fire on `s3:ObjectCreated:*` events targeting `index_materials`
+- [ ] Grant S3 permission to invoke the Lambda, then configure the `coursemate-materials` bucket notification to fire on `s3:ObjectCreated:*` events targeting `index_materials`:
+  ```bash
+  # 1. Allow S3 to invoke the Lambda
+  aws lambda add-permission \
+    --function-name index_materials \
+    --statement-id s3-invoke-index-materials \
+    --action lambda:InvokeFunction \
+    --principal s3.amazonaws.com \
+    --source-arn arn:aws:s3:::coursemate-materials \
+    --source-account 717279724624 \
+    --region us-east-1
+  ```
+  ```bash
+  # 2. Check existing bucket notification config — must be preserved when adding the new entry
+  aws s3api get-bucket-notification-configuration --bucket coursemate-materials
+  ```
+  ```bash
+  # 3. Set notification config (merge with any existing LambdaFunctionConfigurations,
+  #    e.g. embed_materials — put-bucket-notification-configuration replaces the whole config)
+  aws s3api put-bucket-notification-configuration \
+    --bucket coursemate-materials \
+    --notification-configuration '{
+      "LambdaFunctionConfigurations": [
+        {
+          "Id": "index-materials-on-upload",
+          "LambdaFunctionArn": "arn:aws:lambda:us-east-1:717279724624:function:index_materials",
+          "Events": ["s3:ObjectCreated:*"],
+          "Filter": {
+            "Key": {
+              "FilterRules": [
+                {"Name": "prefix", "Value": "materials/"},
+                {"Name": "suffix", "Value": ".pdf"}
+              ]
+            }
+          }
+        }
+      ]
+    }'
+  ```
+  Filter is `prefix=materials/` + `suffix=.pdf` — matches the key format `materials/<uuid>.pdf` used by the upload API. **Important:** include any existing `LambdaFunctionConfigurations` entries (e.g. `embed_materials`) in the JSON above or they will be removed.
 - [ ] Trigger indexing for each test PDF by uploading to S3 (or directly invoking the Lambda)
 - [ ] Confirm `material_page_index`, `material_page_text`, `course_material_index`, `course_material_relations` rows exist for all test materials
 - [ ] Verify `metadata_tags` column populated in `course_material_index` (non-empty JSON array)
