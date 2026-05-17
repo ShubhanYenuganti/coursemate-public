@@ -142,6 +142,29 @@ _AGENTIC_JSON_FINAL_INSTRUCTION = (
 # Agentic loop: same as SYSTEM_PROMPT plus JSON final-answer requirement.
 AGENTIC_SYSTEM_PROMPT = SYSTEM_PROMPT + _AGENTIC_JSON_FINAL_INSTRUCTION
 
+_PAGEINDEX_TOOL_USE = (
+    "\n\n**Tool use**: A routing index of available course materials is provided below. "
+    "Each material includes per-page summaries — use them to identify the right pages and call "
+    "`get_page_content(material_id, pages)` directly with a page range (e.g. '3,4,5' or '3-5'). "
+    "Only call `get_material_structure(material_id)` if the routing index has no page summaries "
+    "for that material or you need sub-section detail not visible in the summaries. "
+    "If the fetched content does not fully answer the question, call `get_related_materials(material_id)` "
+    "to discover related materials and repeat. "
+    "Do NOT call any other tools — only these three are available."
+    "\n\n**Citation numbering**: Each `get_page_content` call you make becomes one numbered citation, "
+    "in the order you called it. The first `get_page_content` call is citation [1], the second is [2], "
+    "and so on. When you write the final answer, cite each fact using the bracket that matches the call "
+    "that fetched its evidence. Do not invent citation numbers that do not correspond to a "
+    "`get_page_content` call. If you fetched the same material on multiple calls, each call gets its own "
+    "citation number — do not collapse them."
+)
+
+# System prompt for the PageIndex agentic loop. Uses _SYSTEM_PROMPT_BASE for
+# citations/formatting, a pageindex-specific tool-use section (not _SYSTEM_PROMPT_TOOL_USE,
+# which references search_materials/web_search that don't exist here), and the
+# JSON final-answer schema.
+PAGEINDEX_SYSTEM_PROMPT = _SYSTEM_PROMPT_BASE + _PAGEINDEX_TOOL_USE + _AGENTIC_JSON_FINAL_INSTRUCTION
+
 _SUMMARY_MAX_LEN = 200
 
 _TIMEOUT = 60  # seconds
@@ -1333,6 +1356,16 @@ def _format_routing_index_block(materials: list[dict]) -> str:
         lines.append(
             f"[{mid}] {title} | {doc_type} | {pages_str} | tags: {tags} | summary: {summary}"
         )
+        sections = m.get("sections") or []
+        if sections:
+            snippets = []
+            for s in sections[:50]:
+                start, end = s["start_page"], s["end_page"]
+                page_ref = f"{start}-{end}" if end != start else str(start)
+                snip = s["summary"][:80].rstrip()
+                snippets.append(f"{page_ref}:{snip}")
+            if snippets:
+                lines.append(f"  pages: {' · '.join(snippets)}")
     lines.append("</course_materials>")
     return "\n".join(lines)
 
@@ -1424,7 +1457,7 @@ def run_agent_pageindex(
     )
     routing_block = _format_routing_index_block(routing_materials)
     system_content = (
-        AGENTIC_SYSTEM_PROMPT
+        PAGEINDEX_SYSTEM_PROMPT
         + "\n\n"
         + routing_block
         + "\n\nUse the material IDs above when calling get_material_structure or get_page_content."
@@ -1705,7 +1738,7 @@ def synthesize(
 
     selected_provider_api_key = _get_api_key(conn, user_id, ai_provider)
     material_scope = context_material_ids if isinstance(context_material_ids, list) else []
-    use_pageindex = _is_enabled("PAGEINDEX_RETRIEVAL_ENABLED", default=False)
+    use_pageindex = _is_enabled("PAGEINDEX_RETRIEVAL_ENABLED", default=True)
     if use_pageindex and not force_context_only:
         agentic_api_key = _get_api_key(conn, user_id, DEFAULT_AGENTIC_PROVIDER)
         pageindex_course_id = None

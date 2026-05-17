@@ -43,6 +43,29 @@ def test_format_routing_index_block_empty():
     assert "(no materials available)" in block
 
 
+def test_format_routing_index_block_with_sections():
+    materials = [
+        {
+            "material_id": 1,
+            "title": "Lecture 1",
+            "doc_type": "lecture_slide",
+            "page_count": 10,
+            "summary": "Intro lecture.",
+            "tags": [],
+            "sections": [
+                {"start_page": 1, "end_page": 1, "summary": "overview of the course"},
+                {"start_page": 2, "end_page": 4, "summary": "TCP slow start and AIMD"},
+                {"start_page": 5, "end_page": 5, "summary": "congestion window mechanics"},
+            ],
+        }
+    ]
+    block = _format_routing_index_block(materials)
+    assert "pages:" in block
+    assert "1:overview of the course" in block
+    assert "2-4:TCP slow start and AIMD" in block
+    assert "5:congestion window mechanics" in block
+
+
 def test_format_routing_index_block_handles_missing_optional_fields():
     materials = [
         {
@@ -103,6 +126,10 @@ def test_run_agent_pageindex_preloads_routing_and_drops_search_tool():
             "page_count": 5,
             "summary": "s",
             "tags": ["t"],
+            "sections": [
+                {"start_page": 1, "end_page": 1, "summary": "intro to networking basics"},
+                {"start_page": 2, "end_page": 3, "summary": "TCP handshake and connection setup"},
+            ],
         }
     ]
 
@@ -123,9 +150,21 @@ def test_run_agent_pageindex_preloads_routing_and_drops_search_tool():
     assert system_msg["role"] == "system"
     assert "<course_materials>" in system_msg["content"]
     assert "[10]" in system_msg["content"]
+    assert "search_materials" not in system_msg["content"]
+    assert "pages:" in system_msg["content"]
+    assert "intro to networking basics" in system_msg["content"]
 
     tool_names = [t["function"]["name"] for t in payload["tools"]]
     assert "search_course_materials" not in tool_names
     assert "get_material_structure" in tool_names
     assert "get_page_content" in tool_names
     assert "get_related_materials" in tool_names
+
+
+def test_pageindex_prompt_documents_citation_numbering():
+    """PAGEINDEX_SYSTEM_PROMPT must explain how [N] markers map to fetched pages."""
+    from llm import PAGEINDEX_SYSTEM_PROMPT
+    text = PAGEINDEX_SYSTEM_PROMPT.lower()
+    assert "get_page_content" in text
+    assert ("order" in text and "call" in text) or "nth call" in text, \
+        "Prompt must instruct agent to use call-order for citation numbers"
