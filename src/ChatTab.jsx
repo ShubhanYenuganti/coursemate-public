@@ -449,7 +449,12 @@ function SourcesPanel({ open, chunks, focusIndex, onClose, materials }) {
             return (
               <div
                 key={idx}
-                className="rounded-lg px-3 py-2.5 border border-gray-100 bg-gray-50 text-xs"
+                ref={isFocused ? focusRef : null}
+                className={`rounded-lg px-3 py-2.5 border text-xs transition-colors ${
+                  isFocused
+                    ? 'border-l-4 border-indigo-400 bg-indigo-50'
+                    : 'border-gray-100 bg-gray-50'
+                }`}
               >
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-indigo-100 text-indigo-600 font-semibold text-[10px] flex-shrink-0">
