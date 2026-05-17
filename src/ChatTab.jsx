@@ -438,6 +438,44 @@ function SourcesPanel({ open, chunks, focusIndex, onClose, materials }) {
           const isFocused = n === focusIndex;
           const material = chunk.material_id != null ? materialMap[chunk.material_id] : null;
           const downloadUrl = getMaterialUrl(material) || null;
+
+          if (chunk.citation_type === 'page') {
+            const pages = chunk.pages || [];
+            const pageLabel = pages.length === 0
+              ? ''
+              : pages.length === 1
+                ? `p. ${pages[0]}`
+                : `pp. ${pages[0]}–${pages[pages.length - 1]}`;
+            return (
+              <div
+                key={idx}
+                className="rounded-lg px-3 py-2.5 border border-gray-100 bg-gray-50 text-xs"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-indigo-100 text-indigo-600 font-semibold text-[10px] flex-shrink-0">
+                    {n}
+                  </span>
+                  {material?.name && (
+                    <span className="text-gray-700 font-medium truncate">
+                      {material.name.replace(/\.[^.]+$/, '')}
+                    </span>
+                  )}
+                  {pageLabel && <span className="text-gray-400 ml-auto flex-shrink-0">{pageLabel}</span>}
+                  {downloadUrl && (
+                    <a
+                      href={downloadUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors flex-shrink-0"
+                    >
+                      <ExternalLinkIcon />
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div
               key={idx}
@@ -514,6 +552,10 @@ function MessageBubble({
   onFollowUpClick,
   onSkipClarification,
   isLastAssistantMsg,
+  editImages = [],
+  onEditImageAdd,
+  onEditImageRemove,
+  editFileInputRef,
 }) {
   const isUser = msg.role === 'user';
   const modelLabel = getMessageModelLabel(msg);
@@ -630,8 +672,46 @@ function MessageBubble({
                     onEditCancel();
                   }
                 }}
+                onPaste={(e) => {
+                  const items = Array.from(e.clipboardData?.items || []);
+                  const imageItems = items.filter((it) => it.type.startsWith('image/'));
+                  if (imageItems.length === 0) return;
+                  e.preventDefault();
+                  onEditImageAdd?.(imageItems.map((it) => it.getAsFile()).filter(Boolean));
+                }}
                 rows={3}
                 className="w-full rounded-lg border border-indigo-200 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 text-sm text-gray-800 leading-relaxed px-3 py-2 resize-y"
+              />
+              {editImages.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {editImages.map((entry, idx) => {
+                    const src = entry.kind === 'existing' ? entry.url : URL.createObjectURL(entry.file);
+                    const name = entry.kind === 'existing' ? entry.filename : entry.file.name;
+                    return (
+                      <div key={idx} className="relative flex flex-col items-center gap-0.5">
+                        <div className="w-14 h-14 rounded-lg overflow-hidden border border-gray-200 bg-gray-50 flex-shrink-0">
+                          <img src={src} alt={name} className="w-full h-full object-cover" />
+                        </div>
+                        <span className="text-[9px] text-gray-400 max-w-[56px] truncate">{name}</span>
+                        <button
+                          type="button"
+                          onClick={() => onEditImageRemove?.(idx)}
+                          className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-gray-600 text-white flex items-center justify-center hover:bg-red-500 transition-colors"
+                        >
+                          <XIcon />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <input
+                ref={editFileInputRef}
+                type="file"
+                accept="image/png,image/jpeg"
+                multiple
+                className="hidden"
+                onChange={(e) => { onEditImageAdd?.(e.target.files); e.target.value = ''; }}
               />
               <div className="flex items-center gap-2">
                 <button
@@ -647,6 +727,14 @@ function MessageBubble({
                   className="px-2.5 py-1 text-xs rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
                 >
                   Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => editFileInputRef?.current?.click()}
+                  className="p-1 rounded text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 transition-colors"
+                  title="Attach image"
+                >
+                  <PaperclipIcon />
                 </button>
               </div>
             </div>
@@ -885,7 +973,7 @@ function MessageBubble({
 
 // ─── streaming status bubble ──────────────────────────────────────────────────
 
-function getTracePrimary(status) {
+function getTracePrimary(status, materialMap) {
   switch (status.phase) {
     case 'handoff_decision': {
       const rec = status.recommendation || 'optional';
@@ -906,6 +994,21 @@ function getTracePrimary(status) {
       return `Inspecting web result from ${status.hostname || 'source'}`;
     case 'rerank':
       return `Re-ranking candidate chunks by relevance (${status.input_count || '?'} → ${status.output_count || '?'})`;
+    case 'page_fetch': {
+      const mat = (materialMap || {})[status.material_id];
+      const name = mat?.name ? mat.name.replace(/\.[^.]+$/, '').slice(0, 25) : `material ${status.material_id}`;
+      return `Fetched pages ${status.pages || '?'} from ${name}`;
+    }
+    case 'structure_fetch': {
+      const mat = (materialMap || {})[status.material_id];
+      const name = mat?.name ? mat.name.replace(/\.[^.]+$/, '').slice(0, 25) : `material ${status.material_id}`;
+      return `Retrieved structure of ${name}`;
+    }
+    case 'related_fetch': {
+      const mat = (materialMap || {})[status.material_id];
+      const name = mat?.name ? mat.name.replace(/\.[^.]+$/, '').slice(0, 25) : `material ${status.material_id}`;
+      return `Looked up materials related to ${name}`;
+    }
     default:
       return 'Initializing retrieval and planning tool steps…';
   }
@@ -960,6 +1063,12 @@ function toolTraceToEvents(toolTrace) {
       }
     } else if (entry.tool === 'rerank_results') {
       events.push({ phase: 'rerank', input_count: entry.result_count, output_count: entry.result_count });
+    } else if (entry.tool === 'get_page_content') {
+      events.push({ phase: 'page_fetch', material_id: entry.args?.material_id, pages: entry.args?.pages });
+    } else if (entry.tool === 'get_material_structure') {
+      events.push({ phase: 'structure_fetch', material_id: entry.args?.material_id });
+    } else if (entry.tool === 'get_related_materials') {
+      events.push({ phase: 'related_fetch', material_id: entry.args?.material_id });
     }
   }
   return events;
@@ -989,7 +1098,7 @@ function ToolTraceIndicator({ toolTrace, materials }) {
               <div key={i} className="flex items-start gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-indigo-200 mt-1 flex-shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-[11px] text-indigo-500 leading-snug">{getTracePrimary(s)}</p>
+                  <p className="text-[11px] text-indigo-500 leading-snug">{getTracePrimary(s, materialMap)}</p>
                   {secondary && <p className="text-[10px] text-indigo-300 leading-snug truncate">{secondary}</p>}
                 </div>
               </div>
@@ -997,46 +1106,6 @@ function ToolTraceIndicator({ toolTrace, materials }) {
           })}
         </div>
       )}
-    </div>
-  );
-}
-
-function StreamingHistoryBubble({ history, materials }) {
-  const materialMap = {};
-  (materials || []).forEach((m) => { materialMap[m.id] = m; });
-  const items = (history || []).filter((s) => s.phase !== 'init');
-
-  if (!items.length) {
-    return (
-      <div className="flex items-start">
-        <div className="w-10 flex-shrink-0" />
-        <div className="flex items-center gap-1 pt-2">
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-start">
-      <div className="w-10 flex-shrink-0" />
-      <div className="flex-1 flex flex-col gap-1.5 px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-100">
-        {items.map((s, i) => {
-          const isLast = i === items.length - 1;
-          const secondary = getTraceSecondary(s, materialMap);
-          return (
-            <div key={i} className="flex items-start gap-2">
-              <span className={`w-2 h-2 rounded-full mt-0.5 flex-shrink-0 ${isLast ? 'bg-indigo-400 animate-pulse' : 'bg-indigo-200'}`} />
-              <div className="min-w-0">
-                <p className={`text-xs font-medium leading-snug ${isLast ? 'text-indigo-700' : 'text-indigo-400'}`}>{getTracePrimary(s)}</p>
-                {secondary && <p className="text-[11px] text-indigo-300 leading-snug truncate">{secondary}</p>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -1185,8 +1254,6 @@ export default function ChatTab({ course, userData, onAddSource }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
-  // null = idle; { phase, detail, iteration, maxIteration } = streaming in progress
-  const [streamingHistory, setStreamingHistory] = useState([]);
   const [selectedModel, setSelectedModel] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
@@ -1226,6 +1293,9 @@ export default function ChatTab({ course, userData, onAddSource }) {
   const [imageUploadStates, setImageUploadStates] = useState({});
   const [visionBanner, setVisionBanner] = useState('');
   const fileInputRef = useRef(null);
+  // Edit-mode image staging: { kind: 'existing', s3_key, filename, url } | { kind: 'new', file: File }
+  const [editImages, setEditImages] = useState([]);
+  const editFileInputRef = useRef(null);
 
   // Sidebar resize / collapse
   const SIDEBAR_DEFAULT_WIDTH = 280;
@@ -1686,42 +1756,10 @@ export default function ChatTab({ course, userData, onAddSource }) {
 
   function handleStreamEvent(evt, { tempId, chatId, setActiveConvFn }) {
     switch (evt.type) {
-      case 'handoff_decision':
-        setStreamingHistory((prev) => [...prev, {
-          phase: 'handoff_decision',
-          recommendation: evt.recommendation || 'optional',
-          confidence: evt.confidence,
-          threshold: evt.threshold,
-          override: Boolean(evt.override),
-          web_search_allowed: evt.web_search_allowed,
-          missing_facts: Array.isArray(evt.missing_facts) ? evt.missing_facts : [],
-          suggested_queries: Array.isArray(evt.suggested_queries) ? evt.suggested_queries : [],
-          reasoning: evt.reasoning || '',
-        }]);
-        break;
       case 'user_message':
         setMessages((prev) => [...prev.filter((m) => m.id !== tempId), evt.message]);
         break;
-      case 'loop_start':
-        setStreamingHistory((prev) => [...prev, { phase: 'loop_start', iteration: evt.iteration, maxIteration: evt.max }]);
-        break;
-      case 'sources_found':
-        setStreamingHistory((prev) => [...prev, { phase: 'sources_found', chunks: evt.chunks || [], result_count: evt.result_count || 0 }]);
-        break;
-      case 'web_search_start':
-        setStreamingHistory((prev) => [...prev, { phase: 'web_search_start', query: evt.query || '' }]);
-        break;
-      case 'web_result': {
-        let hostname = evt.url || '';
-        try { hostname = new URL(evt.url).hostname.replace(/^www\./, ''); } catch {}
-        setStreamingHistory((prev) => [...prev, { phase: 'web_result', url: evt.url, hostname, excerpt: (evt.excerpt || '').slice(0, 80) }]);
-        break;
-      }
-      case 'rerank':
-        setStreamingHistory((prev) => [...prev, { phase: 'rerank', input_count: evt.input_count, output_count: evt.output_count }]);
-        break;
       case 'done':
-        setStreamingHistory([]);
         setMessages((prev) => {
           const withoutTemp = prev.filter((m) => m.id !== tempId && m.id !== evt.user_message?.id);
           return [...withoutTemp, evt.user_message, evt.assistant_message];
@@ -1740,7 +1778,6 @@ export default function ChatTab({ course, userData, onAddSource }) {
         sendingRef.current = false;
         break;
       case 'error':
-        setStreamingHistory([]);
         setSending(false);
         sendingRef.current = false;
         setMessages((prev) => prev.filter((m) => m.id !== tempId));
@@ -1767,6 +1804,21 @@ export default function ChatTab({ course, userData, onAddSource }) {
       delete next[index];
       return next;
     });
+  }
+
+  function addEditImages(files) {
+    const MAX_SIZE = 10 * 1024 * 1024;
+    const MAX_COUNT = 5;
+    setEditImages((prev) => {
+      const valid = Array.from(files)
+        .filter((f) => f.size <= MAX_SIZE)
+        .map((f) => ({ kind: 'new', file: f }));
+      return [...prev, ...valid].slice(0, MAX_COUNT);
+    });
+  }
+
+  function removeEditImage(index) {
+    setEditImages((prev) => prev.filter((_, i) => i !== index));
   }
 
   function handleFileInputChange(e) {
@@ -1799,7 +1851,6 @@ export default function ChatTab({ course, userData, onAddSource }) {
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setSending(true);
     sendingRef.current = true;
-    setStreamingHistory([{ phase: 'init' }]);
 
     const stagedImages = [...images];
     setImages([]);
@@ -1904,11 +1955,6 @@ export default function ChatTab({ course, userData, onAddSource }) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      // scheduledDelay accumulates when events arrive batched in the same read()
-      // so each phase is visible for 400ms. Resets to 0 when a read() returns only
-      // non-phase events, meaning the stream is actually progressive.
-      let scheduledDelay = 0;
-      const PHASE_EVENTS = new Set(['handoff_decision', 'loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1920,14 +1966,11 @@ export default function ChatTab({ course, userData, onAddSource }) {
           if (!part.startsWith('data: ')) continue;
           try {
             const evt = JSON.parse(part.slice(6));
-            const delay = scheduledDelay;
-            setTimeout(() => handleStreamEvent(evt, { tempId, chatId }), delay);
-            if (PHASE_EVENTS.has(evt.type)) scheduledDelay += 400;
+            handleStreamEvent(evt, { tempId, chatId });
           } catch {}
         }
       }
     } catch {
-      setStreamingHistory([]);
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setSending(false);
       sendingRef.current = false;
@@ -1940,6 +1983,15 @@ export default function ChatTab({ course, userData, onAddSource }) {
     const target = messages.find((m) => m.id === messageId);
     if (!target || target.role !== 'user' || typeof target.message_index !== 'number') return;
 
+    const stagedEditImages = [...editImages];
+
+    if (stagedEditImages.length > 0 && NON_VISION_MODEL_IDS.has(selectedModelId || selectedModel)) {
+      const modelEntry = (PROVIDER_MODELS[selectedModel] || []).find((m) => m.id === (selectedModelId || selectedModel));
+      const label = modelEntry?.label || selectedModelId || selectedModel;
+      setVisionBanner(`${label} does not support image inputs. Please select a different model.`);
+      return;
+    }
+
     const contextIds = materials.filter((m) => m.selected).map((m) => m.id);
 
     const prevMessages = messages;
@@ -1950,11 +2002,68 @@ export default function ChatTab({ course, userData, onAddSource }) {
 
     setEditingMsgId(null);
     setEditingContent('');
+    setEditImages([]);
     setSending(true);
     sendingRef.current = true;
-    setStreamingHistory([{ phase: 'init' }]);
     setSourcesPanel({ open: false, messageId: null, focusIndex: null });
     setMessages([...keptPrefix, optimisticEdited]);
+
+    let imageAttachments = [];
+    try {
+      const newEntries = stagedEditImages.filter((e) => e.kind === 'new');
+      const existingEntries = stagedEditImages.filter((e) => e.kind === 'existing');
+
+      if (newEntries.length > 0) {
+        const uploadResults = await Promise.all(
+          newEntries.map(async ({ file }) => {
+            const buf = await file.arrayBuffer();
+            const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+            const sha256 = Array.from(new Uint8Array(hashBuf))
+              .map((b) => b.toString(16).padStart(2, '0'))
+              .join('');
+            const res = await fetch('/api/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({
+                resource: 'message',
+                action: 'upload_image',
+                filename: file.name,
+                content_type: file.type,
+                sha256,
+              }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Upload failed');
+            if (data.upload_url) {
+              await fetch(data.upload_url, {
+                method: 'PUT',
+                headers: { 'Content-Type': file.type },
+                body: file,
+              });
+            }
+            return { s3_key: data.s3_key, filename: file.name };
+          })
+        );
+        imageAttachments = [
+          ...existingEntries.map((e) => ({ s3_key: e.s3_key, filename: e.filename })),
+          ...uploadResults,
+        ];
+      } else {
+        imageAttachments = existingEntries.map((e) => ({ s3_key: e.s3_key, filename: e.filename }));
+      }
+    } catch {
+      setMessages(prevMessages);
+      setMsgChunks(prevMsgChunks);
+      setSending(false);
+      sendingRef.current = false;
+      setVisionBanner('Image upload failed. Please try again.');
+      return;
+    }
+
+    const existingUrlMap = Object.fromEntries(
+      stagedEditImages.filter((e) => e.kind === 'existing').map((e) => [e.s3_key, e.url])
+    );
 
     try {
       const response = await fetch('/api/chat', {
@@ -1971,6 +2080,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
           context_material_ids: contextIds,
           ai_provider: selectedModel,
           ai_model: selectedModelId || selectedModel,
+          image_attachments: imageAttachments,
         }),
       });
 
@@ -1982,8 +2092,6 @@ export default function ChatTab({ course, userData, onAddSource }) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let scheduledDelay = 0;
-      const PHASE_EVENTS = new Set(['handoff_decision', 'loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
 
       let editDoneReceived = false;
       while (true) {
@@ -1996,53 +2104,52 @@ export default function ChatTab({ course, userData, onAddSource }) {
           if (!part.startsWith('data: ')) continue;
           try {
             const evt = JSON.parse(part.slice(6));
-            const delay = scheduledDelay;
-            setTimeout(() => {
-              if (evt.type === 'done') {
-                editDoneReceived = true;
-                setStreamingHistory([]);
-                const nextMessages = [...keptPrefix, evt.user_message, evt.assistant_message];
-                setMessages(nextMessages);
-                setMsgChunks((prev) => {
-                  const keptIds = new Set(nextMessages.map((m) => m.id));
-                  return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
-                });
-                setChats((prev) => prev.map((c) =>
-                  c.id === target.chat_id
-                    ? {
-                        ...c,
-                        last_message_at: evt.assistant_message?.created_at,
-                        message_count: nextMessages.length,
-                        ...(evt.suggested_title ? { title: evt.suggested_title } : {}),
-                      }
-                    : c
-                ));
-                setSending(false);
-                sendingRef.current = false;
-              } else if (evt.type === 'error') {
-                editDoneReceived = true;
-                setStreamingHistory([]);
-                setMessages(prevMessages);
-                setMsgChunks(prevMsgChunks);
-                setSending(false);
-                sendingRef.current = false;
-              } else {
-                handleStreamEvent(evt, { tempId: null, chatId: target.chat_id });
-              }
-            }, delay);
-            if (PHASE_EVENTS.has(evt.type)) scheduledDelay += 400;
+            if (evt.type === 'done') {
+              editDoneReceived = true;
+              const enrichedUserMessage = {
+                ...evt.user_message,
+                image_download_urls: imageAttachments.map((a) => ({
+                  filename: a.filename,
+                  url: existingUrlMap[a.s3_key] || '',
+                })),
+              };
+              const nextMessages = [...keptPrefix, enrichedUserMessage, evt.assistant_message];
+              setMessages(nextMessages);
+              setMsgChunks((prev) => {
+                const keptIds = new Set(nextMessages.map((m) => m.id));
+                return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
+              });
+              setChats((prev) => prev.map((c) =>
+                c.id === target.chat_id
+                  ? {
+                      ...c,
+                      last_message_at: evt.assistant_message?.created_at,
+                      message_count: nextMessages.length,
+                      ...(evt.suggested_title ? { title: evt.suggested_title } : {}),
+                    }
+                  : c
+              ));
+              setSending(false);
+              sendingRef.current = false;
+            } else if (evt.type === 'error') {
+              editDoneReceived = true;
+              setMessages(prevMessages);
+              setMsgChunks(prevMsgChunks);
+              setSending(false);
+              sendingRef.current = false;
+            } else {
+              handleStreamEvent(evt, { tempId: null, chatId: target.chat_id });
+            }
           } catch {}
         }
       }
       if (!editDoneReceived) {
-        setStreamingHistory([]);
         setMessages(prevMessages);
         setMsgChunks(prevMsgChunks);
         setSending(false);
         sendingRef.current = false;
       }
     } catch {
-      setStreamingHistory([]);
       setMessages(prevMessages);
       setMsgChunks(prevMsgChunks);
       setSending(false);
@@ -2175,7 +2282,6 @@ export default function ChatTab({ course, userData, onAddSource }) {
 
     setSending(true);
     sendingRef.current = true;
-    setStreamingHistory([{ phase: 'init' }]);
     setSourcesPanel({ open: false, messageId: null, focusIndex: null });
 
     try {
@@ -2200,8 +2306,6 @@ export default function ChatTab({ course, userData, onAddSource }) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let scheduledDelay = 0;
-      const PHASE_EVENTS = new Set(['handoff_decision', 'loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
 
       let regenDoneReceived = false;
       while (true) {
@@ -2214,50 +2318,42 @@ export default function ChatTab({ course, userData, onAddSource }) {
           if (!part.startsWith('data: ')) continue;
           try {
             const evt = JSON.parse(part.slice(6));
-            const delay = scheduledDelay;
-            setTimeout(() => {
-              if (evt.type === 'done') {
-                regenDoneReceived = true;
-                setStreamingHistory([]);
-                const nextMessages = [...keptPrefix, evt.user_message, evt.assistant_message];
-                setMessages(nextMessages);
-                setMsgChunks((prev) => {
-                  const keptIds = new Set(nextMessages.map((m) => m.id));
-                  return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
-                });
-                if (evt.suggested_title) {
-                  setChats((prev) => prev.map((c) =>
-                    c.id === (userMsg.chat_id || assistantMsg.chat_id)
-                      ? { ...c, title: evt.suggested_title }
-                      : c
-                  ));
-                }
-                setSending(false);
-                sendingRef.current = false;
-              } else if (evt.type === 'error') {
-                regenDoneReceived = true;
-                setStreamingHistory([]);
-                setMessages(prevMessages);
-                setMsgChunks(prevMsgChunks);
-                setSending(false);
-                sendingRef.current = false;
-              } else {
-                handleStreamEvent(evt, { tempId: null, chatId: userMsg.chat_id });
+            if (evt.type === 'done') {
+              regenDoneReceived = true;
+              const nextMessages = [...keptPrefix, evt.user_message, evt.assistant_message];
+              setMessages(nextMessages);
+              setMsgChunks((prev) => {
+                const keptIds = new Set(nextMessages.map((m) => m.id));
+                return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
+              });
+              if (evt.suggested_title) {
+                setChats((prev) => prev.map((c) =>
+                  c.id === (userMsg.chat_id || assistantMsg.chat_id)
+                    ? { ...c, title: evt.suggested_title }
+                    : c
+                ));
               }
-            }, delay);
-            if (PHASE_EVENTS.has(evt.type)) scheduledDelay += 400;
+              setSending(false);
+              sendingRef.current = false;
+            } else if (evt.type === 'error') {
+              regenDoneReceived = true;
+              setMessages(prevMessages);
+              setMsgChunks(prevMsgChunks);
+              setSending(false);
+              sendingRef.current = false;
+            } else {
+              handleStreamEvent(evt, { tempId: null, chatId: userMsg.chat_id });
+            }
           } catch {}
         }
       }
       if (!regenDoneReceived) {
-        setStreamingHistory([]);
         setMessages(prevMessages);
         setMsgChunks(prevMsgChunks);
         setSending(false);
         sendingRef.current = false;
       }
     } catch {
-      setStreamingHistory([]);
       setMessages(prevMessages);
       setMsgChunks(prevMsgChunks);
       setSending(false);
@@ -2672,13 +2768,26 @@ export default function ChatTab({ course, userData, onAddSource }) {
                 onEditStart={(id, content) => {
                   setEditingMsgId(id);
                   setEditingContent(content || '');
+                  const keys = msg.image_s3_keys || [];
+                  const urls = msg.image_download_urls || [];
+                  setEditImages(keys.map((key, i) => ({
+                    kind: 'existing',
+                    s3_key: key,
+                    filename: urls[i]?.filename || key.split('/').pop(),
+                    url: urls[i]?.url || '',
+                  })));
                 }}
                 onEditChange={setEditingContent}
                 onEditSave={() => handleEditMessage(msg.id, editingContent)}
                 onEditCancel={() => {
                   setEditingMsgId(null);
                   setEditingContent('');
+                  setEditImages([]);
                 }}
+                editImages={editImages}
+                onEditImageAdd={addEditImages}
+                onEditImageRemove={removeEditImage}
+                editFileInputRef={editFileInputRef}
                 canEdit={msg.role === 'user' && typeof msg.message_index === 'number' && !sending}
                 replyHistory={replyHistory}
                 onRevert={replyHistory?.back?.length ? handleRevertMessage : null}
@@ -2701,9 +2810,6 @@ export default function ChatTab({ course, userData, onAddSource }) {
               );
             });
             })()
-          )}
-          {sending && (
-            <StreamingHistoryBubble history={streamingHistory} materials={materials} />
           )}
           <div ref={messagesEndRef} />
         </div>
