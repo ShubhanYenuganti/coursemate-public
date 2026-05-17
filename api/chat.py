@@ -29,7 +29,6 @@ try:
     from .db import get_db
     from .rag import retrieve_chunks
     from .llm import synthesize, synthesize_with_clarification
-    from services.query.retrieval import _fetch_chunk_context
 except ImportError:
     from middleware import send_json, send_sse_headers, send_sse_event, handle_options, authenticate_request, sanitize_string, check_rate_limit
     from models import User
@@ -37,7 +36,11 @@ except ImportError:
     from db import get_db
     from rag import retrieve_chunks
     from llm import synthesize, synthesize_with_clarification
+
+try:
     from services.query.retrieval import _fetch_chunk_context
+except ImportError:
+    _fetch_chunk_context = None
 
 try:
     from services.query.persistence import embed_text_via_lambda, write_chat_message_embedding, embed_image_via_lambda
@@ -216,6 +219,10 @@ def _is_enabled(env_name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _is_pageindex_active() -> bool:
+    return os.environ.get("PAGEINDEX_RETRIEVAL_ENABLED", "true").lower() != "false"
 
 
 def _is_agentic_request(ai_provider: str, ai_model: str) -> bool:
@@ -668,7 +675,7 @@ class handler(BaseHTTPRequestHandler):
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT cm.retrieved_chunk_ids, c.user_id
+                SELECT cm.retrieved_chunk_ids, cm.tool_trace, c.user_id
                 FROM chat_messages cm
                 JOIN chats c ON c.id = cm.chat_id
                 WHERE cm.id = %s AND cm.is_deleted = FALSE
@@ -686,6 +693,31 @@ class handler(BaseHTTPRequestHandler):
             chunk_ids = row['retrieved_chunk_ids'] or []
             if not chunk_ids:
                 send_json(self, 200, {"chunks": []})
+                return
+
+            is_pageindex = any(isinstance(cid, str) and cid.startswith('material:') for cid in chunk_ids)
+
+            if is_pageindex:
+                try:
+                    from pageindex_retrieval import _parse_pages
+                except ImportError:
+                    from .pageindex_retrieval import _parse_pages
+                tool_trace = row['tool_trace'] or []
+                serialized = []
+                for entry in tool_trace:
+                    if entry.get('tool') != 'get_page_content':
+                        continue
+                    mid = entry.get('args', {}).get('material_id')
+                    if mid is None:
+                        continue
+                    pages_str = entry.get('args', {}).get('pages', '')
+                    pages = _parse_pages(str(pages_str))
+                    serialized.append({
+                        "material_id": mid,
+                        "pages": pages,
+                        "citation_type": "page",
+                    })
+                send_json(self, 200, {"chunks": serialized})
                 return
 
             raw_chunks = _fetch_chunk_context(conn, chunk_ids)
@@ -912,7 +944,7 @@ class handler(BaseHTTPRequestHandler):
                 metrics["embedding_null"] += 1
 
             # RAG retrieval + LLM synthesis
-            chunks = retrieve_chunks(conn, content, context_material_ids)
+            chunks = retrieve_chunks(conn, content, context_material_ids) if not _is_pageindex_active() else []
 
             # Check if the prior assistant message has a pending clarification.
             prior_is_clarification, prior_clarification_skipped, prior_clarification_depth, \
@@ -1154,7 +1186,7 @@ class handler(BaseHTTPRequestHandler):
                 conn, content or "", context_material_ids,
                 image_s3_keys=image_s3_keys or [],
                 current_message_id=user_message['id'],
-            )
+            ) if not _is_pageindex_active() else []
 
             # Check if the prior assistant message has a pending clarification.
             prior_is_clarification, prior_clarification_skipped, prior_clarification_depth, \
@@ -1273,6 +1305,7 @@ class handler(BaseHTTPRequestHandler):
         context_material_ids = data.get('context_material_ids')
         ai_provider = data.get('ai_provider') or DEFAULT_AI_PROVIDER
         ai_model = data.get('ai_model')
+        image_attachments = data.get('image_attachments')  # list[{s3_key, filename}] or None
         if ai_provider == "openai" and not ai_model:
             ai_model = DEFAULT_AI_MODEL
 
@@ -1297,7 +1330,7 @@ class handler(BaseHTTPRequestHandler):
             cursor.execute(
                 """
                 SELECT id, chat_id, course_id, user_id, role, content, context_material_ids,
-                       message_index, ai_provider, ai_model, reply_history
+                       message_index, ai_provider, ai_model, reply_history, image_s3_keys
                 FROM chat_messages
                 WHERE id = %s AND is_deleted = FALSE
                 """,
@@ -1360,7 +1393,36 @@ class handler(BaseHTTPRequestHandler):
                 cursor.close()
                 return
 
-            chunks = retrieve_chunks(conn, content, context_material_ids)
+            chunks = retrieve_chunks(conn, content, context_material_ids) if not _is_pageindex_active() else []
+
+            # Compute image diff (tasks 2.2–2.5)
+            original_keys = list(msg.get('image_s3_keys') or [])
+            if image_attachments is not None:
+                final_keys = [a['s3_key'] for a in image_attachments if a.get('s3_key')]
+            else:
+                final_keys = original_keys
+
+            original_set = set(original_keys)
+            final_set = set(final_keys)
+            added_keys = final_set - original_set
+            removed_keys = original_set - final_set
+
+            if removed_keys:
+                cursor.execute(
+                    """
+                    DELETE FROM chat_image_embeddings
+                    WHERE message_id = %s AND s3_key = ANY(%s)
+                    """,
+                    (message_id, list(removed_keys))
+                )
+
+            if added_keys:
+                added_with_filenames = [
+                    (a['s3_key'], a.get('filename', ''))
+                    for a in (image_attachments or [])
+                    if a.get('s3_key') in added_keys
+                ]
+                embed_and_store_chat_images(conn, msg['chat_id'], message_id, added_with_filenames)
 
             if is_streaming:
                 send_sse_headers(self)
@@ -1393,6 +1455,7 @@ class handler(BaseHTTPRequestHandler):
                     chat_id=msg['chat_id'],
                     context_material_ids=context_material_ids,
                     on_event=on_event,
+                    image_s3_keys=list(final_keys),
                 )
                 logger.info(
                     "chat_synthesize_done",
@@ -1451,11 +1514,13 @@ class handler(BaseHTTPRequestHandler):
                         context_material_ids = %s,
                         ai_provider = %s,
                         ai_model = %s,
+                        image_s3_keys = %s,
                         is_edited = TRUE,
                         edited_at = NOW()
                     WHERE id = %s
                     RETURNING id, chat_id, role, content, context_material_ids, ai_provider, ai_model,
-                              is_edited, reply_history, edited_at, message_index, created_at
+                              is_edited, reply_history, edited_at, message_index, created_at,
+                              image_s3_keys
                     """,
                     (
                         new_reply_history,
@@ -1463,6 +1528,7 @@ class handler(BaseHTTPRequestHandler):
                         json.dumps(context_material_ids),
                         ai_provider,
                         ai_model,
+                        final_keys,
                         message_id,
                     )
                 )
@@ -2070,7 +2136,7 @@ class handler(BaseHTTPRequestHandler):
 
             # Regenerate should default to the exact same grounding snapshot when available.
             # Fall back to fresh retrieval only for legacy rows without stored chunk refs.
-            chunks = locked_chunks or retrieve_chunks(conn, user_msg['content'], context_material_ids)
+            chunks = locked_chunks or (retrieve_chunks(conn, user_msg['content'], context_material_ids) if not _is_pageindex_active() else [])
 
             if is_streaming:
                 send_sse_headers(self)
