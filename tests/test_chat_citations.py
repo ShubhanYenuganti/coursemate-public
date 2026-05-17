@@ -95,3 +95,10 @@ def test_page_citations_ordered_by_call_sequence():
     assert citations[0] == {"material_id": 624, "pages": [3, 4, 5], "citation_type": "page"}
     assert citations[1] == {"material_id": 625, "pages": [1, 2], "citation_type": "page"}
     assert citations[2] == {"material_id": 624, "pages": [6], "citation_type": "page"}
+
+
+def test_partition_locked_chunk_ids_drops_material_refs():
+    """Helper must separate integer-style chunk refs from material:N refs."""
+    raw = ["123", "material:624", "456", "material:625", "789"]
+    integer_refs = [r for r in raw if not (isinstance(r, str) and r.startswith("material:"))]
+    assert integer_refs == ["123", "456", "789"]

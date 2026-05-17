@@ -2115,11 +2115,18 @@ class handler(BaseHTTPRequestHandler):
                 locked_chunk_ids = []
             locked_chunk_ids = [str(cid) for cid in locked_chunk_ids if cid is not None]
 
+            # PageIndex refs ("material:N") are not vector chunk IDs and would just
+            # return empty rows from _fetch_chunk_context. Skip them.
+            integer_locked_chunk_ids = [
+                cid for cid in locked_chunk_ids
+                if not cid.startswith("material:")
+            ]
+
             locked_chunks = []
-            if locked_chunk_ids:
-                hydrated_locked_chunks = _fetch_chunk_context(conn, locked_chunk_ids)
+            if integer_locked_chunk_ids and _fetch_chunk_context:
+                hydrated_locked_chunks = _fetch_chunk_context(conn, integer_locked_chunk_ids)
                 by_id = {str(c.get('id')): c for c in hydrated_locked_chunks}
-                ordered_hydrated = [by_id[cid] for cid in locked_chunk_ids if cid in by_id]
+                ordered_hydrated = [by_id[cid] for cid in integer_locked_chunk_ids if cid in by_id]
                 for idx, chunk in enumerate(ordered_hydrated):
                     locked_chunks.append(
                         {
