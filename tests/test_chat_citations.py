@@ -102,3 +102,21 @@ def test_partition_locked_chunk_ids_drops_material_refs():
     raw = ["123", "material:624", "456", "material:625", "789"]
     integer_refs = [r for r in raw if not (isinstance(r, str) and r.startswith("material:"))]
     assert integer_refs == ["123", "456", "789"]
+
+
+def test_extract_known_chunk_ids_filters_material_refs():
+    """_extract_known_chunk_ids must drop 'material:N' refs that are not in the hydrated chunk set."""
+    import importlib
+    from unittest.mock import MagicMock
+    sys.modules.setdefault('requests', MagicMock())
+    import tools
+    importlib.reload(tools)
+
+    messages = [
+        {"retrieved_chunk_ids": ["123", "material:624", "456"]},
+        {"retrieved_chunk_ids": ["material:625", "789"]},
+    ]
+    hydrated_chunk_ids = {"123", "456", "789"}
+    result = tools._extract_known_chunk_ids(messages, hydrated_chunk_ids)
+    assert result == ["123", "456", "789"]
+    assert all(not r.startswith("material:") for r in result)

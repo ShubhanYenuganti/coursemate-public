@@ -240,7 +240,14 @@ def resolve_references_llm(
             except json.JSONDecodeError:
                 refs = []
         if isinstance(refs, list):
-            all_refs.extend(str(cid) for cid in refs)
+            # PageIndex stores "material:N" tokens in retrieved_chunk_ids that aren't
+            # vector chunk IDs. Skip them so _fetch_chunk_context isn't asked to
+            # hydrate strings it can't resolve, and so prior_grounding_refs stays
+            # a clean list of integer chunk IDs.
+            all_refs.extend(
+                str(cid) for cid in refs
+                if not (isinstance(cid, str) and cid.startswith("material:"))
+            )
     all_refs = _dedupe_preserve_order(all_refs)[:30]
     hydrated = _fetch_chunk_context(conn, all_refs) if (_fetch_chunk_context and all_refs) else []
     hydrated_ids = {str(c.get("id")) for c in hydrated}
