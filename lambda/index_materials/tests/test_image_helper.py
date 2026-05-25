@@ -16,6 +16,7 @@ sys.modules.setdefault(
 
 from unittest.mock import MagicMock, patch
 
+from builders.base import IndexNode, MaterialIndex
 from image_helper import (
     attach_visual_nodes,
     describe_page_visuals,
@@ -88,9 +89,6 @@ def test_describe_page_visuals_returns_empty_on_api_error():
     with patch("image_helper.describe_visuals", side_effect=requests.RequestException("timeout")):
         result = describe_page_visuals(b"png", "sk-test")
     assert result == {"visual_summary": "", "detected_figures": [], "detected_tables": []}
-
-
-from builders.base import IndexNode, MaterialIndex
 
 
 def test_make_visual_nodes_creates_figure_nodes():
@@ -201,3 +199,24 @@ def test_attach_visual_nodes_empty_page_visuals_is_noop():
     mi = MaterialIndex(title="Paper", doc_type="reading", page_count=2, nodes=[root])
     attach_visual_nodes(mi, {})
     assert root.nodes == []
+
+
+def test_attach_visual_nodes_uses_evidence_pages_when_nonempty():
+    """evidence_pages=[5] on a node spanning pages 2-8 should match only page 5."""
+    fig_node = IndexNode(
+        node_id="node_fig_evid_5_5_aaaa",
+        title="Figure on page 5",
+        start_page=5, end_page=5,
+        node_type="figure",
+        summary="Some figure",
+    )
+    section = IndexNode(
+        node_id="node_results", title="Results",
+        start_page=2, end_page=8, node_type="section",
+        evidence_pages=[5],
+    )
+    mi = MaterialIndex(title="Paper", doc_type="reading", page_count=10, nodes=[section])
+
+    attach_visual_nodes(mi, {5: [fig_node]})
+
+    assert fig_node in section.nodes

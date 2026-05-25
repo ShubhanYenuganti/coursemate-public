@@ -3,7 +3,7 @@ import json
 import logging
 import re
 
-from builders.base import IndexNode, stable_node_id
+from builders.base import IndexNode, MaterialIndex, stable_node_id
 from llm_client import describe_visuals
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ def make_visual_nodes(page_number: int, visuals: dict) -> list[IndexNode]:
     return nodes
 
 
-def attach_visual_nodes(material_index, page_visuals: dict) -> None:
+def attach_visual_nodes(material_index: "MaterialIndex", page_visuals: dict[int, list[IndexNode]]) -> None:
     """Attach visual child nodes to the deepest matching section in the tree.
     Each page's nodes are attached exactly once (depth-first, leaf wins)."""
     if not page_visuals:
