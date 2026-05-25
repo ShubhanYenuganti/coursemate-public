@@ -167,3 +167,38 @@ def extract_tags(prompt: str, api_key: str) -> list[str]:
 
 def extract_keywords(prompt: str, api_key: str) -> list[str]:
     return extract_tags(prompt, api_key)
+
+
+def describe_visuals(png_b64: str, api_key: str) -> str:
+    """Send a page image to gpt-4o-mini and return the raw JSON string response."""
+    prompt_text = (
+        "Analyze this course material page. "
+        "Return ONLY a JSON object with these exact fields:\n"
+        "{\n"
+        '  "visual_summary": "<description of all visual content in at most 120 tokens>",\n'
+        '  "detected_figures": [{"label": "<Figure N or short label>", "description": "<what it shows>"}],\n'
+        '  "detected_tables": [{"label": "<Table N or short label>", "description": "<what it contains>"}]\n'
+        "}\n"
+        "Use empty arrays when there are no figures or tables. Output JSON only — no other text."
+    )
+    resp = requests.post(
+        _URL,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": _MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt_text},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{png_b64}"}},
+                    ],
+                }
+            ],
+            "max_tokens": 400,
+            "temperature": 0.0,
+        },
+        timeout=_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"].strip()

@@ -6,6 +6,7 @@ from llm_client import (
     build_doc_summary_prompt,
     build_node_keywords_prompt,
     build_node_summary_prompt,
+    describe_visuals,
     extract_tags,
     summarize,
 )
@@ -71,3 +72,23 @@ def test_extract_tags_returns_empty_on_bad_json():
     with patch("llm_client.requests.post", return_value=mock_resp):
         tags = extract_tags("prompt", "sk-test")
     assert tags == []
+
+
+def test_describe_visuals_sends_multimodal_message():
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": '{"visual_summary": "A diagram", "detected_figures": [], "detected_tables": []}'}}]
+    }
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("llm_client.requests.post", return_value=mock_resp) as mock_post:
+        result = describe_visuals("abc123base64encoded", "sk-test")
+
+    assert "visual_summary" in result
+    call_json = mock_post.call_args[1]["json"]
+    assert call_json["model"] == "gpt-4o-mini"
+    content = call_json["messages"][0]["content"]
+    assert any(c.get("type") == "image_url" for c in content)
+    assert any(c.get("type") == "text" for c in content)
+    image_part = next(c for c in content if c.get("type") == "image_url")
+    assert "abc123base64encoded" in image_part["image_url"]["url"]
