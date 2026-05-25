@@ -1,15 +1,10 @@
 import re
-import uuid
 
-from builders.base import IndexNode, MaterialIndex
+from builders.base import IndexNode, MaterialIndex, stable_node_id
 from builders.problems import _split_problems, _find_page, _PAGE_SEP_RE
 
 _H1_RE = re.compile(r'^#\s+(.+)$', re.MULTILINE)
 _ANSWER_KEY_RE = re.compile(r'\[ANSWER_KEY\]', re.IGNORECASE)
-
-
-def make_id() -> str:
-    return uuid.uuid4().hex[:8]
 
 
 def build_from_markdown(full_md: str, doc_type: str, page_count: int) -> MaterialIndex:
@@ -22,11 +17,12 @@ def build_from_markdown(full_md: str, doc_type: str, page_count: int) -> Materia
             doc_type=doc_type,
             page_count=page_count,
             nodes=[IndexNode(
-                node_id=make_id(),
+                node_id=stable_node_id("Full Assessment", 1, page_count, []),
                 title="Full Assessment",
                 start_page=1,
                 end_page=page_count,
                 nodes=[],
+                parent_path=[],
             )],
         )
 
@@ -37,11 +33,12 @@ def build_from_markdown(full_md: str, doc_type: str, page_count: int) -> Materia
         is_answer_key = bool(_ANSWER_KEY_RE.search(text))
         title = f"Answer Key – Question {num}" if is_answer_key else f"Question {num}"
         nodes.append(IndexNode(
-            node_id=make_id(),
+            node_id=stable_node_id(title, start_page, start_page, []),
             title=title,
             start_page=start_page,
             end_page=start_page,
             nodes=[],
+            parent_path=[],
         ))
 
     return MaterialIndex(

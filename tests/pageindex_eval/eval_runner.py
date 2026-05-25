@@ -86,10 +86,10 @@ def _latency_percentiles(values: list[int]) -> dict:
 def run_vector_rag(conn, question: str, course_id: int, material_ids: list[int]) -> dict:
     t0 = time.time()
     try:
-        from rag import retrieve_context
+        from rag import retrieve_chunks
         from llm import synthesize
 
-        chunks = retrieve_context(conn, question, material_ids=material_ids)
+        chunks = retrieve_chunks(conn, question, material_ids)
         answer, _, _, _, _, _, _ = synthesize(
             conn=conn,
             user_id=0,
@@ -136,7 +136,7 @@ def run_pageindex_rag(
         )
         for trace in tool_trace:
             if trace.get("tool") == "get_page_content":
-                from services.query.pageindex_retrieval import _parse_pages
+                from pageindex_retrieval import _parse_pages
 
                 pages_spec = trace.get("args", {}).get("pages", "")
                 fetched_pages.extend(_parse_pages(pages_spec))

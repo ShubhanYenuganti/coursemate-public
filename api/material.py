@@ -668,16 +668,15 @@ class handler(BaseHTTPRequestHandler):
             cursor.close()
 
         if file_type == 'application/pdf':
-            state_machine_arn = os.environ.get('STATE_MACHINE_ARN')
-            if state_machine_arn:
-                try:
-                    sfn = boto3.client('stepfunctions', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
-                    sfn.start_execution(
-                        stateMachineArn=state_machine_arn,
-                        input=json.dumps({'s3_key': s3_key, 'cursor': 0}),
-                    )
-                except Exception as e:
-                    print(f"[material] Failed to start SFN execution for {s3_key}: {e}")
+            sfn = boto3.client('stepfunctions', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
+            sfn_input = json.dumps({'s3_key': s3_key, 'cursor': 0})
+            for arn_var in ('STATE_MACHINE_ARN', 'INDEX_STATE_MACHINE_ARN'):
+                arn = os.environ.get(arn_var)
+                if arn:
+                    try:
+                        sfn.start_execution(stateMachineArn=arn, input=sfn_input)
+                    except Exception as e:
+                        print(f"[material] Failed to start {arn_var} for {s3_key}: {e}")
 
         send_json(self, 201, {"material": material})
 

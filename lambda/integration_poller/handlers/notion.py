@@ -90,7 +90,7 @@ def _list_all_database_pages(database_id: str, token: str) -> list[dict]:
         if start_cursor:
             body["start_cursor"] = start_cursor
         try:
-            data = _notion_post(f"databases/{database_id}/query", token, body)
+            data = _notion_post(f"data_sources/{database_id}/query", token, body)
         except Exception as exc:
             print(f"[notion_handler] _list_all_database_pages error: {exc}")
             break

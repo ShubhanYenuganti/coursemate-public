@@ -47,3 +47,10 @@ def test_build_from_markdown_no_problems_single_node():
     mi = build_from_markdown(md, doc_type="hw_instruction", page_count=2)
     assert len(mi.nodes) == 1
     assert mi.nodes[0].end_page == 2
+
+
+def test_problems_builder_ids_are_stable():
+    md = "HW 3\n\nProblem 1\n(a) First.\n(b) Second.\n\nProblem 2\nProve convergence."
+    a = build_from_markdown(md, doc_type="hw_instruction", page_count=3).to_dict()
+    b = build_from_markdown(md, doc_type="hw_instruction", page_count=3).to_dict()
+    assert a == b

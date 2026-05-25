@@ -31,3 +31,10 @@ def test_question_title_format():
     titles = [n.title for n in mi.nodes]
     assert any("Question 1" in t for t in titles)
     assert any("Question 2" in t for t in titles)
+
+
+def test_assessment_builder_ids_are_stable():
+    md = "Problem 1\nFirst question.\n\nProblem 2\n[ANSWER_KEY]\nSecond question."
+    a = build_from_markdown(md, doc_type="exam", page_count=3).to_dict()
+    b = build_from_markdown(md, doc_type="exam", page_count=3).to_dict()
+    assert a == b

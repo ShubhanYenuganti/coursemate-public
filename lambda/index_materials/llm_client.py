@@ -78,6 +78,15 @@ def build_node_summary_prompt(doc_type: str, section_text: str) -> str:
     return f"{system_instruction}\n\nContent:\n{section_text[:2000]}"
 
 
+def build_node_keywords_prompt(doc_type: str, section_text: str) -> str:
+    return (
+        f"Extract 5 to 15 retrieval keywords for this {doc_type} section. "
+        "Return only a JSON array of short strings. Include methods, datasets, "
+        "metrics, named entities, formulas, and key concepts when present.\n\n"
+        f"{section_text[:6000]}"
+    )
+
+
 def build_doc_summary_prompt(title: str, doc_type: str, node_titles: list[str]) -> str:
     sections = ", ".join(node_titles[:15])
     return (
@@ -154,3 +163,7 @@ def extract_tags(prompt: str, api_key: str) -> list[str]:
         return [str(t).strip().lower() for t in tags if t]
     except Exception:
         return []
+
+
+def extract_keywords(prompt: str, api_key: str) -> list[str]:
+    return extract_tags(prompt, api_key)

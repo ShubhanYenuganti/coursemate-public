@@ -2,7 +2,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'api'))
 
 from unittest.mock import MagicMock
-from services.query.pageindex_retrieval import _parse_pages, get_page_content, get_course_routing_index, get_material_relations
+from pageindex_retrieval import _parse_pages, get_page_content, get_course_routing_index, get_material_relations
 
 
 def test_parse_pages_range():

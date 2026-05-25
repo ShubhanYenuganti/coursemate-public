@@ -20,6 +20,11 @@
           "Variable": "$.result.body.status",
           "StringEquals": "done",
           "Next": "Done"
+        },
+        {
+          "Variable": "$.result.body.status",
+          "StringEquals": "failed",
+          "Next": "Failed"
         }
       ],
       "Default": "PrepareNext"
@@ -34,6 +39,11 @@
     },
     "Done": {
       "Type": "Succeed"
+    },
+    "Failed": {
+      "Type": "Fail",
+      "Error": "IndexFailed",
+      "Cause": "Lambda returned status=failed"
     }
   }
 }

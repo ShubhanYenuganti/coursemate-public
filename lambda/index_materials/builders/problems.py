@@ -1,7 +1,6 @@
 import re
-import uuid
 
-from builders.base import IndexNode, MaterialIndex
+from builders.base import IndexNode, MaterialIndex, stable_node_id
 
 _PROBLEM_RE = re.compile(
     r'^(?:Problem|Q\.?|Question)\s+(\d+)',
@@ -9,10 +8,6 @@ _PROBLEM_RE = re.compile(
 )
 _SUBPART_RE = re.compile(r'^\(([a-z])\)', re.MULTILINE)
 _PAGE_SEP_RE = re.compile(r'^---\s*$', re.MULTILINE)
-
-
-def make_id() -> str:
-    return uuid.uuid4().hex[:8]
 
 
 def _find_page(pos: int, page_offsets: list[int]) -> int:
@@ -59,10 +54,11 @@ def build_from_markdown(full_md: str, doc_type: str, page_count: int) -> Materia
             doc_type=doc_type,
             page_count=page_count,
             nodes=[IndexNode(
-                node_id=make_id(),
+                node_id=stable_node_id("Full Document", 1, page_count, []),
                 title="Full Document",
                 start_page=1,
                 end_page=page_count,
+                parent_path=[],
             )],
         )
 
@@ -72,21 +68,25 @@ def build_from_markdown(full_md: str, doc_type: str, page_count: int) -> Materia
         start_page = _find_page(text_start if text_start >= 0 else 0, page_offsets)
         subparts = _split_subparts(text)
         children = []
+        parent_title = f"Problem {num}"
         for letter, sub_text in subparts:
             sub_start_pos = full_md.find(sub_text)
             sub_page = _find_page(sub_start_pos if sub_start_pos >= 0 else text_start, page_offsets)
+            child_title = f"Problem {num}({letter})"
             children.append(IndexNode(
-                node_id=make_id(),
-                title=f"Problem {num}({letter})",
+                node_id=stable_node_id(child_title, sub_page, sub_page, [parent_title]),
+                title=child_title,
                 start_page=sub_page,
                 end_page=sub_page,
+                parent_path=[parent_title],
             ))
         nodes.append(IndexNode(
-            node_id=make_id(),
-            title=f"Problem {num}",
+            node_id=stable_node_id(parent_title, start_page, start_page, []),
+            title=parent_title,
             start_page=start_page,
             end_page=start_page,
             nodes=children,
+            parent_path=[],
         ))
 
     return MaterialIndex(

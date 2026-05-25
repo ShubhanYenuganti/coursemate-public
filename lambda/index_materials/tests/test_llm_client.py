@@ -2,7 +2,13 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from unittest.mock import patch, MagicMock
-from llm_client import build_node_summary_prompt, build_doc_summary_prompt, summarize, extract_tags
+from llm_client import (
+    build_doc_summary_prompt,
+    build_node_keywords_prompt,
+    build_node_summary_prompt,
+    extract_tags,
+    summarize,
+)
 
 
 def test_node_summary_prompt_for_slides():
@@ -19,6 +25,12 @@ def test_doc_summary_prompt_includes_nodes():
     prompt = build_doc_summary_prompt("Lecture 5", "lecture_slide", ["Intro", "Backprop", "Conclusion"])
     assert "Lecture 5" in prompt
     assert "Intro" in prompt
+
+
+def test_build_node_keywords_prompt_requests_json_array():
+    prompt = build_node_keywords_prompt("reading", "Transformer attention datasets")
+    assert "JSON array" in prompt
+    assert "Transformer attention datasets" in prompt
 
 
 def test_summarize_calls_openai_and_returns_text():

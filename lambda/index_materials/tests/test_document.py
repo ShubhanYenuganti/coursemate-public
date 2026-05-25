@@ -57,3 +57,43 @@ def test_build_large_section_split_into_chunks():
     mi = build_from_pages(pages, doc_type="reading", title="Big Doc", headings_override=[(0, "Big Section")])
     assert len(mi.nodes) == 1
     assert len(mi.nodes[0].nodes) > 0
+
+
+def test_long_section_creates_child_page_windows():
+    pages = [f"Page {i}" for i in range(1, 8)]
+    pages[0] = "## Long Section\nPage 1"
+
+    mi = build_from_pages(
+        pages,
+        doc_type="reading",
+        title="Paper",
+        headings_override=[(0, "Long Section")],
+    )
+
+    root = mi.nodes[0]
+    assert root.title == "Long Section"
+    assert root.nodes
+    assert all(child.end_page - child.start_page <= 2 for child in root.nodes)
+
+
+def test_document_builder_creates_caption_nodes():
+    pages = [
+        (
+            "## Results\nFigure 1: Accuracy by model.\n"
+            "Table 1: Dataset statistics.\nEquation 1: y = mx + b."
+        ),
+    ]
+
+    mi = build_from_pages(pages, doc_type="reading", title="Paper")
+    child_types = [child.node_type for node in mi.nodes for child in node.nodes]
+
+    assert "figure" in child_types
+    assert "table" in child_types
+    assert "equation" in child_types
+
+
+def test_document_builder_ids_are_stable():
+    pages = ["## Intro\nText", "## Methods\nMore text"]
+    a = build_from_pages(pages, doc_type="reading", title="Paper").to_dict()
+    b = build_from_pages(pages, doc_type="reading", title="Paper").to_dict()
+    assert a == b

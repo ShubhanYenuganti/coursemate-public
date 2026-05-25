@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import tempfile
 
 import asyncpg
@@ -17,7 +18,9 @@ from db import (
 from llm_client import (
     build_doc_summary_prompt,
     build_metadata_tags_prompt,
+    build_node_keywords_prompt,
     build_node_summary_prompt,
+    extract_keywords,
     extract_tags,
     get_api_key,
     summarize,
@@ -26,6 +29,15 @@ from relation_builder import build_course_relations
 
 logger = logging.getLogger(__name__)
 SUMMARY_CONCURRENCY = 4
+_KEYWORD_STOPWORDS = {
+    "and",
+    "for",
+    "from",
+    "into",
+    "the",
+    "this",
+    "with",
+}
 
 
 def _has_images(page: fitz.Page) -> bool:
@@ -33,19 +45,33 @@ def _has_images(page: fitz.Page) -> bool:
 
 
 def _resolve_section_names(page_rows: list[dict], material_index) -> list[dict]:
-    """Walk the IndexNode tree and stamp each page row with its nearest section title."""
+    """Stamp each page row with nearest section title and full breadcrumb path."""
 
-    def _walk(nodes, page_num: int) -> str | None:
+    routing_node_types = {"section", "slide", "problem", "solution", "question"}
+
+    def _walk(nodes, page_num: int, ancestors: list[str] | None = None) -> tuple[str, list[str]] | None:
+        ancestors = ancestors or []
         for node in nodes:
             if node.start_page <= page_num <= node.end_page:
-                child_hit = _walk(node.nodes, page_num)
-                return child_hit if child_hit else node.title
+                node_type = getattr(node, "node_type", "section")
+                if node_type in routing_node_types:
+                    path = (node.parent_path or ancestors) + [node.title]
+                    current = (node.title, path)
+                else:
+                    path = node.parent_path or ancestors
+                    current = (path[-1], path) if path else None
+                child_hit = _walk(node.nodes, page_num, path)
+                return child_hit if child_hit else current
         return None
 
     result = []
     for row in page_rows:
         section = _walk(material_index.nodes, row["page_number"])
-        result.append({**row, "section_name": section})
+        if section:
+            section_name, section_path = section
+        else:
+            section_name, section_path = None, []
+        result.append({**row, "section_name": section_name, "section_path": section_path})
     return result
 
 
@@ -68,6 +94,20 @@ def _extract_pages(pdf_path: str) -> list[dict]:
         doc.close()
 
 
+def _node_page_text(node, page_rows: dict) -> str:
+    page_texts = []
+    for page_num in range(node.start_page, node.end_page + 1):
+        row = page_rows.get(page_num)
+        if row and row["text_content"]:
+            page_texts.append(row["text_content"])
+    return "\n\n".join(page_texts)
+
+
+def _fallback_node_keywords(title: str) -> list[str]:
+    words = re.findall(r"[A-Za-z][A-Za-z0-9_-]*", title.lower())
+    return [word for word in words if word not in _KEYWORD_STOPWORDS][:15]
+
+
 async def _summarize_node(
     node,
     page_rows: dict,
@@ -76,12 +116,7 @@ async def _summarize_node(
     sem: asyncio.Semaphore,
 ) -> None:
     async with sem:
-        page_texts = []
-        for page_num in range(node.start_page, node.end_page + 1):
-            row = page_rows.get(page_num)
-            if row and row["text_content"]:
-                page_texts.append(row["text_content"])
-        combined = "\n\n".join(page_texts)
+        combined = _node_page_text(node, page_rows)
         if not combined.strip():
             node.summary = ""
             return
@@ -93,6 +128,25 @@ async def _summarize_node(
             node.summary = ""
 
 
+async def _assign_node_keywords(
+    node,
+    page_rows: dict,
+    doc_type: str,
+    api_key: str,
+    sem: asyncio.Semaphore,
+) -> None:
+    async with sem:
+        combined = _node_page_text(node, page_rows).strip()
+        section_text = combined or node.title
+        prompt = build_node_keywords_prompt(doc_type, section_text)
+        try:
+            keywords = await asyncio.to_thread(extract_keywords, prompt, api_key)
+        except Exception as exc:
+            logger.warning("Node keyword extraction failed: %s", exc)
+            keywords = []
+        node.keywords = keywords[:15] if keywords else _fallback_node_keywords(node.title)
+
+
 async def _summarize_all_nodes(nodes, page_rows: dict, doc_type: str, api_key: str) -> None:
     sem = asyncio.Semaphore(SUMMARY_CONCURRENCY)
     tasks = []
@@ -100,6 +154,20 @@ async def _summarize_all_nodes(nodes, page_rows: dict, doc_type: str, api_key: s
     def _collect(current_nodes):
         for node in current_nodes:
             tasks.append(_summarize_node(node, page_rows, doc_type, api_key, sem))
+            _collect(node.nodes)
+
+    _collect(nodes)
+    if tasks:
+        await asyncio.gather(*tasks)
+
+
+async def _assign_keywords_all_nodes(nodes, page_rows: dict, doc_type: str, api_key: str) -> None:
+    sem = asyncio.Semaphore(SUMMARY_CONCURRENCY)
+    tasks = []
+
+    def _collect(current_nodes):
+        for node in current_nodes:
+            tasks.append(_assign_node_keywords(node, page_rows, doc_type, api_key, sem))
             _collect(node.nodes)
 
     _collect(nodes)
@@ -136,6 +204,7 @@ async def index_document(
 
         api_key = get_api_key()
         await _summarize_all_nodes(material_index.nodes, page_rows, doc_type, api_key)
+        await _assign_keywords_all_nodes(material_index.nodes, page_rows, doc_type, api_key)
 
         node_titles = [node.title for node in material_index.nodes]
         doc_summary_prompt = build_doc_summary_prompt(material_title, doc_type, node_titles)

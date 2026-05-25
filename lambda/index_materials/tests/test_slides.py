@@ -63,3 +63,27 @@ def test_build_section_indices_override():
     assert len(mi.nodes) == 2
     assert mi.nodes[0].start_page == 1
     assert mi.nodes[1].start_page == 3
+
+
+def test_slides_builder_ids_are_stable():
+    pages = [
+        "# Section 1",
+        "## Content A",
+        "# Section 2",
+        "## Content B",
+    ]
+    a = build_from_pages(
+        pages,
+        doc_type="lecture_slide",
+        page_count=4,
+        lecture_title="Lecture",
+        section_indices_override=[0, 2],
+    ).to_dict()
+    b = build_from_pages(
+        pages,
+        doc_type="lecture_slide",
+        page_count=4,
+        lecture_title="Lecture",
+        section_indices_override=[0, 2],
+    ).to_dict()
+    assert a == b

@@ -1,14 +1,9 @@
 import re
-import uuid
 
-from builders.base import IndexNode, MaterialIndex
+from builders.base import IndexNode, MaterialIndex, stable_node_id
 
 _H1_RE = re.compile(r'^#\s+(.+)$', re.MULTILINE)
 _BODY_LINE_RE = re.compile(r'^(?!#|\s*$).+$', re.MULTILINE)
-
-
-def make_id() -> str:
-    return uuid.uuid4().hex[:8]
 
 
 def _is_section_title_slide(md: str) -> bool:
@@ -44,11 +39,13 @@ def build_from_pages(
         nodes = []
         for i, md in enumerate(pages):
             if md.strip():
+                title = _extract_h1(md, f"Slide {i + 1}")
                 nodes.append(IndexNode(
-                    node_id=make_id(),
-                    title=_extract_h1(md, f"Slide {i + 1}"),
+                    node_id=stable_node_id(title, i + 1, i + 1, []),
+                    title=title,
                     start_page=i + 1,
                     end_page=i + 1,
+                    parent_path=[],
                 ))
         return MaterialIndex(title=lecture_title, doc_type=doc_type, page_count=page_count, nodes=nodes)
 
@@ -60,18 +57,21 @@ def build_from_pages(
         children = []
         for p_i in range(sec_i + 1, sec_end_i + 1):
             if p_i < len(pages) and pages[p_i].strip():
+                child_title = _extract_h1(pages[p_i], f"Slide {p_i + 1}")
                 children.append(IndexNode(
-                    node_id=make_id(),
-                    title=_extract_h1(pages[p_i], f"Slide {p_i + 1}"),
+                    node_id=stable_node_id(child_title, p_i + 1, p_i + 1, [sec_title]),
+                    title=child_title,
                     start_page=p_i + 1,
                     end_page=p_i + 1,
+                    parent_path=[sec_title],
                 ))
         nodes.append(IndexNode(
-            node_id=make_id(),
+            node_id=stable_node_id(sec_title, sec_i + 1, sec_end_i + 1, []),
             title=sec_title,
             start_page=sec_i + 1,
             end_page=sec_end_i + 1,
             nodes=children,
+            parent_path=[],
         ))
 
     return MaterialIndex(title=lecture_title, doc_type=doc_type, page_count=page_count, nodes=nodes)

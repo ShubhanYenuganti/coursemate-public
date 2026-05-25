@@ -44,23 +44,49 @@ def mark_job(material_id: int, status: str, error: str = None) -> None:
 
 
 def store_page_texts(conn, material_id: int, page_rows: list[dict]) -> None:
+    def _execute_with_savepoint(sql: str, params: tuple) -> None:
+        transaction = getattr(conn, "transaction", None)
+        if callable(transaction):
+            with transaction():
+                conn.execute(sql, params)
+        else:
+            conn.execute(sql, params)
+
     for row in page_rows:
-        conn.execute(
-            """INSERT INTO material_page_text
-                   (material_id, page_number, text_content, has_images, section_name)
-               VALUES (%s, %s, %s, %s, %s)
-               ON CONFLICT (material_id, page_number) DO UPDATE
-               SET text_content = EXCLUDED.text_content,
-                   has_images   = EXCLUDED.has_images,
-                   section_name = EXCLUDED.section_name""",
-            (
-                material_id,
-                row["page_number"],
-                row.get("text_content"),
-                row.get("has_images", False),
-                row.get("section_name"),
-            ),
+        params = (
+            material_id,
+            row["page_number"],
+            row.get("text_content"),
+            row.get("has_images", False),
+            row.get("section_name"),
+            json.dumps(row.get("section_path", [])),
         )
+        try:
+            _execute_with_savepoint(
+                """INSERT INTO material_page_text
+                       (material_id, page_number, text_content, has_images, section_name,
+                        section_path)
+                   VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                   ON CONFLICT (material_id, page_number) DO UPDATE
+                   SET text_content = EXCLUDED.text_content,
+                       has_images   = EXCLUDED.has_images,
+                       section_name = EXCLUDED.section_name,
+                       section_path = EXCLUDED.section_path""",
+                params,
+            )
+        except Exception as exc:
+            if getattr(exc, "sqlstate", None) != "42703" and exc.__class__.__name__ != "UndefinedColumn":
+                raise
+            conn.execute(
+                """INSERT INTO material_page_text
+                       (material_id, page_number, text_content, has_images, section_name)
+                   VALUES (%s, %s, %s, %s, %s)
+                   ON CONFLICT (material_id, page_number) DO UPDATE
+                   SET text_content = EXCLUDED.text_content,
+                       has_images   = EXCLUDED.has_images,
+                       section_name = EXCLUDED.section_name""",
+                params[:-1],
+            )
 
 
 def store_page_index(conn, material_id: int, index_dict: dict) -> None:

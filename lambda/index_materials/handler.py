@@ -17,7 +17,7 @@ STATE_MACHINE_ARN = os.environ["INDEX_STATE_MACHINE_ARN"]
 def _resolve_material(s3_key: str):
     with get_db() as conn:
         return conn.execute(
-            "SELECT id, course_id, file_type, doc_type, title FROM materials WHERE file_url LIKE %s",
+            "SELECT id, course_id, file_type, doc_type, name FROM materials WHERE file_url LIKE %s",
             (f"%{s3_key}%",),
         ).fetchone()
 
@@ -44,7 +44,7 @@ def lambda_handler(event, context):
     except Exception as exc:
         if material_id:
             mark_job(material_id, "failed", error=str(exc))
-        return {"status": "failed", "s3_key": s3_key, "error": str(exc)}
+        return {"status": "failed", "s3_key": s3_key, "cursor": 0, "error": str(exc)}
 
 
 def _worker(event: dict, context, row) -> dict:
@@ -56,7 +56,7 @@ def _worker(event: dict, context, row) -> dict:
     course_id = int(row["course_id"]) if row["course_id"] else None
     file_type = row["file_type"]
     doc_type = row["doc_type"] or "general"
-    material_title = row.get("title") or ""
+    material_title = row.get("name") or ""
 
     if file_type != "application/pdf":
         mark_job(material_id, "skipped", error=f"Non-PDF not supported: {file_type!r}")
