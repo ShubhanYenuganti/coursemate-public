@@ -89,6 +89,26 @@ def store_page_texts(conn, material_id: int, page_rows: list[dict]) -> None:
             )
 
 
+def store_page_visuals(conn, material_id: int, page_number: int, visuals: dict) -> None:
+    """Upsert one row into material_page_visuals."""
+    conn.execute(
+        """INSERT INTO material_page_visuals
+               (material_id, page_number, visual_summary, detected_figures, detected_tables)
+           VALUES (%s, %s, %s, %s::jsonb, %s::jsonb)
+           ON CONFLICT (material_id, page_number) DO UPDATE
+           SET visual_summary    = EXCLUDED.visual_summary,
+               detected_figures  = EXCLUDED.detected_figures,
+               detected_tables   = EXCLUDED.detected_tables""",
+        (
+            material_id,
+            page_number,
+            visuals.get("visual_summary") or "",
+            json.dumps(visuals.get("detected_figures") or []),
+            json.dumps(visuals.get("detected_tables") or []),
+        ),
+    )
+
+
 def store_page_index(conn, material_id: int, index_dict: dict) -> None:
     conn.execute(
         """INSERT INTO material_page_index (material_id, doc_type, index_json, page_count)
