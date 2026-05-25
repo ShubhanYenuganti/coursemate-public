@@ -1,6 +1,6 @@
 import re
 
-from builders.base import IndexNode, MaterialIndex, stable_node_id
+from builders.base import IndexNode, MaterialIndex, keywords_from_text, stable_node_id, summarize_text
 
 _PROBLEM_RE = re.compile(
     r'^(?:Problem|Q\.?|Question)\s+(\d+)',
@@ -58,7 +58,12 @@ def build_from_markdown(full_md: str, doc_type: str, page_count: int) -> Materia
                 title="Full Document",
                 start_page=1,
                 end_page=page_count,
+                summary=summarize_text(full_md),
+                node_type="document",
                 parent_path=[],
+                keywords=keywords_from_text(full_md),
+                source="fallback_full_document",
+                confidence=0.6,
             )],
         )
 
@@ -78,15 +83,25 @@ def build_from_markdown(full_md: str, doc_type: str, page_count: int) -> Materia
                 title=child_title,
                 start_page=sub_page,
                 end_page=sub_page,
+                summary=summarize_text(sub_text),
+                node_type="subpart",
                 parent_path=[parent_title],
+                keywords=keywords_from_text(f"{child_title} {sub_text}"),
+                source="regex",
+                confidence=0.8,
             ))
         nodes.append(IndexNode(
             node_id=stable_node_id(parent_title, start_page, start_page, []),
             title=parent_title,
             start_page=start_page,
             end_page=start_page,
+            summary=summarize_text(text),
             nodes=children,
+            node_type="problem",
             parent_path=[],
+            keywords=keywords_from_text(f"{parent_title} {text}"),
+            source="regex",
+            confidence=0.8,
         ))
 
     return MaterialIndex(

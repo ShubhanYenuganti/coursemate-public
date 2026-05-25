@@ -168,3 +168,22 @@ def test_pageindex_prompt_documents_citation_numbering():
     assert "get_page_content" in text
     assert ("order" in text and "call" in text) or "nth call" in text, \
         "Prompt must instruct agent to use call-order for citation numbers"
+
+
+def test_pageindex_prompt_prefers_high_recall_fetching():
+    """PageIndex prompt should bias the agent toward recall over minimal fetching."""
+    from llm import PAGEINDEX_SYSTEM_PROMPT
+    text = PAGEINDEX_SYSTEM_PROMPT.lower()
+    assert "prefer recall" in text
+    assert "2-4" in text and "candidate" in text
+    assert "neighboring" in text
+    assert "get_material_structure" in text and "conceptual" in text
+
+
+def test_pageindex_prompt_requires_structure_first_for_broad_questions():
+    """Broad/conceptual PageIndex questions should require structure inspection before answering."""
+    from llm import PAGEINDEX_SYSTEM_PROMPT
+    text = PAGEINDEX_SYSTEM_PROMPT.lower()
+    assert "must call `get_material_structure" in text
+    assert "before any final answer" in text
+    assert "broad" in text and "conceptual" in text

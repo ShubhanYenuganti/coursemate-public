@@ -56,3 +56,5 @@ def test_material_index_to_dict():
     assert d["page_count"] == 10
     assert len(d["nodes"]) == 1
     assert d["nodes"][0]["nodes"][0]["title"] == "Sub"
+    assert d["retrieval_policy"]["mode"] == "structure_first"
+    assert d["retrieval_policy"]["min_candidate_pages"] == 2

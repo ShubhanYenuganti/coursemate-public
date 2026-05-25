@@ -38,3 +38,15 @@ def test_assessment_builder_ids_are_stable():
     a = build_from_markdown(md, doc_type="exam", page_count=3).to_dict()
     b = build_from_markdown(md, doc_type="exam", page_count=3).to_dict()
     assert a == b
+
+
+def test_assessment_builder_populates_summaries_keywords_and_policy():
+    md = "Problem 1\nExplain backpropagation gradients.\n\nProblem 2\n[ANSWER_KEY]\nApply chain rule."
+
+    mi = build_from_markdown(md, doc_type="exam", page_count=3)
+    d = mi.to_dict()
+
+    assert d["retrieval_policy"]["mode"] == "structure_first"
+    assert "backpropagation gradients" in mi.nodes[0].summary
+    assert "backpropagation" in mi.nodes[0].keywords
+    assert "chain" in mi.nodes[1].keywords

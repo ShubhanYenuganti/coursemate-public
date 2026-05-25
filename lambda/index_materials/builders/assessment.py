@@ -1,6 +1,6 @@
 import re
 
-from builders.base import IndexNode, MaterialIndex, stable_node_id
+from builders.base import IndexNode, MaterialIndex, keywords_from_text, stable_node_id, summarize_text
 from builders.problems import _split_problems, _find_page, _PAGE_SEP_RE
 
 _H1_RE = re.compile(r'^#\s+(.+)$', re.MULTILINE)
@@ -21,8 +21,13 @@ def build_from_markdown(full_md: str, doc_type: str, page_count: int) -> Materia
                 title="Full Assessment",
                 start_page=1,
                 end_page=page_count,
+                summary=summarize_text(full_md),
                 nodes=[],
+                node_type="assessment",
                 parent_path=[],
+                keywords=keywords_from_text(full_md),
+                source="fallback_full_assessment",
+                confidence=0.6,
             )],
         )
 
@@ -37,8 +42,13 @@ def build_from_markdown(full_md: str, doc_type: str, page_count: int) -> Materia
             title=title,
             start_page=start_page,
             end_page=start_page,
+            summary=summarize_text(text),
             nodes=[],
+            node_type="answer_key" if is_answer_key else "question",
             parent_path=[],
+            keywords=keywords_from_text(f"{title} {text}"),
+            source="regex",
+            confidence=0.8,
         ))
 
     return MaterialIndex(

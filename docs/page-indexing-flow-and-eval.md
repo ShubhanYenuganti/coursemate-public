@@ -116,16 +116,16 @@ cross-paper hard negatives for BM25-based retrieval.
 
 ```
 qasper_loader.py         reads papers → PageRecord list (one record per section/page)
-                         resolves gold_pages by substring-matching each evidence string
-                         against page text
+                         resolves gold evidence locations by substring-matching each evidence
+                         string against retrievable text
 local_index_adapter.py   groups consecutive same-section pages → IndexNodeRecord list
                          uses page text as summary, extracts keywords (words > 5 chars)
 retrievers.py            4 variants each build BM25 indexes and return RetrievalHit lists
-metrics.py               evaluate_hits() computes recall, MRR, NDCG, page_range_hit
-run_eval.py              orchestrates loader → adapter → retrievers → metrics → CSV
+metrics.py               evaluate_hits() computes recall, MRR, NDCG, evidence_location_hit
+run_eval.py              orchestrates loader → adapter → retrievers → metrics → CSV/Markdown
 ```
 
-Gold page resolution (`qasper_loader.py:42`):
+Gold evidence-location resolution:
 
 ```python
 for item in evidence:
@@ -135,9 +135,9 @@ for item in evidence:
             gold_pages.add(page.page_number)
 ```
 
-Gold pages are determined by substring matching, so evidence strings must appear verbatim in
-a page's text. Queries with `gold_pages = {}` are skipped by `evaluate_hits` (returns all
-zeros) and count against the answerability_coverage metric.
+Gold evidence locations are determined by substring matching, so evidence strings must appear
+verbatim in the retrievable text. Queries with `gold_pages = {}` are skipped by `evaluate_hits`
+(returns all zeros) and count against the answerability_coverage metric.
 
 ### Command
 
@@ -145,12 +145,37 @@ zeros) and count against the answerability_coverage metric.
 PYTHONPATH=. python3 -m experiments.rag_page_index_eval.run_eval \
   --qasper-json experiments/rag_page_index_eval/fixtures/mini_qasper.json \
   --out /tmp/mini_results.csv \
+  --summary-out /tmp/mini_summary.md \
   --k 5
 ```
 
+For a real QASPER dataset file, pass that JSON to `--qasper-json`. The real QASPER run uses
+paper text, questions, answers, and human evidence strings from the dataset. It reports
+evidence-location retrieval metrics, not PDF page accuracy, because this JSON flow does not
+carry native PDF page boundaries.
+
+To test the production LLM-routed path instead of the offline proxy retrievers, run:
+
+```bash
+PYTHONPATH=. python3 -m experiments.rag_page_index_eval.agentic_eval_runner \
+  --qasper-json /path/to/qasper-test-v0.3.json \
+  --out /tmp/qasper_agentic_results.csv \
+  --summary-out /tmp/qasper_agentic_summary.md \
+  --model gpt-4o-mini \
+  --k 5
+```
+
+`agentic_eval_runner.py` uses `QasperPageIndexAdapter` to back the production
+`run_agent_pageindex(...)` tools with QASPER papers. It scores the first five unique evidence
+locations fetched through `get_page_content` calls, preserving tool-call order. This runner
+defaults to 50 QASPER questions; pass `--limit 1451` to run the full test split.
+The adapter builds its material structure with `lambda/index_materials/builders/document.py`,
+so the agentic eval exercises the same deterministic section summaries, keywords, and
+page-window nodes used by CourseMate document indexing.
+
 ### Scores (k=5, 18 queries)
 
-| Variant | Recall@5 | MRR@5 | NDCG@5 | Page Range Hit@5 |
+| Variant | Recall@5 | MRR@5 | NDCG@5 | Evidence Location Hit@5 |
 | --- | ---: | ---: | ---: | ---: |
 | `page_bm25` | 0.917 | 0.917 | 0.902 | 0.944 |
 | `section_bm25` | 0.917 | 0.907 | 0.895 | 0.944 |
@@ -209,19 +234,19 @@ before the specific Sparse Attention section.
 ## Metrics
 
 `recall_at_k`
-: Fraction of gold evidence pages recovered by the top-k hits.
+: Fraction of gold evidence locations recovered by the top-k hits.
 
 `mrr_at_k`
-: Reciprocal rank of the first hit that overlaps a gold evidence page in the correct paper.
+: Reciprocal rank of the first hit that overlaps a gold evidence location in the correct paper.
 
 `ndcg_at_k`
-: Rank-quality score capped against the ideal number of relevant evidence pages.
+: Rank-quality score capped against the ideal number of relevant evidence locations.
 
-`page_range_hit_at_k`
-: Binary hit showing whether any top-k result overlaps a gold evidence page.
+`evidence_location_hit_at_k`
+: Binary hit showing whether any top-k result overlaps a gold evidence location.
 
 `answerability_coverage`
-: `1.0` when the query has gold evidence pages; `0.0` for examples without gold page evidence.
+: `1.0` when the query has matched gold evidence locations; `0.0` for examples without matched evidence.
 
 ## Manual Verification for Real PDFs
 

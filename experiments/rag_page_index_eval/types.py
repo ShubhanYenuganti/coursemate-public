@@ -59,5 +59,9 @@ class MetricResult:
     recall_at_k: float
     mrr_at_k: float
     ndcg_at_k: float
-    page_range_hit_at_k: float
+    evidence_location_hit_at_k: float
     answerability_coverage: float
+
+    @property
+    def page_range_hit_at_k(self) -> float:
+        return self.evidence_location_hit_at_k

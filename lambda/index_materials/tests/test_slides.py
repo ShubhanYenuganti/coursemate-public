@@ -87,3 +87,24 @@ def test_slides_builder_ids_are_stable():
         section_indices_override=[0, 2],
     ).to_dict()
     assert a == b
+
+
+def test_slides_builder_populates_summaries_keywords_and_policy():
+    pages = [
+        "# Optimization",
+        "## Gradient Descent\n\nUpdates parameters with learning rate and gradient.",
+    ]
+
+    mi = build_from_pages(
+        pages,
+        doc_type="lecture_slide",
+        page_count=2,
+        lecture_title="Lecture",
+        section_indices_override=[0],
+    )
+
+    d = mi.to_dict()
+    assert d["retrieval_policy"]["mode"] == "structure_first"
+    assert "Optimization" in mi.nodes[0].summary
+    assert "optimization" in mi.nodes[0].keywords
+    assert "gradient" in mi.nodes[0].nodes[0].keywords

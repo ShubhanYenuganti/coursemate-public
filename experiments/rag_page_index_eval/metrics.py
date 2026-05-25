@@ -19,7 +19,7 @@ def evaluate_hits(query: QueryExample, hits: list[RetrievalHit], variant: str, k
     recall = len(found_pages) / len(query.gold_pages)
 
     relevant = [_relevant(hit, query) for hit in top]
-    page_range_hit = 1.0 if any(relevant) else 0.0
+    evidence_location_hit = 1.0 if any(relevant) else 0.0
 
     mrr = 0.0
     for idx, is_rel in enumerate(relevant, start=1):
@@ -42,6 +42,6 @@ def evaluate_hits(query: QueryExample, hits: list[RetrievalHit], variant: str, k
         recall_at_k=recall,
         mrr_at_k=mrr,
         ndcg_at_k=ndcg,
-        page_range_hit_at_k=page_range_hit,
+        evidence_location_hit_at_k=evidence_location_hit,
         answerability_coverage=1.0,
     )

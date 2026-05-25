@@ -1,6 +1,6 @@
 import re
 
-from builders.base import IndexNode, MaterialIndex, stable_node_id
+from builders.base import IndexNode, MaterialIndex, keywords_from_text, stable_node_id, summarize_text
 
 _H1_RE = re.compile(r'^#\s+(.+)$', re.MULTILINE)
 _BODY_LINE_RE = re.compile(r'^(?!#|\s*$).+$', re.MULTILINE)
@@ -18,6 +18,10 @@ def _is_section_title_slide(md: str) -> bool:
 def _extract_h1(md: str, fallback: str) -> str:
     m = _H1_RE.search(md)
     return m.group(1).strip() if m else fallback
+
+
+def _span_text(pages: list[str], start_page: int, end_page: int) -> str:
+    return "\n\n".join(pages[start_page - 1:end_page])
 
 
 def build_from_pages(
@@ -45,7 +49,12 @@ def build_from_pages(
                     title=title,
                     start_page=i + 1,
                     end_page=i + 1,
+                    summary=f"{title}: {summarize_text(md)}".strip(),
+                    node_type="slide",
                     parent_path=[],
+                    keywords=keywords_from_text(f"{title} {md}"),
+                    source="slide_h1",
+                    confidence=0.8,
                 ))
         return MaterialIndex(title=lecture_title, doc_type=doc_type, page_count=page_count, nodes=nodes)
 
@@ -63,15 +72,26 @@ def build_from_pages(
                     title=child_title,
                     start_page=p_i + 1,
                     end_page=p_i + 1,
+                    summary=f"{child_title}: {summarize_text(pages[p_i])}".strip(),
+                    node_type="slide",
                     parent_path=[sec_title],
+                    keywords=keywords_from_text(f"{child_title} {pages[p_i]}"),
+                    source="slide_h1",
+                    confidence=0.8,
                 ))
+        section_text = _span_text(pages, sec_i + 1, sec_end_i + 1)
         nodes.append(IndexNode(
             node_id=stable_node_id(sec_title, sec_i + 1, sec_end_i + 1, []),
             title=sec_title,
             start_page=sec_i + 1,
             end_page=sec_end_i + 1,
+            summary=f"{sec_title}: {summarize_text(section_text)}".strip(),
             nodes=children,
+            node_type="section",
             parent_path=[],
+            keywords=keywords_from_text(f"{sec_title} {section_text}"),
+            source="slide_section",
+            confidence=0.8,
         ))
 
     return MaterialIndex(title=lecture_title, doc_type=doc_type, page_count=page_count, nodes=nodes)

@@ -54,3 +54,15 @@ def test_problems_builder_ids_are_stable():
     a = build_from_markdown(md, doc_type="hw_instruction", page_count=3).to_dict()
     b = build_from_markdown(md, doc_type="hw_instruction", page_count=3).to_dict()
     assert a == b
+
+
+def test_problems_builder_populates_summaries_keywords_and_policy():
+    md = "HW 3\n\nProblem 1\n(a) Derive gradient descent update.\n(b) Prove convergence."
+
+    mi = build_from_markdown(md, doc_type="hw_instruction", page_count=2)
+    d = mi.to_dict()
+
+    assert d["retrieval_policy"]["mode"] == "structure_first"
+    assert "Derive gradient descent update" in mi.nodes[0].summary
+    assert "gradient" in mi.nodes[0].keywords
+    assert "convergence" in mi.nodes[0].nodes[1].keywords

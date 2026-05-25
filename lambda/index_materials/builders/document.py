@@ -1,6 +1,6 @@
 import re
 
-from builders.base import IndexNode, MaterialIndex, stable_node_id
+from builders.base import IndexNode, MaterialIndex, keywords_from_text, stable_node_id, summarize_text
 
 _H1_RE = re.compile(r'^#\s+(.+)$', re.MULTILINE)
 _H2_RE = re.compile(r'^##\s+(.+)$', re.MULTILINE)
@@ -32,28 +32,38 @@ def _extract_headings(pages: list[str]) -> list[tuple[int, str]]:
     return sorted(headings, key=lambda h: h[0])
 
 
+def _span_text(pages: list[str], start_page: int, end_page: int) -> str:
+    return "\n\n".join(pages[start_page - 1:end_page])
+
+
 def _window_children(
     title: str,
     start_page: int,
     end_page: int,
     parent_path: list[str],
+    pages: list[str],
 ) -> list[IndexNode]:
     children = []
     page = start_page
     while page <= end_page:
         child_end = min(page + MAX_LEAF_PAGES - 1, end_page)
         child_title = f"{title} pages {page}-{child_end}"
-        children.append(IndexNode(
-            node_id=stable_node_id(child_title, page, child_end, parent_path + [title]),
-            title=child_title,
-            start_page=page,
-            end_page=child_end,
-            node_type="page_window",
-            parent_path=parent_path + [title],
-            source="fallback_window",
-            confidence=0.6,
-            evidence_pages=list(range(page, child_end + 1)),
-        ))
+        text = _span_text(pages, page, child_end)
+        children.append(
+            IndexNode(
+                node_id=stable_node_id(child_title, page, child_end, parent_path + [title]),
+                title=child_title,
+                start_page=page,
+                end_page=child_end,
+                summary=summarize_text(text),
+                node_type="page_window",
+                parent_path=parent_path + [title],
+                keywords=keywords_from_text(f"{child_title} {text}"),
+                source="fallback_window",
+                confidence=0.6,
+                evidence_pages=list(range(page, child_end + 1)),
+            )
+        )
         page = child_end + 1
     return children
 
@@ -74,8 +84,10 @@ def _caption_nodes(page_text: str, page_num: int, parent_path: list[str]) -> lis
             title=raw[:160],
             start_page=page_num,
             end_page=page_num,
+            summary=raw[:320],
             node_type=node_type,
             parent_path=parent_path,
+            keywords=keywords_from_text(raw),
             source="caption_regex",
             confidence=0.9,
             evidence_pages=[page_num],
@@ -112,10 +124,12 @@ def build_from_pages(
             title=title,
             start_page=1,
             end_page=page_count,
+            summary=summarize_text(_span_text(pages, 1, page_count)),
             parent_path=[],
+            keywords=keywords_from_text(f"{title} {_span_text(pages, 1, page_count)}"),
         )
         if page_count > MAX_LEAF_PAGES:
-            root.nodes.extend(_window_children(title, 1, page_count, []))
+            root.nodes.extend(_window_children(title, 1, page_count, [], pages))
         root.nodes.extend(_section_caption_nodes(pages, 1, page_count, [title]))
         return MaterialIndex(
             title=title,
@@ -136,13 +150,15 @@ def build_from_pages(
             title=heading_title,
             start_page=start_page,
             end_page=end_page,
+            summary=summarize_text(_span_text(pages, start_page, end_page)),
             parent_path=[],
             node_type="section",
+            keywords=keywords_from_text(f"{heading_title} {_span_text(pages, start_page, end_page)}"),
             source="regex",
             confidence=0.8,
         )
         if span > MAX_LEAF_PAGES:
-            parent.nodes.extend(_window_children(heading_title, start_page, end_page, []))
+            parent.nodes.extend(_window_children(heading_title, start_page, end_page, [], pages))
         parent.nodes.extend(
             _section_caption_nodes(pages, start_page, end_page, [heading_title])
         )

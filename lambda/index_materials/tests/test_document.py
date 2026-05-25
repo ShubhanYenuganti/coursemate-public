@@ -97,3 +97,38 @@ def test_document_builder_ids_are_stable():
     a = build_from_pages(pages, doc_type="reading", title="Paper").to_dict()
     b = build_from_pages(pages, doc_type="reading", title="Paper").to_dict()
     assert a == b
+
+
+def test_document_builder_populates_section_summaries_and_keywords():
+    pages = [
+        (
+            "## Sparse Attention\n"
+            "Sparse attention restricts token interactions to local and global patterns. "
+            "This reduces quadratic memory cost for long documents."
+        ),
+        "More details about long documents and efficient transformers.",
+    ]
+
+    mi = build_from_pages(pages, doc_type="reading", title="Paper")
+    node = mi.nodes[0]
+
+    assert "Sparse attention restricts token interactions" in node.summary
+    assert "attention" in node.keywords
+    assert "documents" in node.keywords
+
+
+def test_document_builder_populates_page_window_summaries_and_keywords():
+    pages = [f"Page {i} discusses retrieval evidence and transformer attention." for i in range(1, 6)]
+    pages[0] = "## Long Section\nPage 1 discusses retrieval evidence and transformer attention."
+
+    mi = build_from_pages(
+        pages,
+        doc_type="reading",
+        title="Paper",
+        headings_override=[(0, "Long Section")],
+    )
+    child = mi.nodes[0].nodes[0]
+
+    assert child.node_type == "page_window"
+    assert "retrieval evidence" in child.summary
+    assert "retrieval" in child.keywords

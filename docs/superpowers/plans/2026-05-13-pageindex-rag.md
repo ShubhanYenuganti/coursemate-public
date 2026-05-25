@@ -3119,12 +3119,12 @@ git commit -m "feat: run_agent_pageindex — add get_related_materials graph tra
 
 Before running the eval:
 
-- [ ] Deploy `lambda/index_materials/` as a new AWS Lambda (`index_materials` function name):
+- [x] Deploy `lambda/index_materials/` as a new AWS Lambda (`index_materials` function name):
   ```bash
   cd lambda/index_materials && bash build.sh
   ```
   On first deploy `build.sh` creates the ECR repo, builds the `linux/amd64` image, and calls `aws lambda create-function` with placeholder env vars. On subsequent deploys it updates the image in-place. Skip the Docker build with `SKIP_BUILD=1 bash build.sh`.
-- [ ] Deploy `lambda/index_materials/state_machine.json` as a new Step Functions state machine (`INDEX_STATE_MACHINE_ARN`):
+- [x] Deploy `lambda/index_materials/state_machine.json` as a new Step Functions state machine (`INDEX_STATE_MACHINE_ARN`):
   ```bash
   aws stepfunctions create-state-machine \
     --name index-materials \
@@ -3133,17 +3133,16 @@ Before running the eval:
     --region us-east-1
   ```
   Copy the returned `stateMachineArn` — you'll need it for the env var below.
-- [ ] Set Lambda env vars: `DATABASE_URL`, `AWS_S3_BUCKET_NAME`, `OPENAI_API_KEY_INDEXER`, `INDEX_STATE_MACHINE_ARN`:
+- [x] Set Lambda env vars: `DATABASE_URL`, `AWS_S3_BUCKET_NAME`, `OPENAI_API_KEY_INDEXER`, `INDEX_STATE_MACHINE_ARN`:
   ```bash
   aws lambda update-function-configuration \
     --function-name index_materials \
     --environment 'Variables={AWS_S3_BUCKET_NAME=coursemate-materials,DATABASE_URL=<YOUR_DATABASE_URL>,INDEX_STATE_MACHINE_ARN=<STATE_MACHINE_ARN>,OPENAI_API_KEY_INDEXER=<YOUR_KEY>}' \
     --region us-east-1
   ```
-- [ ] Grant S3 permission to invoke the Lambda, then configure the `coursemate-materials` bucket notification to fire on `s3:ObjectCreated:*` events targeting `index_materials`
-- [ ] 
-- [ ] Trigger indexing for each test PDF by uploading to S3 (or directly invoking the Lambda)
-- [ ] Confirm `material_page_index`, `material_page_text`, `course_material_index`, `course_material_relations` rows exist for all test materials
+- [x] Grant S3 permission to invoke the Lambda, then configure the `coursemate-materials` bucket notification to fire on `s3:ObjectCreated:*` events targeting `index_materials`
+- [x] Trigger indexing for each test PDF by uploading to S3 (or directly invoking the Lambda)
+- [x] Confirm `material_page_index`, `material_page_text`, `course_material_index`, `course_material_relations` rows exist for all test materials
 - [ ] Verify `metadata_tags` column populated in `course_material_index` (non-empty JSON array)
 - [ ] Verify `course_material_relations` has edges between semantically related materials (e.g., lecture ↔ hw)
 - [ ] Set `PAGEINDEX_RETRIEVAL_ENABLED=true` in Vercel env to test live API
