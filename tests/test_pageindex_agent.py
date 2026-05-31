@@ -161,6 +161,32 @@ def test_run_agent_pageindex_preloads_routing_and_drops_search_tool():
     assert "get_related_materials" in tool_names
 
 
+def test_synthesize_pageindex_infers_course_from_chat_without_material_scope():
+    from llm import synthesize
+
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.fetchone.return_value = {"course_id": 42}
+    conn.cursor.return_value = cursor
+
+    with patch("llm._get_api_key", return_value="sk-test"), \
+         patch("llm.run_agent_pageindex", return_value=("answer", ["material:1"], {}, [], "summary", [], None)) as run_agent:
+        synthesize(
+            conn=conn,
+            user_id=1,
+            ai_provider="openai",
+            ai_model="gpt-4o-mini",
+            user_message="Explain attention",
+            chunks=[],
+            chat_id=99,
+            context_material_ids=[],
+        )
+
+    cursor.execute.assert_called_with("SELECT course_id FROM chats WHERE id = %s", (99,))
+    assert run_agent.call_args.kwargs["course_id"] == 42
+    assert run_agent.call_args.kwargs["context_material_ids"] == []
+
+
 def test_pageindex_prompt_documents_citation_numbering():
     """PAGEINDEX_SYSTEM_PROMPT must explain how [N] markers map to fetched pages."""
     from llm import PAGEINDEX_SYSTEM_PROMPT

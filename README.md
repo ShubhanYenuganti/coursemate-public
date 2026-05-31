@@ -53,7 +53,7 @@ Login flows:
 ### Chat + RAG Request Flow
 
 1. **Chat requests** hit `api/chat.py` (streaming responses via SSE).
-2. Course materials are indexed by `lambda/index_materials` into a **page-indexed material structure**: every document builder emits section/problem/slide/question nodes with page ranges, deterministic summaries, retrieval keywords, evidence pages, and a structure-first retrieval policy.
+2. Course materials are indexed by `lambda/index_materials` into a **page-indexed material structure**: every document builder emits section/problem/slide/question nodes with page ranges, LLM-enriched summaries, retrieval keywords, evidence pages, semantic relations, and a structure-first retrieval policy.
 3. When PageIndex RAG is enabled, `api/llm.py::run_agent_pageindex` gives the model a routing index and production tools: `get_material_structure`, `get_page_content`, and `get_related_materials`.
 4. The model follows a **structure-first, high-recall retrieval policy**: inspect material structure for broad/conceptual questions, fetch multiple plausible evidence pages, include neighboring pages when useful, and synthesize only from fetched page text.
 5. Both the user message and assistant response are persisted to Postgres with grounding metadata.
@@ -66,13 +66,18 @@ The older chunk/vector path remains in the codebase as a fallback path, but Page
 
 ### Retrieval Eval Metrics
 
-The production PageIndex path is evaluated with the real **QASPER v0.3 test split**, an academic QA corpus containing research papers, human-written questions, answers, and human evidence strings. In this eval, QASPER sections are treated as evidence locations because the dataset JSON does not carry native PDF page boundaries. The eval runs the same `run_agent_pageindex(...)` production loop against a QASPER-backed adapter and scores the first 5 unique evidence locations fetched via `get_page_content`.
+The production PageIndex path is evaluated with the real **QASPER test split** from `allenai/qasper`, an academic QA corpus containing research papers, human-written questions, answers, and human evidence strings. In this eval, QASPER sections are treated as evidence locations because the dataset source does not carry native PDF page boundaries. The eval first indexes QASPER papers into a local SQLite store with production-shaped PageIndex tables, then runs the same `run_agent_pageindex(...)` production loop against that indexed store and scores the first 5 unique evidence locations fetched via `get_page_content`.
 
-Current 50-question agentic PageIndex eval:
+Current agentic PageIndex eval over a deterministic 100-paper QASPER subset:
+
+- Indexed `100` QASPER test papers into SQLite as synthetic CourseMate materials.
+- Stored `1,228` section/evidence-location rows and `55` agent-built semantic relations.
+- Used `2,755` OpenAI calls during indexing for node summaries, keywords, document summaries, metadata tags, and relation building.
+- Evaluated `348` QASPER questions from those indexed papers; `321` had matched human evidence locations.
 
 | Variant | Recall@5 | MRR@5 | NDCG@5 | Evidence Location Hit@5 | Answerability Coverage | Tool Calls | Fetched Locations | Avg Latency ms |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `agentic_pageindex` | 0.515 | 0.643 | 0.592 | 0.780 | 0.960 | 2.10 | 2.66 | 9127 |
+| `agentic_pageindex` | 0.654 | 0.623 | 0.607 | 0.773 | 0.922 | 2.34 | 2.95 | 9631 |
 
 Metric meanings:
 - **Recall@5**: fraction of gold human evidence locations recovered in the first 5 fetched locations.

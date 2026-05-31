@@ -177,6 +177,7 @@ _PAGEINDEX_TOOL_USE = (
 # JSON final-answer schema.
 PAGEINDEX_SYSTEM_PROMPT = _SYSTEM_PROMPT_BASE + _PAGEINDEX_TOOL_USE + _AGENTIC_JSON_FINAL_INSTRUCTION
 
+
 _SUMMARY_MAX_LEN = 200
 
 _TIMEOUT = 60  # seconds
@@ -198,6 +199,13 @@ def _is_enabled(env_name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _is_pageindex_enabled() -> bool:
+    legacy_value = os.environ.get("PAGEINDEX_RETRIEVAL_ENABLED")
+    if legacy_value is not None:
+        return legacy_value.strip().lower() in ("1", "true", "yes", "on")
+    return _is_enabled("PAGEINDEX_RAG_ENABLED", default=True)
 
 
 def _safe_int_env(env_name: str, default: int, low: int, high: int) -> int:
@@ -1382,6 +1390,153 @@ def _format_routing_index_block(materials: list[dict]) -> str:
     return "\n".join(lines)
 
 
+
+class _ReplyStreamFilter:
+    """Strip <REPLY>…</REPLY><META>…</META> wrapper from a streamed response.
+
+    State machine:
+      probing    — buffer until we confirm tagged vs. plain format
+      in_reply   — emit text between <REPLY> and </REPLY>
+      passthrough — model didn't use tags; emit everything directly
+      done       — </REPLY> seen; drop remaining (META block)
+    """
+
+    _OPEN = "<REPLY>"
+    _CLOSE = "</REPLY>"
+
+    def __init__(self, emit):
+        self._emit = emit
+        self._state = "probing"
+        self._buf = ""
+
+    def feed(self, chunk: str) -> None:
+        if self._state == "done":
+            return
+        self._buf += chunk
+        if self._state == "probing":
+            stripped = self._buf.lstrip()
+            if stripped.startswith(self._OPEN):
+                self._buf = stripped[len(self._OPEN):]
+                self._state = "in_reply"
+                self._drain()
+            elif len(stripped) >= len(self._OPEN):
+                self._state = "passthrough"
+                self._emit(self._buf)
+                self._buf = ""
+        elif self._state == "in_reply":
+            self._drain()
+        else:  # passthrough
+            self._emit(self._buf)
+            self._buf = ""
+
+    def _drain(self) -> None:
+        idx = self._buf.find(self._CLOSE)
+        if idx != -1:
+            if idx > 0:
+                self._emit(self._buf[:idx])
+            self._buf = ""
+            self._state = "done"
+        else:
+            safe = len(self._buf) - len(self._CLOSE) + 1
+            if safe > 0:
+                self._emit(self._buf[:safe])
+                self._buf = self._buf[safe:]
+
+    def flush(self) -> None:
+        if self._buf and self._state != "done":
+            self._emit(self._buf)
+            self._buf = ""
+
+
+def _pageindex_stream_call(
+    api_key: str,
+    model: str,
+    messages: list,
+    tools: list | None,
+    on_event,
+) -> tuple[dict, str | None]:
+    """Stream one OpenAI call for the pageindex loop.
+
+    Emits {"type": "text", "chunk": str} via on_event when the model generates
+    text content (the final answer). Returns (message_dict, finish_reason)
+    with the same shape as a non-streaming choices[0]["message"].
+    """
+    req_body: dict = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+        "stream": True,
+    }
+    if tools:
+        req_body["tools"] = tools
+        req_body["tool_choice"] = "auto"
+
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=req_body,
+        stream=True,
+        timeout=_TIMEOUT,
+    )
+    response.raise_for_status()
+
+    content_parts: list[str] = []
+    tool_calls_acc: dict[int, dict] = {}
+    finish_reason: str | None = None
+
+    for raw_line in response.iter_lines():
+        if not raw_line:
+            continue
+        line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+        if not line.startswith("data: "):
+            continue
+        data = line[6:].strip()
+        if data == "[DONE]":
+            break
+        try:
+            chunk = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        choice = chunk.get("choices", [{}])[0]
+        delta = choice.get("delta", {})
+        fr = choice.get("finish_reason")
+        if fr:
+            finish_reason = fr
+
+        if delta.get("content"):
+            content_parts.append(delta["content"])
+            if on_event:
+                on_event({"type": "text", "chunk": delta["content"]})
+
+        for tc in delta.get("tool_calls") or []:
+            idx = tc["index"]
+            if idx not in tool_calls_acc:
+                tool_calls_acc[idx] = {
+                    "id": tc.get("id", ""),
+                    "type": "function",
+                    "function": {
+                        "name": tc.get("function", {}).get("name", ""),
+                        "arguments": tc.get("function", {}).get("arguments", ""),
+                    },
+                }
+            else:
+                if tc.get("id"):
+                    tool_calls_acc[idx]["id"] = tc["id"]
+                fn = tc.get("function", {})
+                if fn.get("name"):
+                    tool_calls_acc[idx]["function"]["name"] = fn["name"]
+                tool_calls_acc[idx]["function"]["arguments"] += fn.get("arguments", "")
+
+    tool_calls_list = [tool_calls_acc[i] for i in sorted(tool_calls_acc)]
+    message: dict = {"content": "".join(content_parts)}
+    if tool_calls_list:
+        message["tool_calls"] = tool_calls_list
+    return message, finish_reason
+
+
 def run_agent_pageindex(
     conn,
     user_message: str,
@@ -1486,27 +1641,22 @@ def run_agent_pageindex(
     assistant_clarifying_question = None
     assistant_reply_summary = None
 
+    def _stream_with_filter(msgs, tls):
+        if on_event is None:
+            return _pageindex_stream_call(api_key, model, msgs, tls, None)
+        filt = _ReplyStreamFilter(lambda t: on_event({"type": "text", "chunk": t}))
+        def _evt(evt):
+            if evt.get("type") == "text":
+                filt.feed(evt["chunk"])
+            else:
+                on_event(evt)
+        result = _pageindex_stream_call(api_key, model, msgs, tls, _evt)
+        filt.flush()
+        return result
+
     for iteration in range(MAX_TOOL_ITERATIONS):
         started = time.time()
-        response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": messages,
-                "tools": tools,
-                "tool_choice": "auto",
-                "temperature": 0.2,
-            },
-            timeout=_TIMEOUT,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        choice = payload["choices"][0]
-        message = choice.get("message", {})
+        message, finish_reason = _stream_with_filter(messages, tools)
         tool_calls = message.get("tool_calls") or []
 
         if not tool_calls:
@@ -1524,7 +1674,7 @@ def run_agent_pageindex(
             tool_trace.append(
                 {
                     "iteration": iteration,
-                    "finish_reason": choice.get("finish_reason"),
+                    "finish_reason": finish_reason,
                     "tool_calls": 0,
                     "latency_ms": int((time.time() - started) * 1000),
                 }
@@ -1615,11 +1765,29 @@ def run_agent_pageindex(
                 }
             )
 
-    if not final_text:
-        final_text = (
-            "I ran out of page-navigation tool-call iterations before finishing. "
-            "Please ask a narrower follow-up."
+    # Q08 fix: if MAX_TOOL_ITERATIONS was exhausted without a final answer but
+    # pages were fetched, make one more call without tools so the model can
+    # synthesize from the accumulated context instead of returning an error.
+    if not final_text and grounding_refs:
+        started = time.time()
+        forced_message, _ = _stream_with_filter(messages, None)
+        raw_final = (
+            _message_text(forced_message).strip()
+            or "I could not find relevant content in the course materials."
         )
+        (
+            reply_body,
+            assistant_reply_summary,
+            assistant_follow_ups,
+            assistant_clarifying_question,
+        ) = _parse_synthesis_json(raw_final)
+        final_text = reply_body if (reply_body or "").strip() else raw_final
+        tool_trace.append(
+            {"phase": "forced_synthesis", "latency_ms": int((time.time() - started) * 1000)}
+        )
+
+    if not final_text:
+        final_text = "I could not find relevant content in the course materials."
 
     return (
         final_text,
@@ -1750,7 +1918,7 @@ def synthesize(
 
     selected_provider_api_key = _get_api_key(conn, user_id, ai_provider)
     material_scope = context_material_ids if isinstance(context_material_ids, list) else []
-    use_pageindex = _is_enabled("PAGEINDEX_RETRIEVAL_ENABLED", default=True)
+    use_pageindex = _is_pageindex_enabled()
     if use_pageindex and not force_context_only:
         agentic_api_key = _get_api_key(conn, user_id, DEFAULT_AGENTIC_PROVIDER)
         pageindex_course_id = None
@@ -1760,6 +1928,13 @@ def synthesize(
                 "SELECT course_id FROM materials WHERE id = %s",
                 (context_material_ids[0],),
             )
+            row = cursor.fetchone()
+            cursor.close()
+            if row:
+                pageindex_course_id = row["course_id"]
+        if pageindex_course_id is None and chat_id is not None:
+            cursor = conn.cursor()
+            cursor.execute("SELECT course_id FROM chats WHERE id = %s", (chat_id,))
             row = cursor.fetchone()
             cursor.close()
             if row:

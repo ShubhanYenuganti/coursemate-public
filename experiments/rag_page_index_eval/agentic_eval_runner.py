@@ -9,9 +9,13 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-from .agentic_adapter import QasperPageIndexAdapter, fetched_locations_from_tool_trace
+from .agentic_adapter import (
+    QasperPageIndexAdapter,
+    QasperSQLitePageIndexAdapter,
+    fetched_locations_from_tool_trace,
+)
 from .metrics import evaluate_hits
-from .qasper_loader import load_qasper_json
+from .qasper_loader import load_qasper_huggingface, load_qasper_json
 from .types import MetricResult, QueryExample, RetrievalHit
 
 
@@ -86,7 +90,7 @@ def _write_summary(path: Path, rows: list[dict], k: int) -> None:
 
 
 def run_agentic_eval(
-    qasper_json: Path,
+    qasper_json: Path | None,
     out: Path,
     openai_key: str,
     model: str,
@@ -94,12 +98,36 @@ def run_agentic_eval(
     limit: int | None = None,
     summary_out: Path | None = None,
     progress_every: int = 10,
+    sqlite_db: Path | None = None,
+    course_id: int = 1,
+    dataset_source: str = "json",
+    hf_dataset: str = "allenai/qasper",
+    split: str = "test",
 ) -> list[dict]:
     from llm import run_agent_pageindex
 
-    pages, queries = load_qasper_json(qasper_json)
-    adapter = QasperPageIndexAdapter(pages, queries)
-    selected_queries = queries[:limit] if limit else queries
+    if dataset_source == "json":
+        if qasper_json is None:
+            raise ValueError("--qasper-json is required when --dataset-source=json")
+        pages, queries = load_qasper_json(qasper_json)
+    elif dataset_source == "huggingface":
+        pages, queries = load_qasper_huggingface(hf_dataset, split)
+    else:
+        raise ValueError(f"Unsupported dataset source: {dataset_source}")
+    adapter = (
+        QasperSQLitePageIndexAdapter(sqlite_db, course_id=course_id)
+        if sqlite_db
+        else QasperPageIndexAdapter(pages, queries)
+    )
+    available_papers = set(adapter.paper_to_material_id)
+    runnable_queries = [query for query in queries if query.paper_id in available_papers]
+    skipped_queries = len(queries) - len(runnable_queries)
+    if skipped_queries:
+        print(
+            f"skipping {skipped_queries} queries whose papers are not indexed in the PageIndex store",
+            flush=True,
+        )
+    selected_queries = runnable_queries[:limit] if limit else runnable_queries
     rows: list[dict] = []
     fieldnames = [
         "query_id",
@@ -134,7 +162,7 @@ def run_agentic_eval(
                     model=model,
                     api_key=openai_key,
                     chat_id=None,
-                    course_id=1,
+                    course_id=course_id,
                     context_material_ids=[material_id],
                 )
                 fetched_locations = fetched_locations_from_tool_trace(tool_trace, adapter, limit=k)
@@ -169,7 +197,10 @@ def run_agentic_eval(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run QASPER through production LLM-routed PageIndex.")
-    parser.add_argument("--qasper-json", required=True)
+    parser.add_argument("--dataset-source", choices=["json", "huggingface"], default="json")
+    parser.add_argument("--qasper-json")
+    parser.add_argument("--hf-dataset", default="allenai/qasper")
+    parser.add_argument("--split", default="test", choices=["train", "validation", "test"])
     parser.add_argument("--out", required=True)
     parser.add_argument("--openai-key", default=os.environ.get("OPENAI_API_KEY"))
     parser.add_argument("--model", default="gpt-4o-mini")
@@ -177,13 +208,18 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--summary-out")
     parser.add_argument("--progress-every", type=int, default=10)
+    parser.add_argument(
+        "--sqlite-db",
+        help="Read indexed QASPER PageIndex data from this SQLite store instead of building an in-memory adapter.",
+    )
+    parser.add_argument("--course-id", type=int, default=1)
     args = parser.parse_args()
 
     if not args.openai_key:
         raise SystemExit("--openai-key or OPENAI_API_KEY is required")
 
     rows = run_agentic_eval(
-        Path(args.qasper_json),
+        Path(args.qasper_json) if args.qasper_json else None,
         Path(args.out),
         openai_key=args.openai_key,
         model=args.model,
@@ -191,6 +227,11 @@ def main() -> None:
         limit=args.limit,
         summary_out=Path(args.summary_out) if args.summary_out else None,
         progress_every=args.progress_every,
+        sqlite_db=Path(args.sqlite_db) if args.sqlite_db else None,
+        course_id=args.course_id,
+        dataset_source=args.dataset_source,
+        hf_dataset=args.hf_dataset,
+        split=args.split,
     )
     averages = _averages(rows)
     print(

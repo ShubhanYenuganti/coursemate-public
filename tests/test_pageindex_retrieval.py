@@ -48,6 +48,9 @@ def test_get_course_routing_index_formats_output():
             "page_count": 30,
             "material_summary": "Covers backprop.",
             "metadata_tags": ["backpropagation"],
+            "nodes": [
+                {"start_page": 1, "end_page": 2, "summary": "Chain rule"},
+            ],
         }
     ]
     conn.cursor.return_value = cursor
@@ -55,6 +58,7 @@ def test_get_course_routing_index_formats_output():
     assert len(results) == 1
     assert results[0]["title"] == "Lecture 5"
     assert results[0]["doc_type"] == "lecture_slide"
+    assert results[0]["sections"] == [{"start_page": 1, "end_page": 2, "summary": "Chain rule"}]
 
 
 def test_get_material_relations_returns_formatted_list():

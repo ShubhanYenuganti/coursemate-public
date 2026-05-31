@@ -1,6 +1,20 @@
 import re
 
 
+def _extract_page_summaries(nodes: list) -> list[dict]:
+    result = []
+    for node in nodes:
+        start = node.get("start_page")
+        if start is None:
+            continue
+        result.append({
+            "start_page": start,
+            "end_page": node.get("end_page") or start,
+            "summary": (node.get("summary") or "").strip().replace("\n", " "),
+        })
+    return sorted(result, key=lambda x: x["start_page"])
+
+
 def _parse_pages(pages_str: str) -> list[int]:
     result = []
     for part in pages_str.split(","):
@@ -17,20 +31,24 @@ def get_course_routing_index(conn, course_id: int, material_ids: list[int] | Non
     cursor = conn.cursor()
     if material_ids:
         cursor.execute(
-            """SELECT material_id, material_title, doc_type, page_count,
-                      material_summary, metadata_tags
-               FROM course_material_index
-               WHERE course_id = %s AND material_id = ANY(%s)
-               ORDER BY material_id""",
+            """SELECT cmi.material_id, cmi.material_title, cmi.doc_type, cmi.page_count,
+                      cmi.material_summary, cmi.metadata_tags,
+                      mpi.index_json->'nodes' AS nodes
+               FROM course_material_index cmi
+               LEFT JOIN material_page_index mpi USING (material_id)
+               WHERE cmi.course_id = %s AND cmi.material_id = ANY(%s)
+               ORDER BY cmi.material_id""",
             (course_id, material_ids),
         )
     else:
         cursor.execute(
-            """SELECT material_id, material_title, doc_type, page_count,
-                      material_summary, metadata_tags
-               FROM course_material_index
-               WHERE course_id = %s
-               ORDER BY material_id""",
+            """SELECT cmi.material_id, cmi.material_title, cmi.doc_type, cmi.page_count,
+                      cmi.material_summary, cmi.metadata_tags,
+                      mpi.index_json->'nodes' AS nodes
+               FROM course_material_index cmi
+               LEFT JOIN material_page_index mpi USING (material_id)
+               WHERE cmi.course_id = %s
+               ORDER BY cmi.material_id""",
             (course_id,),
         )
     rows = cursor.fetchall()
@@ -43,6 +61,7 @@ def get_course_routing_index(conn, course_id: int, material_ids: list[int] | Non
             "page_count": r["page_count"],
             "summary": r["material_summary"],
             "tags": r["metadata_tags"] or [],
+            "sections": _extract_page_summaries(r.get("nodes") or []),
         }
         for r in rows
     ]

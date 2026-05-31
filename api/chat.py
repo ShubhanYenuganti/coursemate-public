@@ -222,7 +222,10 @@ def _is_enabled(env_name: str, default: bool = False) -> bool:
 
 
 def _is_pageindex_active() -> bool:
-    return os.environ.get("PAGEINDEX_RETRIEVAL_ENABLED", "true").lower() != "false"
+    legacy_value = os.environ.get("PAGEINDEX_RETRIEVAL_ENABLED")
+    if legacy_value is not None:
+        return legacy_value.strip().lower() in ("1", "true", "yes", "on")
+    return os.environ.get("PAGEINDEX_RAG_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _is_agentic_request(ai_provider: str, ai_model: str) -> bool:

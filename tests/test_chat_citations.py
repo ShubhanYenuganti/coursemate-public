@@ -5,12 +5,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'api'))
 
 def _is_pageindex_active():
     """Mirror of chat._is_pageindex_active for isolated testing."""
-    return os.environ.get("PAGEINDEX_RETRIEVAL_ENABLED", "true").lower() != "false"
+    legacy = os.environ.get("PAGEINDEX_RETRIEVAL_ENABLED")
+    if legacy is not None:
+        return legacy.strip().lower() in ("1", "true", "yes", "on")
+    return os.environ.get("PAGEINDEX_RAG_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 
 
 def test_is_pageindex_active_default():
     """Unset env var → active (default True)."""
     os.environ.pop('PAGEINDEX_RETRIEVAL_ENABLED', None)
+    os.environ.pop('PAGEINDEX_RAG_ENABLED', None)
     assert _is_pageindex_active() is True
 
 
@@ -24,6 +28,15 @@ def test_is_pageindex_active_true():
     os.environ['PAGEINDEX_RETRIEVAL_ENABLED'] = 'true'
     assert _is_pageindex_active() is True
     os.environ.pop('PAGEINDEX_RETRIEVAL_ENABLED', None)
+
+
+def test_is_pageindex_active_supports_pageindex_rag_enabled_alias():
+    os.environ.pop('PAGEINDEX_RETRIEVAL_ENABLED', None)
+    os.environ['PAGEINDEX_RAG_ENABLED'] = 'false'
+    assert _is_pageindex_active() is False
+    os.environ['PAGEINDEX_RAG_ENABLED'] = 'true'
+    assert _is_pageindex_active() is True
+    os.environ.pop('PAGEINDEX_RAG_ENABLED', None)
 
 
 def _make_tool_trace(entries):

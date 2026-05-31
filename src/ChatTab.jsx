@@ -803,6 +803,9 @@ function MessageBubble({
             <span className="w-1 h-1 rounded-full bg-indigo-300" />
           )}
         </div>
+        {msg._streaming && !msg.content && (
+          <LiveStatusLine liveToolTrace={msg._liveToolTrace} materials={materials} />
+        )}
         <ToolTraceIndicator toolTrace={msg.tool_trace} materials={materials} />
         <div className="text-sm text-gray-700 leading-relaxed space-y-0.5">
           {renderContent(msg.content)}
@@ -978,6 +981,35 @@ function MessageBubble({
 
 // ─── streaming status bubble ──────────────────────────────────────────────────
 
+function materialTraceName(materialMap, materialId, limit = 25) {
+  const mat = (materialMap || {})[materialId];
+  const raw = mat?.name || mat?.title || mat?.filename || mat?.material_title;
+  return raw ? raw.replace(/\.[^.]+$/, '').slice(0, limit) : `material ${materialId}`;
+}
+
+function LiveStatusLine({ liveToolTrace, materials }) {
+  const materialMap = {};
+  (materials || []).forEach((m) => { materialMap[m.id] = m; });
+  const last = liveToolTrace?.[liveToolTrace.length - 1];
+  let text = 'Searching course materials…';
+  if (last) {
+    const name = materialTraceName(materialMap, last.args?.material_id);
+    if (last.tool === 'get_page_content') text = `Retrieving pages ${last.args?.pages || '?'} from ${name}`;
+    else if (last.tool === 'get_material_structure') text = `Reading structure of ${name}`;
+    else if (last.tool === 'get_related_materials') text = `Finding related materials for ${name}`;
+  }
+  return (
+    <div className="flex items-center gap-2 mb-2">
+      <div className="flex gap-0.5 items-center">
+        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '120ms' }} />
+        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '240ms' }} />
+      </div>
+      <span className="text-[11px] text-indigo-400">{text}</span>
+    </div>
+  );
+}
+
 function getTracePrimary(status, materialMap) {
   switch (status.phase) {
     case 'handoff_decision': {
@@ -1000,18 +1032,15 @@ function getTracePrimary(status, materialMap) {
     case 'rerank':
       return `Re-ranking candidate chunks by relevance (${status.input_count || '?'} → ${status.output_count || '?'})`;
     case 'page_fetch': {
-      const mat = (materialMap || {})[status.material_id];
-      const name = mat?.name ? mat.name.replace(/\.[^.]+$/, '').slice(0, 25) : `material ${status.material_id}`;
+      const name = materialTraceName(materialMap, status.material_id);
       return `Fetched pages ${status.pages || '?'} from ${name}`;
     }
     case 'structure_fetch': {
-      const mat = (materialMap || {})[status.material_id];
-      const name = mat?.name ? mat.name.replace(/\.[^.]+$/, '').slice(0, 25) : `material ${status.material_id}`;
+      const name = materialTraceName(materialMap, status.material_id);
       return `Retrieved structure of ${name}`;
     }
     case 'related_fetch': {
-      const mat = (materialMap || {})[status.material_id];
-      const name = mat?.name ? mat.name.replace(/\.[^.]+$/, '').slice(0, 25) : `material ${status.material_id}`;
+      const name = materialTraceName(materialMap, status.material_id);
       return `Looked up materials related to ${name}`;
     }
     default:
@@ -1025,8 +1054,7 @@ function getTraceSecondary(status, materialMap) {
       const chunks = status.chunks || [];
       if (!chunks.length) return null;
       const parts = chunks.map((c) => {
-        const mat = c.material_id != null ? (materialMap || {})[c.material_id] : null;
-        const name = mat?.name ? mat.name.replace(/\.[^.]+$/, '').slice(0, 20) : null;
+        const name = c.material_id != null ? materialTraceName(materialMap, c.material_id, 20) : null;
         return name ? `${name} — "${c.snippet}"` : `"${c.snippet}"`;
       });
       return parts.join('  ·  ');
@@ -1756,17 +1784,48 @@ export default function ChatTab({ course, userData, onAddSource }) {
         .catch(() => {});
     }
     setSourcesPanel({ open: true, messageId, focusIndex });
-    setSidebarWidth(0);
   }
 
-  function handleStreamEvent(evt, { tempId, chatId, setActiveConvFn }) {
+  function handleStreamEvent(evt, { tempId, tempAssistantId, chatId, setActiveConvFn }) {
     switch (evt.type) {
       case 'user_message':
-        setMessages((prev) => [...prev.filter((m) => m.id !== tempId), evt.message]);
+        setMessages((prev) => [
+          ...prev.filter((m) => m.id !== tempId),
+          evt.message,
+          { id: tempAssistantId, role: 'assistant', content: '', _streaming: true },
+        ]);
+        break;
+      case 'tool_call':
+        setMessages((prev) => {
+          const entry = { tool: evt.tool, args: { material_id: evt.material_id, pages: evt.pages } };
+          const existing = prev.find((m) => m.id === tempAssistantId);
+          if (existing) {
+            return prev.map((m) =>
+              m.id === tempAssistantId
+                ? { ...m, _liveToolTrace: [...(m._liveToolTrace || []), entry] }
+                : m
+            );
+          }
+          return [...prev, { id: tempAssistantId, role: 'assistant', content: '', _streaming: true, _liveToolTrace: [entry] }];
+        });
+        break;
+      case 'text':
+        if (!evt.chunk) break;
+        setMessages((prev) => {
+          const existing = prev.find((m) => m.id === tempAssistantId);
+          if (existing) {
+            return prev.map((m) =>
+              m.id === tempAssistantId ? { ...m, content: m.content + evt.chunk } : m
+            );
+          }
+          return [...prev, { id: tempAssistantId, role: 'assistant', content: evt.chunk }];
+        });
         break;
       case 'done':
         setMessages((prev) => {
-          const withoutTemp = prev.filter((m) => m.id !== tempId && m.id !== evt.user_message?.id);
+          const withoutTemp = prev.filter(
+            (m) => m.id !== tempId && m.id !== tempAssistantId && m.id !== evt.user_message?.id
+          );
           return [...withoutTemp, evt.user_message, evt.assistant_message];
         });
         setChats((prev) => prev.map((c) =>
@@ -1785,7 +1844,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
       case 'error':
         setSending(false);
         sendingRef.current = false;
-        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        setMessages((prev) => prev.filter((m) => m.id !== tempId && m.id !== tempAssistantId));
         break;
       default:
         break;
@@ -1862,6 +1921,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
     setImageUploadStates({});
 
     const tempId = Date.now();
+    const tempAssistantId = tempId + 1;
     const tempUserMsg = { id: tempId, role: 'user', content: text };
     setMessages((prev) => [...prev, tempUserMsg]);
 
@@ -1971,7 +2031,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
           if (!part.startsWith('data: ')) continue;
           try {
             const evt = JSON.parse(part.slice(6));
-            handleStreamEvent(evt, { tempId, chatId });
+            handleStreamEvent(evt, { tempId, tempAssistantId, chatId });
           } catch {}
         }
       }
@@ -2288,6 +2348,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
     setSending(true);
     sendingRef.current = true;
     setSourcesPanel({ open: false, messageId: null, focusIndex: null });
+    setMessages((prev) => prev.map((m) => m.id === assistantMsgId ? { ...m, content: '', ai_provider: provider, ai_model: modelId, _streaming: true, _liveToolTrace: undefined } : m));
 
     try {
       const response = await fetch('/api/chat', {
@@ -2347,7 +2408,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
               setSending(false);
               sendingRef.current = false;
             } else {
-              handleStreamEvent(evt, { tempId: null, chatId: userMsg.chat_id });
+              handleStreamEvent(evt, { tempId: null, tempAssistantId: assistantMsgId, chatId: userMsg.chat_id });
             }
           } catch {}
         }
