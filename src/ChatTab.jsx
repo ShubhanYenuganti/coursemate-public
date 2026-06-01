@@ -815,7 +815,7 @@ function MessageBubble({
           <GenerationProposalCard
             proposal={msg._generationProposal}
             status={msg._proposalStatus}
-            onBuild={() => {}}
+            onBuild={() => handleBuildGeneration(msg)}
             onRefine={() => {}}
           />
         )}
@@ -1928,6 +1928,39 @@ export default function ChatTab({ course, userData, onAddSource }) {
     e.preventDefault();
     const files = imageItems.map((it) => it.getAsFile()).filter(Boolean);
     addImages(files);
+  }
+
+  const ENDPOINT_BY_TYPE = { quiz: '/api/quiz', flashcards: '/api/flashcards', report: '/api/reports' };
+
+  async function handleBuildGeneration(msg) {
+    const p = msg._generationProposal;
+    if (!p) return;
+    const endpoint = ENDPOINT_BY_TYPE[p.generation_type];
+    if (!endpoint) return;
+
+    setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, _proposalStatus: 'building' } : m));
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          action: 'generate',
+          course_id: course.id,
+          title: p.title,
+          topic: p.title,
+          material_ids: p.material_ids,
+          conversation_context: p.discussion_summary,
+          provider: selectedModel,
+          model_id: selectedModelId || selectedModel,
+          ...p.params,
+        }),
+      });
+      if (!res.ok) throw new Error('queue failed');
+      setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, _proposalStatus: 'queued' } : m));
+    } catch (e) {
+      setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, _proposalStatus: null } : m));
+    }
   }
 
   async function handleSend() {
