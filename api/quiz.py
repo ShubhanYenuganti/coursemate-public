@@ -311,20 +311,28 @@ def _enqueue_quiz_generation_job(generation_id: int, user_id: int):
     )
 
 
+def _extract_conversation_context(body: dict) -> str | None:
+    """Optional conversation summary that grounds a chat-originated generation."""
+    val = (body.get('conversation_context') or '').strip()
+    return val or None
+
+
 def _persist_generation(conn, course_id: int, user_id: int, title: str, topic: str,
                          tf_count: int, sa_count: int, la_count: int, mcq_count: int,
                          mcq_options: int, provider: str, model_id: str,
-                         parent_generation_id) -> int:
+                         parent_generation_id, conversation_context: str | None = None) -> int:
     """Insert a quiz_generations row with status='generating'. Returns new id."""
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO quiz_generations
             (course_id, generated_by, title, topic, tf_count, sa_count, la_count,
-             mcq_count, mcq_options, provider, model_id, status, parent_generation_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'generating', %s)
+             mcq_count, mcq_options, provider, model_id, status, parent_generation_id,
+             conversation_context)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'generating', %s, %s)
         RETURNING id
     """, (course_id, user_id, title, topic, tf_count, sa_count, la_count,
-          mcq_count, mcq_options, provider, model_id, parent_generation_id or None))
+          mcq_count, mcq_options, provider, model_id, parent_generation_id or None,
+          conversation_context))
     gen_id = cursor.fetchone()['id']
     cursor.close()
     return gen_id
@@ -665,6 +673,8 @@ class handler(BaseHTTPRequestHandler):
                 send_json(self, 400, {'error': 'Invalid parent_generation_id'})
                 return
 
+        conversation_context = _extract_conversation_context(body)
+
         gen_id = None
         api_key = None
         material_context = None
@@ -738,10 +748,11 @@ class handler(BaseHTTPRequestHandler):
                             provider=%s,
                             model_id=%s,
                             parent_generation_id=%s,
+                            conversation_context=COALESCE(%s, conversation_context),
                             error=NULL
                         WHERE id=%s
                         """,
-                        (provider, model_id, parent_generation_id_int, draft_generation_id),
+                        (provider, model_id, parent_generation_id_int, conversation_context, draft_generation_id),
                     )
                     should_enqueue = True
                     current_status = 'queued'
@@ -809,6 +820,7 @@ class handler(BaseHTTPRequestHandler):
                     provider,
                     model_id,
                     parent_generation_id_int,
+                    conversation_context,
                 )
                 # Persist enough snapshot data for deep-linking and regeneration.
                 cursor.execute(
