@@ -92,14 +92,12 @@ from unittest.mock import patch, MagicMock
 def _stub_openai_response_no_tools(content: str = "All done.") -> MagicMock:
     resp = MagicMock()
     resp.raise_for_status.return_value = None
-    resp.json.return_value = {
-        "choices": [
-            {
-                "finish_reason": "stop",
-                "message": {"role": "assistant", "content": content},
-            }
-        ]
-    }
+    lines = [
+        f'data: {json.dumps({"choices": [{"delta": {"content": content}, "finish_reason": None}]})}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    resp.iter_lines.return_value = iter(lines)
     return resp
 
 
@@ -112,7 +110,7 @@ def test_run_agent_pageindex_preloads_routing_and_drops_search_tool():
 
     captured = {}
 
-    def fake_post(url, headers=None, json=None, timeout=None):
+    def fake_post(url, headers=None, json=None, timeout=None, stream=None):
         captured["payload"] = json
         return _stub_openai_response_no_tools(
             '{"reply": "ok", "summary": "ok", "follow_ups": [], "clarifying_question": null}'
@@ -161,6 +159,84 @@ def test_run_agent_pageindex_preloads_routing_and_drops_search_tool():
     assert "get_related_materials" in tool_names
 
 
+def _stub_openai_tool_call(material_id: int, pages: str) -> MagicMock:
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    args_json = json.dumps({"material_id": material_id, "pages": pages})
+    lines = [
+        f'data: {json.dumps({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "type": "function", "function": {"name": "get_page_content", "arguments": args_json}}]}, "finish_reason": None}]})}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}',
+        "data: [DONE]",
+    ]
+    resp.iter_lines.return_value = iter(lines)
+    return resp
+
+
+def test_run_agent_pageindex_forced_synthesis_when_iterations_exhausted():
+    """When MAX_TOOL_ITERATIONS is exhausted without a final answer, the agent
+    makes one additional no-tool call to synthesize from the accumulated context
+    (Q08 fix) rather than returning an error."""
+    from llm import run_agent_pageindex
+
+    conn = MagicMock()
+    payloads = []
+
+    # All iterations consume tool calls — loop exhausts without a text answer.
+    responses = [
+        _stub_openai_tool_call(10, "2-3"),
+        _stub_openai_tool_call(10, "4-5"),
+        _stub_openai_tool_call(10, "6-7"),
+        _stub_openai_tool_call(10, "8-9"),
+        # forced synthesis call (no tools in request)
+        _stub_openai_response_no_tools(
+            "<REPLY>\nSynthesized from evidence.\n</REPLY>\n"
+            '<META>\n{"summary": "ok", "follow_ups": [], "clarifying_question": null}\n</META>'
+        ),
+    ]
+
+    import copy
+
+    def fake_post(url, headers=None, json=None, timeout=None, stream=None):
+        payloads.append(copy.deepcopy(json))
+        return responses[len(payloads) - 1]
+
+    routing_rows = [
+        {
+            "material_id": 10,
+            "title": "L1",
+            "doc_type": "lecture",
+            "page_count": 9,
+            "summary": "s",
+            "tags": [],
+            "sections": [],
+        }
+    ]
+    page_rows = [{"page_number": 2, "text_content": "content"}]
+
+    with patch("llm.requests.post", side_effect=fake_post), \
+         patch("pageindex_retrieval.get_course_routing_index", return_value=routing_rows), \
+         patch("pageindex_retrieval.get_page_content", return_value=page_rows):
+        final_text, grounding_refs, tool_trace, *_ = run_agent_pageindex(
+            conn=conn,
+            user_message="Complex question.",
+            model="gpt-4o-mini",
+            api_key="sk-test",
+            chat_id=None,
+            course_id=7,
+            context_material_ids=[10],
+        )
+
+    # 4 retrieval iterations + 1 forced synthesis = 5 calls total
+    assert len(payloads) == 5
+    # Forced synthesis carries no tools
+    assert "tools" not in payloads[4]
+    # The accumulated context is passed (not a fresh lean prompt)
+    assert payloads[4]["messages"][0]["content"] != ""
+    assert final_text == "Synthesized from evidence."
+    assert grounding_refs == ["material:10"] * 4
+    assert any(t.get("phase") == "forced_synthesis" for t in tool_trace)
+
+
 def test_synthesize_pageindex_infers_course_from_chat_without_material_scope():
     from llm import synthesize
 
@@ -196,6 +272,24 @@ def test_pageindex_prompt_documents_citation_numbering():
         "Prompt must instruct agent to use call-order for citation numbers"
 
 
+def test_dispatch_pageindex_tool_get_page_content_appends_grounding():
+    from unittest.mock import patch, MagicMock
+    import llm
+    grounding = []
+    events = []
+    rows = [{"page_number": 5, "text_content": "Hello page 5"}]
+    with patch("pageindex_retrieval.get_page_content", return_value=rows):
+        out = llm._dispatch_pageindex_tool(
+            conn=MagicMock(), name="get_page_content",
+            args={"material_id": 7, "pages": "5"},
+            course_id=1,
+            grounding_refs=grounding, on_event=events.append,
+        )
+    assert "Hello page 5" in out
+    assert "material:7" in grounding
+    assert any(e.get("tool") == "get_page_content" for e in events)
+
+
 def test_pageindex_prompt_prefers_high_recall_fetching():
     """PageIndex prompt should bias the agent toward recall over minimal fetching."""
     from llm import PAGEINDEX_SYSTEM_PROMPT
@@ -213,3 +307,69 @@ def test_pageindex_prompt_requires_structure_first_for_broad_questions():
     assert "must call `get_material_structure" in text
     assert "before any final answer" in text
     assert "broad" in text and "conceptual" in text
+
+
+import json
+
+
+def _stub_anthropic_tool_use(tool_id, name, input_obj):
+    """Mock Anthropic streaming response that returns a single tool_use block."""
+    resp = MagicMock()
+    resp.status_code = 200
+    payload = json.dumps(input_obj)
+    resp.iter_lines.return_value = iter([
+        b'event: content_block_start',
+        b'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"' + tool_id.encode() + b'","name":"' + name.encode() + b'","input":{}}}',
+        b'event: content_block_delta',
+        b'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":' + json.dumps(payload).encode() + b'}}',
+        b'event: message_delta',
+        b'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
+    ])
+    return resp
+
+
+def _stub_anthropic_text(text):
+    """Mock Anthropic streaming response that returns a text block (final answer)."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.iter_lines.return_value = iter([
+        b'event: content_block_start',
+        b'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","id":null,"name":null,"input":{}}}',
+        b'event: content_block_delta',
+        b'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":' + json.dumps(text).encode() + b'}}',
+        b'event: message_delta',
+        b'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+    ])
+    return resp
+
+
+def test_run_agent_pageindex_claude_calls_tool_and_returns_answer():
+    """Claude provider: one tool call then a final text answer."""
+    from unittest.mock import patch, MagicMock, call
+    from llm import run_agent_pageindex
+
+    events = []
+    tool_stub = _stub_anthropic_tool_use("tid1", "get_material_structure", {"course_id": 1})
+    text_stub = _stub_anthropic_text('{"answer":"Structure answer","cited_pages":[]}')
+
+    with patch("requests.post", side_effect=[tool_stub, text_stub]) as mock_post, \
+         patch("llm._dispatch_pageindex_tool", return_value="<structure>...</structure>") as mock_dispatch, \
+         patch("llm._format_routing_index_block", return_value="<course_materials></course_materials>"):
+        result = run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="what is the structure of this course?",
+            model="claude-sonnet-4-6",
+            api_key="sk-ant-test",
+            chat_id=1,
+            course_id=7,
+            context_material_ids=[101],
+            on_event=events.append,
+            provider="claude",
+        )
+
+    # Should have called requests.post twice (tool call + final)
+    assert mock_post.call_count == 2
+    # Should have dispatched get_material_structure
+    assert mock_dispatch.call_count == 1
+    # result[0] is the answer string
+    assert "Structure answer" in result[0]

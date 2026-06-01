@@ -1537,6 +1537,142 @@ def _pageindex_stream_call(
     return message, finish_reason
 
 
+def _dispatch_pageindex_tool(conn, name, args, course_id, grounding_refs, on_event) -> str:
+    """Dispatch a single PageIndex tool call. Returns tool-result text, appends to grounding_refs, emits events."""
+    from pageindex_retrieval import get_material_structure, get_page_content
+
+    if name == "get_material_structure":
+        material_id = args.get("material_id")
+        tool_result = json.dumps(
+            get_material_structure(conn, material_id), indent=2
+        )
+    elif name == "get_page_content":
+        material_id = args.get("material_id")
+        pages_spec = args.get("pages", "")
+        rows = get_page_content(conn, material_id, pages_spec)
+        if rows:
+            parts = [
+                f"--- Page {row['page_number']} ---\n"
+                f"{row['text_content'] or '[No text extracted]'}"
+                for row in rows
+            ]
+            tool_result = "\n\n".join(parts)
+            grounding_refs.append(f"material:{material_id}")
+        else:
+            tool_result = "No content found for the requested pages."
+        if on_event:
+            on_event(
+                {
+                    "type": "tool_call",
+                    "tool": "get_page_content",
+                    "material_id": material_id,
+                    "pages": pages_spec,
+                }
+            )
+    elif name == "get_related_materials":
+        from pageindex_retrieval import get_material_relations
+
+        material_id = args.get("material_id")
+        relations = get_material_relations(conn, course_id, material_id)
+        if relations:
+            lines = []
+            for relation in relations:
+                score = relation.get("similarity_score")
+                score_text = f"{score:.2f}" if score is not None else "?"
+                shared_tags = ", ".join(relation.get("shared_tags") or []) or "none"
+                lines.append(
+                    f"  [{relation['other_material_id']}] "
+                    f"{relation['relation_type']} (confidence: {score_text})"
+                    f" | shared topics: {shared_tags}"
+                )
+            tool_result = f"Related materials for {material_id}:\n" + "\n".join(lines)
+        else:
+            tool_result = f"No known relations for material {material_id}."
+        if on_event:
+            on_event(
+                {
+                    "type": "tool_call",
+                    "tool": "get_related_materials",
+                    "material_id": material_id,
+                }
+            )
+    else:
+        tool_result = f"Unknown tool: {name}"
+
+    return str(tool_result)
+
+
+def _pageindex_tools_anthropic(tools: list) -> list:
+    """Convert OpenAI-format tool dicts to Anthropic format."""
+    result = []
+    for t in tools:
+        fn = t.get("function", t)
+        result.append({
+            "name": fn["name"],
+            "description": fn.get("description", ""),
+            "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+        })
+    return result
+
+
+def _pageindex_stream_call_claude(api_key, model, system, messages, tools, on_event):
+    """One streaming Anthropic messages call. Returns (content_blocks, stop_reason).
+    Emits {"type":"text","chunk":...} for text delta events."""
+    body = {
+        "model": model,
+        "max_tokens": 2048,
+        "system": system,
+        "messages": messages,
+        "tools": _pageindex_tools_anthropic(tools),
+        "stream": True,
+    }
+    resp = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json=body,
+        stream=True,
+        timeout=_TIMEOUT,
+    )
+    resp.raise_for_status()
+    blocks = {}  # index -> {"type","id","name","input_json","text"}
+    stop_reason = None
+    for raw in resp.iter_lines():
+        if not raw:
+            continue
+        line = raw.decode() if isinstance(raw, bytes) else raw
+        if not line.startswith("data: "):
+            continue
+        evt = json.loads(line[6:])
+        t = evt.get("type")
+        if t == "content_block_start":
+            cb = evt["content_block"]
+            idx = evt["index"]
+            blocks[idx] = {
+                "type": cb["type"],
+                "id": cb.get("id"),
+                "name": cb.get("name"),
+                "input_json": "",
+                "text": "",
+            }
+        elif t == "content_block_delta":
+            idx = evt["index"]
+            d = evt.get("delta", {})
+            if d.get("type") == "input_json_delta":
+                blocks[idx]["input_json"] += d.get("partial_json", "")
+            elif d.get("type") == "text_delta":
+                blocks[idx]["text"] += d["text"]
+                if on_event:
+                    on_event({"type": "text", "chunk": d["text"]})
+        elif t == "message_delta":
+            stop_reason = evt.get("delta", {}).get("stop_reason", stop_reason)
+    ordered = [blocks[i] for i in sorted(blocks)]
+    return ordered, stop_reason
+
+
 def run_agent_pageindex(
     conn,
     user_message: str,
@@ -1546,12 +1682,9 @@ def run_agent_pageindex(
     course_id: int | None,
     context_material_ids: list,
     on_event=None,
+    provider: str = "openai",
 ) -> tuple:
-    from pageindex_retrieval import (
-        get_course_routing_index,
-        get_material_structure,
-        get_page_content,
-    )
+    from pageindex_retrieval import get_course_routing_index
 
     tools = [
         {
@@ -1654,6 +1787,70 @@ def run_agent_pageindex(
         filt.flush()
         return result
 
+    if provider == "claude":
+        claude_messages = [{"role": "user", "content": user_message}]
+        for iteration in range(MAX_TOOL_ITERATIONS):
+            blocks, stop_reason = _pageindex_stream_call_claude(
+                api_key, model, system_content, claude_messages, tools, on_event
+            )
+            tool_use_blocks = [b for b in blocks if b["type"] == "tool_use"]
+            if not tool_use_blocks or stop_reason != "tool_use":
+                full_text = "".join(b["text"] for b in blocks if b["type"] == "text")
+                raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+                (
+                    reply_body,
+                    assistant_reply_summary,
+                    assistant_follow_ups,
+                    assistant_clarifying_question,
+                ) = _parse_synthesis_json(raw_final)
+                final_text = reply_body if (reply_body or "").strip() else raw_final
+                break
+            # Append assistant turn
+            assistant_content = []
+            for b in blocks:
+                if b["type"] == "tool_use":
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": b["id"],
+                        "name": b["name"],
+                        "input": json.loads(b["input_json"]) if b["input_json"] else {},
+                    })
+                elif b["type"] == "text" and b["text"]:
+                    assistant_content.append({"type": "text", "text": b["text"]})
+            claude_messages.append({"role": "assistant", "content": assistant_content})
+            # Dispatch each tool call and collect results
+            tool_results = []
+            for b in tool_use_blocks:
+                args = json.loads(b["input_json"]) if b["input_json"] else {}
+                result_text = _dispatch_pageindex_tool(
+                    conn=conn,
+                    name=b["name"],
+                    args=args,
+                    course_id=course_id,
+                    grounding_refs=grounding_refs,
+                    on_event=on_event,
+                )
+                tool_trace.append({"tool": b["name"], "args": args, "iteration": iteration})
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": b["id"],
+                    "content": result_text,
+                })
+            claude_messages.append({"role": "user", "content": tool_results})
+
+        if not final_text:
+            final_text = "I could not find relevant content in the course materials."
+
+        return (
+            final_text,
+            grounding_refs,
+            tool_trace,
+            {"intent_type": "pageindex", "verifier_passed": True, "repair_invoked": False},
+            assistant_reply_summary,
+            assistant_follow_ups or [],
+            assistant_clarifying_question,
+        )
+
     for iteration in range(MAX_TOOL_ITERATIONS):
         started = time.time()
         message, finish_reason = _stream_with_filter(messages, tools)
@@ -1697,63 +1894,14 @@ def run_agent_pageindex(
             except json.JSONDecodeError:
                 args = {}
 
-            if name == "get_material_structure":
-                material_id = args.get("material_id")
-                tool_result = json.dumps(
-                    get_material_structure(conn, material_id), indent=2
-                )
-            elif name == "get_page_content":
-                material_id = args.get("material_id")
-                pages_spec = args.get("pages", "")
-                rows = get_page_content(conn, material_id, pages_spec)
-                if rows:
-                    parts = [
-                        f"--- Page {row['page_number']} ---\n"
-                        f"{row['text_content'] or '[No text extracted]'}"
-                        for row in rows
-                    ]
-                    tool_result = "\n\n".join(parts)
-                    grounding_refs.append(f"material:{material_id}")
-                else:
-                    tool_result = "No content found for the requested pages."
-                if on_event:
-                    on_event(
-                        {
-                            "type": "tool_call",
-                            "tool": "get_page_content",
-                            "material_id": material_id,
-                            "pages": pages_spec,
-                        }
-                    )
-            elif name == "get_related_materials":
-                from pageindex_retrieval import get_material_relations
-
-                material_id = args.get("material_id")
-                relations = get_material_relations(conn, course_id, material_id)
-                if relations:
-                    lines = []
-                    for relation in relations:
-                        score = relation.get("similarity_score")
-                        score_text = f"{score:.2f}" if score is not None else "?"
-                        shared_tags = ", ".join(relation.get("shared_tags") or []) or "none"
-                        lines.append(
-                            f"  [{relation['other_material_id']}] "
-                            f"{relation['relation_type']} (confidence: {score_text})"
-                            f" | shared topics: {shared_tags}"
-                        )
-                    tool_result = f"Related materials for {material_id}:\n" + "\n".join(lines)
-                else:
-                    tool_result = f"No known relations for material {material_id}."
-                if on_event:
-                    on_event(
-                        {
-                            "type": "tool_call",
-                            "tool": "get_related_materials",
-                            "material_id": material_id,
-                        }
-                    )
-            else:
-                tool_result = f"Unknown tool: {name}"
+            tool_result = _dispatch_pageindex_tool(
+                conn=conn,
+                name=name,
+                args=args,
+                course_id=course_id,
+                grounding_refs=grounding_refs,
+                on_event=on_event,
+            )
 
             tool_trace.append({"tool": name, "args": args, "iteration": iteration})
             messages.append(
