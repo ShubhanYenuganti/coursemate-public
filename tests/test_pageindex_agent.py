@@ -428,3 +428,33 @@ def test_run_agent_pageindex_gemini_calls_tool_and_returns_answer():
     assert mock_post.call_count == 2
     assert mock_dispatch.call_count == 1
     assert "Gemini structure answer" in result[0]
+
+
+def test_synthesize_pageindex_routes_to_selected_provider():
+    """When PageIndex is enabled and provider=claude, synthesize passes claude key+model."""
+    from unittest.mock import patch, MagicMock
+    from llm import synthesize
+
+    captured = {}
+    def fake_loop(**kwargs):
+        captured.update(kwargs)
+        return ("answer", ["material:1"], [], {}, "summary", [], None)
+
+    with patch("llm._is_pageindex_enabled", return_value=True), \
+         patch("llm.run_agent_pageindex", side_effect=fake_loop) as mock_loop, \
+         patch("llm._get_api_key", return_value="sk-ant-test-key"):
+        synthesize(
+            MagicMock(),           # conn
+            1,                     # user_id
+            "claude",              # ai_provider
+            "claude-sonnet-4-6",   # ai_model
+            "what is TCP?",        # user_message
+            [],                    # chunks
+            chat_id=5,
+            context_material_ids=[],
+        )
+
+    assert mock_loop.called
+    assert captured.get("provider") == "claude"
+    assert captured.get("model") == "claude-sonnet-4-6"
+    assert captured.get("api_key") == "sk-ant-test-key"

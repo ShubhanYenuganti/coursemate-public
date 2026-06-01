@@ -2169,7 +2169,7 @@ def synthesize(
     material_scope = context_material_ids if isinstance(context_material_ids, list) else []
     use_pageindex = _is_pageindex_enabled()
     if use_pageindex and not force_context_only:
-        agentic_api_key = _get_api_key(conn, user_id, DEFAULT_AGENTIC_PROVIDER)
+        agentic_api_key = _get_api_key(conn, user_id, ai_provider)
         pageindex_course_id = None
         if context_material_ids:
             cursor = conn.cursor()
@@ -2199,8 +2199,9 @@ def synthesize(
         ) = run_agent_pageindex(
             conn=conn,
             user_message=user_message,
-            model=DEFAULT_AGENTIC_MODEL,
+            model=ai_model,
             api_key=agentic_api_key,
+            provider=ai_provider,
             chat_id=chat_id,
             course_id=pageindex_course_id,
             context_material_ids=material_scope,
