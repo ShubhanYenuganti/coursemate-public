@@ -186,6 +186,8 @@ export default function FlashcardViewer({
   const [saveStatus, setSaveStatus] = useState(data?.artifact_material_id ? 'saved' : 'idle');
   const [exportStatus, setExportStatus] = useState('idle');
   const [resolving, setResolving] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const PLAY_INTERVAL_MS = 4000;
 
   // Export state
   const courseId = course?.id;
@@ -201,6 +203,27 @@ export default function FlashcardViewer({
   useEffect(() => {
     setSaveStatus(data?.artifact_material_id ? 'saved' : 'idle');
   }, [data?.artifact_material_id, data?.generation_id]);
+
+  useEffect(() => {
+    if (!playing) return undefined;
+    const tick = setInterval(() => {
+      setIsFlipped((flipped) => {
+        if (!flipped) return true; // first tick: show answer
+        // second tick: advance or stop
+        setCurrentIndex((i) => {
+          const lastIndex = displayCards.length - 1;
+          if (i >= lastIndex) {
+            setPlaying(false);
+            return i;
+          }
+          if (trackProgress) setSeen((prev) => new Set(prev).add(i));
+          return i + 1;
+        });
+        return false; // reset flip for next card
+      });
+    }, PLAY_INTERVAL_MS);
+    return () => clearInterval(tick);
+  }, [playing, displayCards, trackProgress]);
 
   const displayCards = useMemo(() => {
     if (!shuffled) return cards;
@@ -224,6 +247,7 @@ export default function FlashcardViewer({
   const actionIconClass = "text-gray-500";
 
   function goNext() {
+    setPlaying(false);
     if (currentIndex < total - 1) {
       if (trackProgress) setSeen((prev) => new Set(prev).add(currentIndex));
       setCurrentIndex((i) => i + 1);
@@ -233,6 +257,7 @@ export default function FlashcardViewer({
   }
 
   function goPrev() {
+    setPlaying(false);
     if (currentIndex > 0) {
       setCurrentIndex((i) => i - 1);
       setIsFlipped(false);
@@ -695,7 +720,13 @@ export default function FlashcardViewer({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              className="w-9 h-9 flex items-center justify-center rounded-full border border-gray-200 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+              onClick={() => setPlaying((p) => !p)}
+              aria-label={playing ? 'Pause' : 'Play'}
+              className={`w-9 h-9 flex items-center justify-center rounded-full border transition-colors ${
+                playing
+                  ? 'border-indigo-400 text-indigo-600 bg-indigo-50'
+                  : 'border-gray-200 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'
+              }`}
             >
               <PlayIcon />
             </button>
