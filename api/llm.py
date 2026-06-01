@@ -1537,6 +1537,89 @@ def _pageindex_stream_call(
     return message, finish_reason
 
 
+def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
+    """Build the tool list for the PageIndex agent loop."""
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_material_structure",
+                "description": (
+                    "Get the hierarchical section/problem index for one material. "
+                    "Call to see what's inside a relevant file before fetching pages."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "material_id": {
+                            "type": "integer",
+                            "description": "Material ID from the course materials index",
+                        },
+                    },
+                    "required": ["material_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_page_content",
+                "description": (
+                    "Fetch raw text of specific pages. "
+                    "Use ranges like '5-7', comma lists like '3,8', or single pages like '12'. "
+                    "Cite answers as 'Material X, page Y'."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "material_id": {"type": "integer"},
+                        "pages": {
+                            "type": "string",
+                            "description": "Page spec: '5-7', '3,8', or '12'",
+                        },
+                    },
+                    "required": ["material_id", "pages"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_related_materials",
+                "description": (
+                    "Get materials related to a specific material via the knowledge graph. "
+                    "Use when initial material doesn't fully answer the question - "
+                    "e.g., find the lecture behind a homework problem, or a solution for a hw."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "material_id": {
+                            "type": "integer",
+                            "description": "Material ID to find neighbors for",
+                        },
+                    },
+                    "required": ["material_id"],
+                },
+            },
+        },
+    ]
+    if web_search_enabled and os.environ.get("AGENTIC_WEB_SEARCH_ENABLED", "").lower() == "true":
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the web for current information to supplement course materials. Use when page content is insufficient.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string", "description": "Search query"}},
+                    "required": ["query"],
+                },
+            },
+        })
+    return tools
+
+
 def _dispatch_pageindex_tool(conn, name, args, course_id, grounding_refs, on_event) -> str:
     """Dispatch a single PageIndex tool call. Returns tool-result text, appends to grounding_refs, emits events."""
     from pageindex_retrieval import get_material_structure, get_page_content
@@ -1596,6 +1679,12 @@ def _dispatch_pageindex_tool(conn, name, args, course_id, grounding_refs, on_eve
                     "material_id": material_id,
                 }
             )
+    elif name == "web_search":
+        from tools import execute_web_search
+        if on_event:
+            on_event({"type": "web_search_start", "query": args.get("query", "")})
+        result = execute_web_search(conn, args.get("query", ""))
+        tool_result = result.get("text", "")
     else:
         tool_result = f"Unknown tool: {name}"
 
@@ -1730,74 +1819,11 @@ def run_agent_pageindex(
     context_material_ids: list,
     on_event=None,
     provider: str = "openai",
+    web_search_enabled: bool = False,
 ) -> tuple:
     from pageindex_retrieval import get_course_routing_index
 
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "get_material_structure",
-                "description": (
-                    "Get the hierarchical section/problem index for one material. "
-                    "Call to see what's inside a relevant file before fetching pages."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "material_id": {
-                            "type": "integer",
-                            "description": "Material ID from the course materials index",
-                        },
-                    },
-                    "required": ["material_id"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "get_page_content",
-                "description": (
-                    "Fetch raw text of specific pages. "
-                    "Use ranges like '5-7', comma lists like '3,8', or single pages like '12'. "
-                    "Cite answers as 'Material X, page Y'."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "material_id": {"type": "integer"},
-                        "pages": {
-                            "type": "string",
-                            "description": "Page spec: '5-7', '3,8', or '12'",
-                        },
-                    },
-                    "required": ["material_id", "pages"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "get_related_materials",
-                "description": (
-                    "Get materials related to a specific material via the knowledge graph. "
-                    "Use when initial material doesn't fully answer the question - "
-                    "e.g., find the lecture behind a homework problem, or a solution for a hw."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "material_id": {
-                            "type": "integer",
-                            "description": "Material ID to find neighbors for",
-                        },
-                    },
-                    "required": ["material_id"],
-                },
-            },
-        },
-    ]
+    tools = _pageindex_tool_list(web_search_enabled=web_search_enabled)
 
     routing_materials = get_course_routing_index(
         conn, course_id, context_material_ids or None

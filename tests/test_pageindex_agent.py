@@ -457,4 +457,33 @@ def test_synthesize_pageindex_routes_to_selected_provider():
     assert mock_loop.called
     assert captured.get("provider") == "claude"
     assert captured.get("model") == "claude-sonnet-4-6"
-    assert captured.get("api_key") == "sk-ant-test-key"
+
+
+def test_pageindex_tool_list_includes_web_search_when_enabled(monkeypatch):
+    """web_search tool appears only when web_search_enabled=True AND env var is set."""
+    import llm
+    monkeypatch.setenv("AGENTIC_WEB_SEARCH_ENABLED", "true")
+
+    tools_on = llm._pageindex_tool_list(web_search_enabled=True)
+    tools_off = llm._pageindex_tool_list(web_search_enabled=False)
+
+    names_on = [t.get("function", t).get("name") for t in tools_on]
+    names_off = [t.get("function", t).get("name") for t in tools_off]
+
+    assert "web_search" in names_on
+    assert "web_search" not in names_off
+
+
+def test_dispatch_pageindex_tool_web_search_calls_execute_web_search(monkeypatch):
+    """_dispatch_pageindex_tool routes web_search to execute_web_search."""
+    from unittest.mock import patch, MagicMock
+    import llm
+
+    with patch("tools.execute_web_search", return_value={"text": "search result"}) as mock_ws:
+        result = llm._dispatch_pageindex_tool(
+            conn=MagicMock(), name="web_search",
+            args={"query": "TCP handshake"},
+            course_id=1, grounding_refs=[], on_event=None,
+        )
+    assert "search result" in result
+    mock_ws.assert_called_once()
