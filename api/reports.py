@@ -235,6 +235,12 @@ def _run_generation_locally(generation_id: int) -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _extract_conversation_context(body: dict):
+    """Optional conversation summary that grounds a chat-originated generation."""
+    val = (body.get("conversation_context") or "").strip()
+    return val or None
+
+
 def _enqueue_reports_generation_job(generation_id: int, user_id: int):
     if not _REPORTS_QUEUE_URL:
         _run_generation_locally(generation_id)
@@ -269,6 +275,7 @@ def _persist_draft(
     est_tl: int,
     est_th: int,
     parent_generation_id=None,
+    conversation_context=None,
 ) -> int:
     cursor = conn.cursor()
     cursor.execute(
@@ -278,9 +285,9 @@ def _persist_draft(
              provider, model_id, status, parent_generation_id,
              selected_material_ids, prompt_text, generation_settings,
              estimated_prompt_tokens_low, estimated_prompt_tokens_high,
-             estimated_total_tokens_low, estimated_total_tokens_high)
+             estimated_total_tokens_low, estimated_total_tokens_high, conversation_context)
         VALUES
-            (%s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s)
+            (%s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -298,6 +305,7 @@ def _persist_draft(
             est_ph,
             est_tl,
             est_th,
+            conversation_context,
         ),
     )
     generation_id = cursor.fetchone()["id"]
@@ -715,6 +723,7 @@ class handler(BaseHTTPRequestHandler):
         model_id = str(body.get("model_id") or "gpt-4o-mini").strip() or "gpt-4o-mini"
         material_ids = _as_int_list(body.get("material_ids") or [])
         parent_generation_id = _as_int(body.get("parent_generation_id"))
+        conversation_context = _extract_conversation_context(body)
 
         if not Course.verify_access(course_id, user["id"]):
             send_json(self, 403, {"error": "Access denied to this course"})
@@ -754,6 +763,7 @@ class handler(BaseHTTPRequestHandler):
                 est_tl=estimate["estimated_total_tokens_low"],
                 est_th=estimate["estimated_total_tokens_high"],
                 parent_generation_id=parent_generation_id,
+                conversation_context=conversation_context,
             )
 
         send_json(
@@ -776,6 +786,7 @@ class handler(BaseHTTPRequestHandler):
 
         provider_override = body.get("provider")
         model_id_override = body.get("model_id")
+        conversation_context = _extract_conversation_context(body)
 
         should_enqueue = False
         status_response = None
@@ -818,6 +829,8 @@ class handler(BaseHTTPRequestHandler):
             if model_id_override:
                 update_fields.append("model_id=%s")
                 update_values.append(model_id_override)
+            update_fields.append("conversation_context=COALESCE(%s, conversation_context)")
+            update_values.append(conversation_context)
             update_values.extend([gen_id, user["id"]])
 
             cursor.execute(

@@ -263,6 +263,19 @@ def _fetch_material_context(conn, material_ids: list, char_budget: int = CONTEXT
     return "\n\n---\n\n".join(parts)
 
 
+def _merge_conversation_context(conversation_context, material_context: str) -> str:
+    """Prepend a conversation summary (chat-originated generations) ahead of material chunks."""
+    summary = (conversation_context or "").strip()
+    if not summary:
+        return material_context
+    return (
+        "Conversation summary (what the student discussed; use as primary source):\n"
+        f"{summary}\n\n"
+        "Supporting course materials:\n"
+        f"{material_context}"
+    )
+
+
 def _build_prompt(
     template_id: str,
     material_context: str,
@@ -640,6 +653,9 @@ def _process_generation(generation_id: int):
 
             api_key = decrypt_api_key(key_row["encrypted_key"])
             full_context = _fetch_material_context(conn, material_ids)
+            full_context = _merge_conversation_context(
+                generation.get("conversation_context"), full_context
+            )
 
             # Persist the generating state before the external provider call, but keep the
             # session lock so a retried message can safely reclaim abandoned work.
