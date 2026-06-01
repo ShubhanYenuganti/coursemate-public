@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { formatDateTime, parseUTC } from './utils/dateUtils';
 import { getMaterialUrl } from './utils/materialUtils';
 import SearchChat from './SearchChat';
+import GenerationProposalCard from './components/GenerationProposalCard';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
@@ -810,6 +811,14 @@ function MessageBubble({
         <div className="text-sm text-gray-700 leading-relaxed space-y-0.5">
           {renderContent(msg.content)}
         </div>
+        {msg._generationProposal && (
+          <GenerationProposalCard
+            proposal={msg._generationProposal}
+            status={msg._proposalStatus}
+            onBuild={() => {}}
+            onRefine={() => {}}
+          />
+        )}
         {webSearchUrls && webSearchUrls.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-2">
             {webSearchUrls.map((item, idx) => {
@@ -1287,6 +1296,17 @@ export default function ChatTab({ course, userData, onAddSource }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(
+    () => localStorage.getItem('chat_web_search_enabled') === '1'
+  );
+
+  function toggleWebSearch() {
+    setWebSearchEnabled((v) => {
+      const next = !v;
+      localStorage.setItem('chat_web_search_enabled', next ? '1' : '0');
+      return next;
+    });
+  }
   const [selectedModel, setSelectedModel] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
@@ -1846,6 +1866,17 @@ export default function ChatTab({ course, userData, onAddSource }) {
         sendingRef.current = false;
         setMessages((prev) => prev.filter((m) => m.id !== tempId && m.id !== tempAssistantId));
         break;
+      case 'generation_proposal':
+        setMessages((prev) => {
+          const existing = prev.find((m) => m.id === tempAssistantId);
+          if (existing) {
+            return prev.map((m) =>
+              m.id === tempAssistantId ? { ...m, _generationProposal: evt } : m
+            );
+          }
+          return [...prev, { id: tempAssistantId, role: 'assistant', content: '', _streaming: true, _generationProposal: evt }];
+        });
+        break;
       default:
         break;
     }
@@ -2008,6 +2039,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
           context_material_ids: contextIds,
           ai_provider: selectedModel,
           ai_model: selectedModelId || selectedModel,
+          web_search_enabled: webSearchEnabled,
           ...(imageAttachments.length > 0 ? { image_attachments: imageAttachments } : {}),
         }),
       });
@@ -2145,6 +2177,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
           context_material_ids: contextIds,
           ai_provider: selectedModel,
           ai_model: selectedModelId || selectedModel,
+          web_search_enabled: webSearchEnabled,
           image_attachments: imageAttachments,
         }),
       });
@@ -3010,6 +3043,23 @@ export default function ChatTab({ course, userData, onAddSource }) {
                     )}
                   </>
                 )}
+                <button
+                  type="button"
+                  onClick={toggleWebSearch}
+                  title={webSearchEnabled ? 'Web search on (click to disable)' : 'Web search off (click to enable)'}
+                  aria-pressed={webSearchEnabled}
+                  className={`flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full border transition-colors ${
+                    webSearchEnabled
+                      ? 'border-indigo-400 text-indigo-600 bg-indigo-50'
+                      : 'border-gray-200 text-gray-400 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'
+                  }`}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="2" y1="12" x2="22" y2="12"/>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                  </svg>
+                </button>
                 <button
                   type="button"
                   onClick={handleSend}
