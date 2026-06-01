@@ -1,3 +1,4 @@
+import { beforeEach, test, expect } from 'vitest';
 import { loadRatings, setRating } from './flashcardRatings';
 
 // Mock localStorage
