@@ -2176,6 +2176,7 @@ def synthesize(
     on_event=None,
     force_context_only: bool = False,
     image_s3_keys: list | None = None,
+    web_search_enabled: bool = False,
 ) -> tuple:
     """
     Synthesize an LLM response using the user's chosen provider and model.
@@ -2232,6 +2233,7 @@ def synthesize(
             course_id=pageindex_course_id,
             context_material_ids=material_scope,
             on_event=on_event,
+            web_search_enabled=web_search_enabled,
         )
         return (
             text,

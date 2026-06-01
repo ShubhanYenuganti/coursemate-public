@@ -1109,6 +1109,7 @@ class handler(BaseHTTPRequestHandler):
         image_attachments = data.get('image_attachments') or []
         image_s3_keys = [a['s3_key'] for a in image_attachments if isinstance(a, dict) and a.get('s3_key')]
         image_s3_keys_with_filenames = [(a['s3_key'], a.get('filename', '')) for a in image_attachments if isinstance(a, dict) and a.get('s3_key')]
+        web_search_enabled = bool(data.get('web_search_enabled', False))
 
         if not isinstance(chat_id, int):
             send_json(self, 400, {"error": "chat_id is required"})
@@ -1247,6 +1248,7 @@ class handler(BaseHTTPRequestHandler):
                         context_material_ids=context_material_ids,
                         on_event=on_event,
                         image_s3_keys=image_s3_keys or None,
+                        web_search_enabled=web_search_enabled,
                     )
             except Exception as e:
                 send_sse_event(self, {"type": "error", "message": str(e)})
@@ -1309,6 +1311,7 @@ class handler(BaseHTTPRequestHandler):
         ai_provider = data.get('ai_provider') or DEFAULT_AI_PROVIDER
         ai_model = data.get('ai_model')
         image_attachments = data.get('image_attachments')  # list[{s3_key, filename}] or None
+        web_search_enabled = bool(data.get('web_search_enabled', False))
         if ai_provider == "openai" and not ai_model:
             ai_model = DEFAULT_AI_MODEL
 
@@ -1459,6 +1462,7 @@ class handler(BaseHTTPRequestHandler):
                     context_material_ids=context_material_ids,
                     on_event=on_event,
                     image_s3_keys=list(final_keys),
+                    web_search_enabled=web_search_enabled,
                 )
                 logger.info(
                     "chat_synthesize_done",

@@ -487,3 +487,27 @@ def test_dispatch_pageindex_tool_web_search_calls_execute_web_search(monkeypatch
         )
     assert "search result" in result
     mock_ws.assert_called_once()
+
+
+def test_synthesize_passes_web_search_enabled_to_pageindex(monkeypatch):
+    """synthesize() threads web_search_enabled into run_agent_pageindex."""
+    from unittest.mock import patch, MagicMock
+    import os
+    import llm
+
+    captured = {}
+    def fake_loop(**kwargs):
+        captured.update(kwargs)
+        return ("answer", ["material:1"], [], {}, "summary", [], None)
+
+    monkeypatch.setenv("AGENTIC_WEB_SEARCH_ENABLED", "true")
+
+    with patch("llm._is_pageindex_enabled", return_value=True), \
+         patch("llm.run_agent_pageindex", side_effect=fake_loop), \
+         patch("llm._get_api_key", return_value="sk-test"):
+        llm.synthesize(
+            MagicMock(), 1, "openai", "gpt-4o", "query", [],
+            chat_id=5, web_search_enabled=True,
+        )
+
+    assert captured.get("web_search_enabled") is True
