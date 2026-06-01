@@ -1603,6 +1603,50 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "propose_generation",
+                "description": (
+                    "Propose a study artifact (quiz, flashcards, or report) for the user to "
+                    "build from this conversation. Call this ONLY when the user explicitly asks "
+                    "to create one (e.g. 'make me a quiz about X', 'turn this into flashcards'). "
+                    "Do not generate the artifact yourself — this tool shows the user a card they "
+                    "confirm. After calling it, write a short reply telling them the proposal is ready."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "generation_type": {
+                            "type": "string",
+                            "enum": ["quiz", "flashcards", "report"],
+                        },
+                        "title": {"type": "string", "description": "Short human title."},
+                        "discussion_summary": {
+                            "type": "string",
+                            "description": (
+                                "Concise distillation of the relevant conversation that should "
+                                "ground the generation. A few sentences; this is the source content."
+                            ),
+                        },
+                        "material_ids": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                            "description": "Optional; defaults to the chat's selected materials.",
+                        },
+                        "params": {
+                            "type": "object",
+                            "description": (
+                                "Optional type-specific parameters, e.g. {\"tf_count\":3,"
+                                "\"sa_count\":2,\"la_count\":1} for quiz, {\"num_cards\":10} for "
+                                "flashcards, {\"template\":\"study_guide\"} for report."
+                            ),
+                        },
+                    },
+                    "required": ["generation_type", "title", "discussion_summary"],
+                },
+            },
+        },
     ]
     if web_search_enabled and os.environ.get("AGENTIC_WEB_SEARCH_ENABLED", "").lower() == "true":
         tools.append({
@@ -2021,14 +2065,30 @@ def run_agent_pageindex(
             except json.JSONDecodeError:
                 args = {}
 
-            tool_result = _dispatch_pageindex_tool(
-                conn=conn,
-                name=name,
-                args=args,
-                course_id=course_id,
-                grounding_refs=grounding_refs,
-                on_event=on_event,
-            )
+            if name == "propose_generation":
+                proposal = {
+                    "type": "generation_proposal",
+                    "generation_type": args.get("generation_type"),
+                    "title": args.get("title") or "",
+                    "discussion_summary": args.get("discussion_summary") or "",
+                    "material_ids": args.get("material_ids") or list(context_material_ids or []),
+                    "params": args.get("params") or {},
+                }
+                if on_event:
+                    on_event(proposal)
+                tool_result = (
+                    "Proposal shown to the user as a card with Build and Refine actions. "
+                    "Now write a one-sentence reply confirming the proposal is ready."
+                )
+            else:
+                tool_result = _dispatch_pageindex_tool(
+                    conn=conn,
+                    name=name,
+                    args=args,
+                    course_id=course_id,
+                    grounding_refs=grounding_refs,
+                    on_event=on_event,
+                )
 
             tool_trace.append({"tool": name, "args": args, "iteration": iteration})
             messages.append(

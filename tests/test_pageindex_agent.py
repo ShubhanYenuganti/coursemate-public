@@ -511,3 +511,59 @@ def test_synthesize_passes_web_search_enabled_to_pageindex(monkeypatch):
         )
 
     assert captured.get("web_search_enabled") is True
+
+
+def _stub_openai_named_tool_call(name: str, args: dict) -> MagicMock:
+    """Mock one streaming OpenAI response that emits a single named tool call."""
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    tool_args = json.dumps(args)
+    lines = [
+        b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+        b'"type":"function","function":{"name":"' + name.encode() + b'",'
+        b'"arguments":' + json.dumps(tool_args).encode() + b'}}]}}]}',
+        b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+        b'data: [DONE]',
+    ]
+    resp.iter_lines.return_value = iter(lines)
+    return resp
+
+
+def test_run_agent_pageindex_propose_generation_emits_event():
+    import copy
+    from llm import run_agent_pageindex
+
+    events = []
+    first = _stub_openai_named_tool_call(
+        "propose_generation",
+        {
+            "generation_type": "quiz",
+            "title": "TCP Handshake Quiz",
+            "discussion_summary": "We covered SYN/SYN-ACK/ACK and sequence numbers.",
+            "params": {"tf_count": 3, "sa_count": 2, "la_count": 1},
+        },
+    )
+    second = _stub_openai_response_no_tools("Here's a quiz on the handshake.")
+
+    with patch("llm.requests.post", side_effect=[copy.deepcopy(first), copy.deepcopy(second)]), \
+         patch("pageindex_retrieval.get_course_routing_index", return_value=[]), \
+         patch("llm._format_routing_index_block", return_value="<course_materials></course_materials>"):
+        run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="make me a quiz about the TCP handshake",
+            model="gpt-4o",
+            api_key="sk-test",
+            chat_id=1,
+            course_id=7,
+            context_material_ids=[101, 102],
+            on_event=events.append,
+        )
+
+    proposals = [e for e in events if e.get("type") == "generation_proposal"]
+    assert len(proposals) == 1
+    p = proposals[0]
+    assert p["generation_type"] == "quiz"
+    assert p["title"] == "TCP Handshake Quiz"
+    assert p["material_ids"] == [101, 102]          # defaulted from context_material_ids
+    assert p["params"]["tf_count"] == 3
+    assert "SYN" in p["discussion_summary"]
