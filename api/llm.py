@@ -1673,6 +1673,53 @@ def _pageindex_stream_call_claude(api_key, model, system, messages, tools, on_ev
     return ordered, stop_reason
 
 
+def _pageindex_tools_gemini(tools: list) -> list:
+    """Convert OpenAI-format tool dicts to Gemini functionDeclarations format."""
+    declarations = []
+    for t in tools:
+        fn = t.get("function", t)
+        declarations.append({
+            "name": fn["name"],
+            "description": fn.get("description", ""),
+            "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
+        })
+    return [{"functionDeclarations": declarations}]
+
+
+def _pageindex_stream_call_gemini(api_key, model, system, contents, tools, on_event):
+    """One streaming Gemini generateContent call. Returns (parts, has_function_call).
+    Emits {"type":"text","chunk":...} for text parts."""
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model}:streamGenerateContent?alt=sse&key={api_key}"
+    )
+    body = {
+        "system_instruction": {"parts": [{"text": system}]},
+        "contents": contents,
+        "tools": _pageindex_tools_gemini(tools),
+    }
+    resp = requests.post(url, json=body, stream=True, timeout=_TIMEOUT)
+    resp.raise_for_status()
+    all_parts = []
+    has_function_call = False
+    for raw in resp.iter_lines():
+        if not raw:
+            continue
+        line = raw.decode() if isinstance(raw, bytes) else raw
+        if not line.startswith("data: "):
+            continue
+        evt = json.loads(line[6:])
+        for candidate in evt.get("candidates", []):
+            for part in candidate.get("content", {}).get("parts", []):
+                all_parts.append(part)
+                if "functionCall" in part:
+                    has_function_call = True
+                elif "text" in part:
+                    if on_event:
+                        on_event({"type": "text", "chunk": part["text"]})
+    return all_parts, has_function_call
+
+
 def run_agent_pageindex(
     conn,
     user_message: str,
@@ -1837,6 +1884,60 @@ def run_agent_pageindex(
                     "content": result_text,
                 })
             claude_messages.append({"role": "user", "content": tool_results})
+
+        if not final_text:
+            final_text = "I could not find relevant content in the course materials."
+
+        return (
+            final_text,
+            grounding_refs,
+            tool_trace,
+            {"intent_type": "pageindex", "verifier_passed": True, "repair_invoked": False},
+            assistant_reply_summary,
+            assistant_follow_ups or [],
+            assistant_clarifying_question,
+        )
+
+    if provider == "gemini":
+        contents = [{"role": "user", "parts": [{"text": user_message}]}]
+        for iteration in range(MAX_TOOL_ITERATIONS):
+            parts, has_fc = _pageindex_stream_call_gemini(
+                api_key, model, system_content, contents, tools, on_event
+            )
+            if not has_fc:
+                full_text = "".join(p.get("text", "") for p in parts if "text" in p)
+                raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+                (
+                    reply_body,
+                    assistant_reply_summary,
+                    assistant_follow_ups,
+                    assistant_clarifying_question,
+                ) = _parse_synthesis_json(raw_final)
+                final_text = reply_body if (reply_body or "").strip() else raw_final
+                break
+            # Append model turn
+            contents.append({"role": "model", "parts": parts})
+            # Dispatch function calls and collect responses
+            fn_responses = []
+            for p in parts:
+                if "functionCall" in p:
+                    fc = p["functionCall"]
+                    result_text = _dispatch_pageindex_tool(
+                        conn=conn,
+                        name=fc["name"],
+                        args=fc.get("args", {}),
+                        course_id=course_id,
+                        grounding_refs=grounding_refs,
+                        on_event=on_event,
+                    )
+                    tool_trace.append({"tool": fc["name"], "args": fc.get("args", {}), "iteration": iteration})
+                    fn_responses.append({
+                        "functionResponse": {
+                            "name": fc["name"],
+                            "response": {"content": result_text},
+                        }
+                    })
+            contents.append({"role": "user", "parts": fn_responses})
 
         if not final_text:
             final_text = "I could not find relevant content in the course materials."

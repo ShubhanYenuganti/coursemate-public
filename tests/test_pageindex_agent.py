@@ -373,3 +373,58 @@ def test_run_agent_pageindex_claude_calls_tool_and_returns_answer():
     assert mock_dispatch.call_count == 1
     # result[0] is the answer string
     assert "Structure answer" in result[0]
+
+
+def _stub_gemini_function_call(name, args_obj):
+    """Mock Gemini SSE response with a single functionCall part."""
+    resp = MagicMock()
+    resp.status_code = 200
+    data = json.dumps({
+        "candidates": [{"content": {"parts": [{"functionCall": {"name": name, "args": args_obj}}]}}]
+    })
+    resp.iter_lines.return_value = iter([
+        b'data: ' + data.encode(),
+    ])
+    return resp
+
+
+def _stub_gemini_text(text):
+    """Mock Gemini SSE response with a text part (final answer)."""
+    resp = MagicMock()
+    resp.status_code = 200
+    data = json.dumps({
+        "candidates": [{"content": {"parts": [{"text": text}]}}]
+    })
+    resp.iter_lines.return_value = iter([
+        b'data: ' + data.encode(),
+    ])
+    return resp
+
+
+def test_run_agent_pageindex_gemini_calls_tool_and_returns_answer():
+    """Gemini provider: one tool call then a final text answer."""
+    from unittest.mock import patch, MagicMock
+    from llm import run_agent_pageindex
+
+    events = []
+    tool_stub = _stub_gemini_function_call("get_material_structure", {"course_id": 1})
+    text_stub = _stub_gemini_text('{"answer":"Gemini structure answer","cited_pages":[]}')
+
+    with patch("requests.post", side_effect=[tool_stub, text_stub]) as mock_post, \
+         patch("llm._dispatch_pageindex_tool", return_value="<structure>...</structure>") as mock_dispatch, \
+         patch("llm._format_routing_index_block", return_value="<course_materials></course_materials>"):
+        result = run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="what is the structure of this course?",
+            model="gemini-2.0-flash",
+            api_key="gm-test",
+            chat_id=1,
+            course_id=7,
+            context_material_ids=[101],
+            on_event=events.append,
+            provider="gemini",
+        )
+
+    assert mock_post.call_count == 2
+    assert mock_dispatch.call_count == 1
+    assert "Gemini structure answer" in result[0]
