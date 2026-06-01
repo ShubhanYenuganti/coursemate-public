@@ -519,11 +519,11 @@ def _stub_openai_named_tool_call(name: str, args: dict) -> MagicMock:
     resp.raise_for_status.return_value = None
     tool_args = json.dumps(args)
     lines = [
-        b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
-        b'"type":"function","function":{"name":"' + name.encode() + b'",'
-        b'"arguments":' + json.dumps(tool_args).encode() + b'}}]}}]}',
-        b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
-        b'data: [DONE]',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+        '"type":"function","function":{"name":"' + name + '",'
+        '"arguments":' + json.dumps(tool_args) + '}}]}}]}',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+        'data: [DONE]',
     ]
     resp.iter_lines.return_value = iter(lines)
     return resp

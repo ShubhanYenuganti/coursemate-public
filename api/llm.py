@@ -1939,14 +1939,30 @@ def run_agent_pageindex(
             tool_results = []
             for b in tool_use_blocks:
                 args = json.loads(b["input_json"]) if b["input_json"] else {}
-                result_text = _dispatch_pageindex_tool(
-                    conn=conn,
-                    name=b["name"],
-                    args=args,
-                    course_id=course_id,
-                    grounding_refs=grounding_refs,
-                    on_event=on_event,
-                )
+                if b["name"] == "propose_generation":
+                    proposal = {
+                        "type": "generation_proposal",
+                        "generation_type": args.get("generation_type") or "",
+                        "title": args.get("title") or "",
+                        "discussion_summary": args.get("discussion_summary") or "",
+                        "material_ids": args.get("material_ids") or list(context_material_ids or []),
+                        "params": args.get("params") or {},
+                    }
+                    if on_event:
+                        on_event(proposal)
+                    result_text = (
+                        "Proposal shown to the user as a card with Build and Refine actions. "
+                        "Now write a one-sentence reply confirming the proposal is ready."
+                    )
+                else:
+                    result_text = _dispatch_pageindex_tool(
+                        conn=conn,
+                        name=b["name"],
+                        args=args,
+                        course_id=course_id,
+                        grounding_refs=grounding_refs,
+                        on_event=on_event,
+                    )
                 tool_trace.append({"tool": b["name"], "args": args, "iteration": iteration})
                 tool_results.append({
                     "type": "tool_result",
@@ -1992,15 +2008,32 @@ def run_agent_pageindex(
             for p in parts:
                 if "functionCall" in p:
                     fc = p["functionCall"]
-                    result_text = _dispatch_pageindex_tool(
-                        conn=conn,
-                        name=fc["name"],
-                        args=fc.get("args", {}),
-                        course_id=course_id,
-                        grounding_refs=grounding_refs,
-                        on_event=on_event,
-                    )
-                    tool_trace.append({"tool": fc["name"], "args": fc.get("args", {}), "iteration": iteration})
+                    args = fc.get("args", {})
+                    if fc["name"] == "propose_generation":
+                        proposal = {
+                            "type": "generation_proposal",
+                            "generation_type": args.get("generation_type") or "",
+                            "title": args.get("title") or "",
+                            "discussion_summary": args.get("discussion_summary") or "",
+                            "material_ids": args.get("material_ids") or list(context_material_ids or []),
+                            "params": args.get("params") or {},
+                        }
+                        if on_event:
+                            on_event(proposal)
+                        result_text = (
+                            "Proposal shown to the user as a card with Build and Refine actions. "
+                            "Now write a one-sentence reply confirming the proposal is ready."
+                        )
+                    else:
+                        result_text = _dispatch_pageindex_tool(
+                            conn=conn,
+                            name=fc["name"],
+                            args=args,
+                            course_id=course_id,
+                            grounding_refs=grounding_refs,
+                            on_event=on_event,
+                        )
+                    tool_trace.append({"tool": fc["name"], "args": args, "iteration": iteration})
                     fn_responses.append({
                         "functionResponse": {
                             "name": fc["name"],
@@ -2068,7 +2101,7 @@ def run_agent_pageindex(
             if name == "propose_generation":
                 proposal = {
                     "type": "generation_proposal",
-                    "generation_type": args.get("generation_type"),
+                    "generation_type": args.get("generation_type") or "",
                     "title": args.get("title") or "",
                     "discussion_summary": args.get("discussion_summary") or "",
                     "material_ids": args.get("material_ids") or list(context_material_ids or []),
