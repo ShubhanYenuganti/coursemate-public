@@ -46,7 +46,7 @@ const TABS = [
 
 // ─── Generations ─────────────────────────────────────────────────────────────
 
-export default function Generations({ course, userData, onAddSource }) {
+export default function Generations({ course, userData, onAddSource, prefill, onPrefillConsumed }) {
   const storageKey = useMemo(
     () => `coursemate_generations_tab_${course?.id || 'global'}`,
     [course?.id]
@@ -65,6 +65,18 @@ export default function Generations({ course, userData, onAddSource }) {
   useEffect(() => {
     localStorage.setItem(storageKey, activeTab);
   }, [activeTab, storageKey]);
+
+  // When a prefill payload arrives, switch to the appropriate sub-tab
+  useEffect(() => {
+    if (!prefill) return;
+    const targetTab = prefill.generationType;
+    if (targetTab && TABS.some((t) => t.id === targetTab)) {
+      setActiveTab(targetTab);
+    }
+  }, [prefill]);
+
+  // Sub-tab prefill: pass only to the active tab so it can consume it once
+  const subPrefill = prefill?.generationType === activeTab ? prefill.prefill : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -93,10 +105,10 @@ export default function Generations({ course, userData, onAddSource }) {
 
       {/* ── Active generator ── */}
       {activeTab === 'quiz' && (
-        <Quiz course={course} onAddSource={onAddSource} />
+        <Quiz course={course} onAddSource={onAddSource} prefill={subPrefill} onPrefillConsumed={onPrefillConsumed} />
       )}
       {activeTab === 'flashcards' && (
-        <Flashcards course={course} onAddSource={onAddSource} />
+        <Flashcards course={course} onAddSource={onAddSource} prefill={subPrefill} onPrefillConsumed={onPrefillConsumed} />
       )}
       {activeTab === 'reports' && (
         <Reports course={course} onAddSource={onAddSource} />

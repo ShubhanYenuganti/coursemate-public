@@ -195,7 +195,7 @@ const MODEL_LABELS = { gemini: 'Gemini', openai: 'GPT', claude: 'Claude' };
 
 // ─── Quiz component ───────────────────────────────────────────────────────────
 
-export default function Quiz({ course, onAddSource }) {
+export default function Quiz({ course, onAddSource, prefill, onPrefillConsumed }) {
   const [materials, setMaterials] = useState([]);
   const [materialsLoading, setMaterialsLoading] = useState(true);
 
@@ -232,6 +232,13 @@ export default function Quiz({ course, onAddSource }) {
   // Polling — track which generation IDs are currently being polled.
   const [generatingIds, setGeneratingIds] = useState(new Set());
   const pollTimersRef = useRef({});
+
+  // Apply prefill from a chat Refine action
+  useEffect(() => {
+    if (!prefill) return;
+    if (prefill.topic) setTopic(prefill.topic);
+    onPrefillConsumed?.();
+  }, [prefill]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!course?.id) return;

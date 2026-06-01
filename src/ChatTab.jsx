@@ -816,7 +816,7 @@ function MessageBubble({
             proposal={msg._generationProposal}
             status={msg._proposalStatus}
             onBuild={() => handleBuildGeneration(msg)}
-            onRefine={() => {}}
+            onRefine={() => handleRefineGeneration(msg)}
           />
         )}
         {webSearchUrls && webSearchUrls.length > 0 && (
@@ -1285,7 +1285,7 @@ const CHAT_COMPOSER_MAX_HEIGHT_PX = 280;
 /** Min height (px) — matches the send row (~h-6) so single-line text isn’t short vs controls. */
 const CHAT_COMPOSER_MIN_HEIGHT_PX = 24;
 
-export default function ChatTab({ course, userData, onAddSource }) {
+export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   const [activeConv, setActiveConv] = useState(null);
   const [chats, setChats] = useState([]);
   const [chatsLoading, setChatsLoading] = useState(false);
@@ -1931,6 +1931,21 @@ export default function ChatTab({ course, userData, onAddSource }) {
   }
 
   const ENDPOINT_BY_TYPE = { quiz: '/api/quiz', flashcards: '/api/flashcards', report: '/api/reports' };
+
+  function handleRefineGeneration(msg) {
+    const p = msg._generationProposal;
+    if (!p || !onGoToTab) return;
+    // Map generation_type to Generations sub-tab id ('report' → 'reports')
+    const tabId = p.generation_type === 'report' ? 'reports' : p.generation_type;
+    onGoToTab('generate', {
+      generationType: tabId,
+      prefill: {
+        topic: p.title,
+        material_ids: p.material_ids,
+        conversation_context: p.discussion_summary,
+      },
+    });
+  }
 
   async function handleBuildGeneration(msg) {
     const p = msg._generationProposal;

@@ -186,7 +186,7 @@ const PROVIDER_MODELS = {
 
 const MODEL_LABELS = { gemini: 'Gemini', openai: 'GPT', claude: 'Claude' };
 
-export default function Flashcards({ course, onAddSource }) {
+export default function Flashcards({ course, onAddSource, prefill, onPrefillConsumed }) {
   const [materials, setMaterials] = useState([]);
   const [materialsLoading, setMaterialsLoading] = useState(true);
 
@@ -223,6 +223,13 @@ export default function Flashcards({ course, onAddSource }) {
   useEffect(() => {
     generatingIdsRef.current = generatingIds;
   }, [generatingIds]);
+
+  // Apply prefill from a chat Refine action
+  useEffect(() => {
+    if (!prefill) return;
+    if (prefill.topic) setTopic(prefill.topic);
+    onPrefillConsumed?.();
+  }, [prefill]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!providerDropdownOpen) return;
