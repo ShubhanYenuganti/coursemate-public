@@ -1,56 +1,73 @@
 import sys, os, types
+import pytest
 
-# Stub out every module that chat.py tries to import so we can reach
-# _content_match_from_row without a live DB / Vercel environment.
-def _make_stub(*names):
-    for name in names:
-        if name not in sys.modules:
-            sys.modules[name] = types.ModuleType(name)
+# chat.py pulls in middleware/db/rag/llm/etc. at import time. We stub those so we can
+# reach _content_match_from_row without a live DB / Vercel environment.
+#
+# IMPORTANT: the stubbing is done inside a module-scoped fixture (not at module top)
+# and fully restores sys.modules afterward. Doing it at import time left an empty `llm`
+# module in sys.modules that shadowed the real api/llm.py and broke collection of
+# test_pageindex_agent.py (`from llm import _format_routing_index_block`).
 
-_make_stub(
+_STUB_NAMES = [
     "middleware", "models", "courses", "db", "rag", "llm",
     "services", "services.query", "services.query.retrieval",
-    "services.query.persistence",
-    "s3_utils",
-)
+    "services.query.persistence", "s3_utils", "chat",
+]
 
-# Provide the attributes that chat.py references at import time.
-mw = sys.modules["middleware"]
-for attr in ("send_json", "send_sse_headers", "send_sse_event",
-             "handle_options", "authenticate_request",
-             "sanitize_string", "check_rate_limit"):
-    setattr(mw, attr, None)
 
-models_mod = sys.modules["models"]
-models_mod.User = object
+@pytest.fixture(scope="module", autouse=True)
+def _stub_chat_deps():
+    saved = {name: sys.modules.get(name) for name in _STUB_NAMES}
 
-courses_mod = sys.modules["courses"]
-courses_mod.Course = object
+    def _stub(name):
+        m = types.ModuleType(name)
+        sys.modules[name] = m
+        return m
 
-db_mod = sys.modules["db"]
-db_mod.get_db = None
+    mw = _stub("middleware")
+    for attr in ("send_json", "send_sse_headers", "send_sse_event",
+                 "handle_options", "authenticate_request",
+                 "sanitize_string", "check_rate_limit"):
+        setattr(mw, attr, None)
 
-rag_mod = sys.modules["rag"]
-rag_mod.retrieve_chunks = None
+    _stub("models").User = object
+    _stub("courses").Course = object
+    _stub("db").get_db = None
+    _stub("rag").retrieve_chunks = None
 
-llm_mod = sys.modules["llm"]
-for attr in ("synthesize", "synthesize_with_clarification", "suggest_chat_title"):
-    setattr(llm_mod, attr, None)
+    llm_mod = _stub("llm")
+    for attr in ("synthesize", "synthesize_with_clarification", "suggest_chat_title"):
+        setattr(llm_mod, attr, None)
 
-retrieval_mod = sys.modules["services.query.retrieval"]
-retrieval_mod._fetch_chunk_context = None
+    _stub("services")
+    _stub("services.query")
+    _stub("services.query.retrieval")._fetch_chunk_context = None
 
-persistence_mod = sys.modules["services.query.persistence"]
-for attr in ("embed_text_via_lambda", "write_chat_message_embedding",
-             "embed_image_via_lambda"):
-    setattr(persistence_mod, attr, None)
+    persistence_mod = _stub("services.query.persistence")
+    for attr in ("embed_text_via_lambda", "write_chat_message_embedding",
+                 "embed_image_via_lambda"):
+        setattr(persistence_mod, attr, None)
 
-s3_mod = sys.modules["s3_utils"]
-for attr in ("generate_put_presigned_url", "generate_download_presigned_url",
-             "get_file_extension", "verify_file_exists"):
-    setattr(s3_mod, attr, None)
+    s3_mod = _stub("s3_utils")
+    for attr in ("generate_put_presigned_url", "generate_download_presigned_url",
+                 "get_file_extension", "verify_file_exists"):
+        setattr(s3_mod, attr, None)
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'api'))
+    sys.modules.pop("chat", None)  # force a fresh import against the stubs
+    api_path = os.path.join(os.path.dirname(__file__), '..', 'api')
+    sys.path.insert(0, api_path)
+    try:
+        yield
+    finally:
+        if api_path in sys.path:
+            sys.path.remove(api_path)
+        for name, orig in saved.items():
+            if orig is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = orig
+        sys.modules.pop("chat", None)
 
 
 def test_content_match_row_includes_message_fields():
