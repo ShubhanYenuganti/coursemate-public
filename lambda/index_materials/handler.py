@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 
@@ -14,6 +15,12 @@ BUCKET = os.environ["AWS_S3_BUCKET_NAME"]
 STATE_MACHINE_ARN = os.environ["INDEX_STATE_MACHINE_ARN"]
 
 
+def _execution_name(s3_key: str) -> str:
+    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in s3_key)[:60]
+    suffix = hashlib.md5(s3_key.encode()).hexdigest()[:8]
+    return f"{safe}-{suffix}"
+
+
 def _resolve_material(s3_key: str):
     with get_db() as conn:
         return conn.execute(
@@ -26,10 +33,14 @@ def lambda_handler(event, context):
     if "Records" in event:
         for record in event["Records"]:
             s3_key = record["s3"]["object"]["key"]
-            sfn.start_execution(
-                stateMachineArn=STATE_MACHINE_ARN,
-                input=json.dumps({"s3_key": s3_key, "cursor": 0}),
-            )
+            try:
+                sfn.start_execution(
+                    stateMachineArn=STATE_MACHINE_ARN,
+                    name=_execution_name(s3_key),
+                    input=json.dumps({"s3_key": s3_key, "cursor": 0}),
+                )
+            except sfn.exceptions.ExecutionAlreadyExists:
+                pass
         return {"status": "launched"}
 
     s3_key = event.get("s3_key")
@@ -48,7 +59,16 @@ def lambda_handler(event, context):
 
 
 def _worker(event: dict, context, row) -> dict:
+    import time
     s3_key = event["s3_key"]
+    if not row:
+        # S3 trigger may have fired before confirm_upload wrote the material row.
+        # Retry for up to 30s so the race resolves without losing the job.
+        for _ in range(6):
+            time.sleep(5)
+            row = _resolve_material(s3_key)
+            if row:
+                break
     if not row:
         return {"status": "done", "s3_key": s3_key, "cursor": 0}
 

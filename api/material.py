@@ -6,6 +6,7 @@
 # POST   /api/material  action="bulk_upsert_sync"   → upsert sync state for integration source point files
 # DELETE /api/material                              → delete material (server-side tombstone for synced materials)
 
+import hashlib
 import json
 import math
 import os
@@ -670,11 +671,15 @@ class handler(BaseHTTPRequestHandler):
         if file_type == 'application/pdf':
             sfn = boto3.client('stepfunctions', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
             sfn_input = json.dumps({'s3_key': s3_key, 'cursor': 0})
+            sfn_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in s3_key)[:60]
+            sfn_name += "-" + hashlib.md5(s3_key.encode()).hexdigest()[:8]
             for arn_var in ('STATE_MACHINE_ARN', 'INDEX_STATE_MACHINE_ARN'):
                 arn = os.environ.get(arn_var)
                 if arn:
                     try:
-                        sfn.start_execution(stateMachineArn=arn, input=sfn_input)
+                        sfn.start_execution(stateMachineArn=arn, name=sfn_name, input=sfn_input)
+                    except sfn.exceptions.ExecutionAlreadyExists:
+                        pass
                     except Exception as e:
                         print(f"[material] Failed to start {arn_var} for {s3_key}: {e}")
 
