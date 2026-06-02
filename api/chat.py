@@ -62,6 +62,18 @@ DEFAULT_AI_MODEL = "gpt-4o-mini"
 
 # ------------------------------------------------------------------ helpers --
 
+def _content_match_from_row(r: dict) -> dict:
+    return {
+        "id": r["id"],
+        "title": r["title"],
+        "last_message_at": r["last_message_at"],
+        "message_id": r["message_id"],
+        "message_index": r["message_index"],
+        "snippet": r["snippet"],
+        "hit_count": r["hit_count"],
+    }
+
+
 def _get_chat(conn, chat_id):
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM chats WHERE id = %s", (chat_id,))
@@ -530,12 +542,16 @@ class handler(BaseHTTPRequestHandler):
                     ORDER BY score DESC
                     LIMIT 20
                 ),
-                content_matches AS (
-                    SELECT c.id,
-                           c.title,
-                           c.last_message_at,
-                           COUNT(*) AS hit_count,
-                           MAX(ts_rank(to_tsvector('english', cm.content), plainto_tsquery('english', %s))) AS best_rank
+                ranked_messages AS (
+                    SELECT cm.chat_id,
+                           cm.id   AS message_id,
+                           cm.message_index,
+                           ts_rank(to_tsvector('english', cm.content),
+                                   plainto_tsquery('english', %s)) AS rank,
+                           ts_headline('english', cm.content,
+                                   plainto_tsquery('english', %s),
+                                   'StartSel=<mark>,StopSel=</mark>,MaxFragments=1,MaxWords=18,MinWords=6') AS snippet,
+                           COUNT(*) OVER (PARTITION BY cm.chat_id) AS hit_count
                     FROM chat_messages cm
                     JOIN chats c ON c.id = cm.chat_id
                     WHERE c.course_id = %s
@@ -543,14 +559,26 @@ class handler(BaseHTTPRequestHandler):
                       AND c.is_archived = FALSE
                       AND to_tsvector('english', cm.content) @@ plainto_tsquery('english', %s)
                       AND cm.chat_id != ALL(ARRAY(SELECT id FROM title_matches))
-                    GROUP BY c.id, c.title, c.last_message_at
-                    ORDER BY (1 + ln(COUNT(*))) * MAX(ts_rank(to_tsvector('english', cm.content), plainto_tsquery('english', %s))) DESC
+                      AND cm.is_deleted = FALSE
+                ),
+                content_matches AS (
+                    SELECT DISTINCT ON (rm.chat_id) rm.chat_id AS id,
+                           c.title, c.last_message_at,
+                           rm.message_id, rm.message_index, rm.snippet, rm.hit_count
+                    FROM ranked_messages rm
+                    JOIN chats c ON c.id = rm.chat_id
+                    ORDER BY rm.chat_id, rm.rank DESC
                     LIMIT 20
                 )
-                SELECT 'title' AS match_type, id, title, last_message_at, NULL AS hit_count FROM title_matches
+                SELECT 'title' AS match_type, id, title, last_message_at,
+                       NULL::int AS hit_count, NULL::int AS message_id,
+                       NULL::int AS message_index, NULL::text AS snippet
+                FROM title_matches
                 UNION ALL
-                SELECT 'content' AS match_type, id, title, last_message_at, hit_count FROM content_matches
-            """, (*title_tsq_params, course_id, user['id'], *title_tsq_params, q, course_id, user['id'], q, q))
+                SELECT 'content' AS match_type, id, title, last_message_at,
+                       hit_count, message_id, message_index, snippet
+                FROM content_matches
+            """, (*title_tsq_params, course_id, user['id'], *title_tsq_params, q, q, course_id, user['id'], q))
 
             rows = cursor.fetchall()
             cursor.close()
@@ -560,8 +588,7 @@ class handler(BaseHTTPRequestHandler):
             for r in rows if r["match_type"] == "title"
         ]
         content_matches = [
-            {"id": r["id"], "title": r["title"], "last_message_at": r["last_message_at"], "hit_count": r["hit_count"]}
-            for r in rows if r["match_type"] == "content"
+            _content_match_from_row(r) for r in rows if r["match_type"] == "content"
         ]
 
         send_json(self, 200, {"title_matches": title_matches, "content_matches": content_matches})
