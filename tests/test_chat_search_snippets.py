@@ -71,3 +71,5 @@ def test_content_match_row_includes_message_fields():
     assert out["message_index"] == 4
     assert "<mark>handshake</mark>" in out["snippet"]
     assert out["hit_count"] == 3
+    assert out["title"] == "Midterm review"
+    assert out["last_message_at"] == "2026-05-30T10:00:00Z"

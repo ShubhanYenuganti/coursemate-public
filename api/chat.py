@@ -528,6 +528,7 @@ class handler(BaseHTTPRequestHandler):
 
         with get_db() as conn:
             cursor = conn.cursor()
+            # title_tsq_sql is always one of two hard-coded literals — never user input
             cursor.execute(f"""
                 WITH title_matches AS (
                     SELECT id,
