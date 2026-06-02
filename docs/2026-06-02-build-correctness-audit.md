@@ -5,6 +5,25 @@
 > and functional bugs only.** Each issue below is self-contained — file, line, root
 > cause, repro, and a concrete fix — so it can be picked up and resolved independently.
 
+## Resolution status — all items resolved 2026-06-02
+
+| Item | Status | Commit |
+|---|---|---|
+| C-1 FlashcardViewer TDZ crash | ✅ Fixed | `bee31dc` |
+| C-2 Course stats dict_row 500 | ✅ Fixed | `bee31dc` |
+| C-3 Saved prompts dict_row 500 | ✅ Fixed | `bee31dc` |
+| H-1 Build broken for flashcards/reports | ✅ Fixed | `a965cc0` |
+| H-2 Claude/Gemini stream leaks REPLY/META | ✅ Fixed | `4a0b929` |
+| M-1 Claude/Gemini no forced-synthesis fallback | ✅ Fixed | `52e0729` |
+| L-1 Full pytest collection aborts | ✅ Fixed | `41d0278` |
+| L-2 Missing schema migrations | ✅ Fixed (`migrations/008_*`) | `324239c` |
+| L-3 JS tests can't run | ✅ Fixed (added vitest) | `8fc4152` |
+
+**Post-fix verification:** backend `pytest tests/` → 80 passed (+ 3 pre-existing failures
+unrelated to this branch, see "Out of scope"); `npm test` → 4 passed; `npm run build` → ✓.
+**Deploy action still required for L-2:** apply `migrations/008_feature_roadmap_schema.sql`
+to each target database.
+
 ## Verification performed
 
 - `npm run build` — ✅ passes (only the pre-existing >500 kB chunk-size warning).
