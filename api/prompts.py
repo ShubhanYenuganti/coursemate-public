@@ -47,7 +47,7 @@ class handler(BaseHTTPRequestHandler):
             rows = cursor.fetchall()
 
         prompts = [
-            {"id": r[0], "title": r[1], "body": r[2], "created_at": r[3].isoformat()}
+            {"id": r["id"], "title": r["title"], "body": r["body"], "created_at": r["created_at"].isoformat()}
             for r in rows
         ]
         send_json(self, 200, {"prompts": prompts})
@@ -87,7 +87,7 @@ class handler(BaseHTTPRequestHandler):
             row = cursor.fetchone()
             conn.commit()
 
-        prompt = {"id": row[0], "title": row[1], "body": row[2], "created_at": row[3].isoformat()}
+        prompt = {"id": row["id"], "title": row["title"], "body": row["body"], "created_at": row["created_at"].isoformat()}
         send_json(self, 201, {"prompt": prompt})
 
     # --------------------------------------------------------------- DELETE --

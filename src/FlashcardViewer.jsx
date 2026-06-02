@@ -204,6 +204,16 @@ export default function FlashcardViewer({
     setSaveStatus(data?.artifact_material_id ? 'saved' : 'idle');
   }, [data?.artifact_material_id, data?.generation_id]);
 
+  const displayCards = useMemo(() => {
+    if (!shuffled) return cards;
+    const arr = [...cards];
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }, [shuffled, cards]);
+
   useEffect(() => {
     if (!playing) return undefined;
     const tick = setInterval(() => {
@@ -224,16 +234,6 @@ export default function FlashcardViewer({
     }, PLAY_INTERVAL_MS);
     return () => clearInterval(tick);
   }, [playing, displayCards, trackProgress]);
-
-  const displayCards = useMemo(() => {
-    if (!shuffled) return cards;
-    const arr = [...cards];
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    return arr;
-  }, [shuffled, cards]);
 
   const total = displayCards.length;
   const card = displayCards[currentIndex] || {};

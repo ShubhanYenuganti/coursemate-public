@@ -80,44 +80,44 @@ class handler(BaseHTTPRequestHandler):
                 cursor = conn.cursor()
 
                 cursor.execute(
-                    "SELECT COUNT(*) FROM materials WHERE course_id = %s",
+                    "SELECT COUNT(*) AS n FROM materials WHERE course_id = %s",
                     (course_id,),
                 )
-                mat_count = cursor.fetchone()[0]
+                mat_count = cursor.fetchone()['n']
 
                 cursor.execute(
-                    "SELECT COUNT(*) FROM quiz_generations WHERE course_id = %s",
+                    "SELECT COUNT(*) AS n FROM quiz_generations WHERE course_id = %s",
                     (course_id,),
                 )
-                quiz_count = cursor.fetchone()[0]
+                quiz_count = cursor.fetchone()['n']
 
                 cursor.execute(
-                    "SELECT COUNT(*) FROM flashcard_generations WHERE course_id = %s",
+                    "SELECT COUNT(*) AS n FROM flashcard_generations WHERE course_id = %s",
                     (course_id,),
                 )
-                fc_count = cursor.fetchone()[0]
+                fc_count = cursor.fetchone()['n']
 
                 cursor.execute(
-                    "SELECT COUNT(*) FROM report_generations WHERE course_id = %s",
+                    "SELECT COUNT(*) AS n FROM report_generations WHERE course_id = %s",
                     (course_id,),
                 )
-                rpt_count = cursor.fetchone()[0]
+                rpt_count = cursor.fetchone()['n']
 
                 cursor.execute(
-                    "SELECT COUNT(*) FROM chats WHERE course_id = %s AND user_id = %s AND is_archived = FALSE",
+                    "SELECT COUNT(*) AS n FROM chats WHERE course_id = %s AND user_id = %s AND is_archived = FALSE",
                     (course_id, user['id']),
                 )
-                chat_count = cursor.fetchone()[0]
+                chat_count = cursor.fetchone()['n']
 
                 cursor.execute(
                     """
-                    SELECT COUNT(*) FROM chat_messages cm
+                    SELECT COUNT(*) AS n FROM chat_messages cm
                     JOIN chats c ON c.id = cm.chat_id
                     WHERE c.course_id = %s AND c.user_id = %s AND c.is_archived = FALSE
                     """,
                     (course_id, user['id']),
                 )
-                msg_count = cursor.fetchone()[0]
+                msg_count = cursor.fetchone()['n']
 
             send_json(self, 200, _shape_stats(
                 materials=mat_count,
