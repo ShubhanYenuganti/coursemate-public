@@ -1448,6 +1448,25 @@ class _ReplyStreamFilter:
             self._buf = ""
 
 
+def _filtered_on_event(on_event):
+    """Wrap an on_event callback so streamed {"type":"text"} deltas pass through a
+    _ReplyStreamFilter (stripping the <REPLY>…</REPLY><META>…</META> wrapper), while
+    non-text events pass through untouched. Returns (wrapped_on_event, flush). Used by
+    the Claude/Gemini PageIndex loops to match the OpenAI streaming behavior.
+    """
+    if on_event is None:
+        return None, (lambda: None)
+    filt = _ReplyStreamFilter(lambda t: on_event({"type": "text", "chunk": t}))
+
+    def _evt(evt):
+        if evt.get("type") == "text":
+            filt.feed(evt["chunk"])
+        else:
+            on_event(evt)
+
+    return _evt, filt.flush
+
+
 def _pageindex_stream_call(
     api_key: str,
     model: str,
@@ -1907,9 +1926,11 @@ def run_agent_pageindex(
     if provider == "claude":
         claude_messages = [{"role": "user", "content": user_message}]
         for iteration in range(MAX_TOOL_ITERATIONS):
+            evt_cb, flush = _filtered_on_event(on_event)
             blocks, stop_reason = _pageindex_stream_call_claude(
-                api_key, model, system_content, claude_messages, tools, on_event
+                api_key, model, system_content, claude_messages, tools, evt_cb
             )
+            flush()
             tool_use_blocks = [b for b in blocks if b["type"] == "tool_use"]
             if not tool_use_blocks or stop_reason != "tool_use":
                 full_text = "".join(b["text"] for b in blocks if b["type"] == "text")
@@ -1987,9 +2008,11 @@ def run_agent_pageindex(
     if provider == "gemini":
         contents = [{"role": "user", "parts": [{"text": user_message}]}]
         for iteration in range(MAX_TOOL_ITERATIONS):
+            evt_cb, flush = _filtered_on_event(on_event)
             parts, has_fc = _pageindex_stream_call_gemini(
-                api_key, model, system_content, contents, tools, on_event
+                api_key, model, system_content, contents, tools, evt_cb
             )
+            flush()
             if not has_fc:
                 full_text = "".join(p.get("text", "") for p in parts if "text" in p)
                 raw_final = full_text.strip() or "I could not find relevant content in the course materials."
