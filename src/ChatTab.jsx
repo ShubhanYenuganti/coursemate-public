@@ -1290,6 +1290,8 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   const [chats, setChats] = useState([]);
   const [chatsLoading, setChatsLoading] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [pendingScrollMessageId, setPendingScrollMessageId] = useState(null);
+  const [highlightMessageId, setHighlightMessageId] = useState(null);
   const [archivedChats, setArchivedChats] = useState([]);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archivedLoading, setArchivedLoading] = useState(false);
@@ -1415,6 +1417,19 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (!pendingScrollMessageId || !messages.length) return;
+    const el = document.getElementById(`msg-${pendingScrollMessageId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightMessageId(pendingScrollMessageId);
+      const t = setTimeout(() => setHighlightMessageId(null), 2000);
+      setPendingScrollMessageId(null);
+      return () => clearTimeout(t);
+    }
+    setPendingScrollMessageId(null);
+  }, [pendingScrollMessageId, messages]);
 
   // Load materials for this course
   useEffect(() => {
@@ -1671,10 +1686,12 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
     } catch {}
   }
 
-  function handleConvSelect(id) {
+  function handleConvSelect(chatId, target) {
+    const id = typeof chatId === 'object' ? chatId?.id : chatId;
     setActiveConv(id);
     setMessages([]);
     setEditingTitle(false);
+    setPendingScrollMessageId(target?.messageId ?? null);
   }
 
   async function handleDeletePin(pin) {
@@ -2903,8 +2920,12 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                   .filter((u) => u.url && !seen.has(u.url) && seen.add(u.url));
               })() : null;
               return (
-              <MessageBubble
+              <div
                 key={msg.id}
+                id={`msg-${msg.id}`}
+                className={highlightMessageId === msg.id ? 'ring-2 ring-yellow-300 rounded-lg transition' : undefined}
+              >
+              <MessageBubble
                 msg={msg}
                 courseName={course?.title}
                 userPicture={userData?.picture}
@@ -2954,6 +2975,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                 onSkipClarification={msg.role === 'assistant' ? () => handleSkipClarification(msg.id) : null}
                 isLastAssistantMsg={msg.role === 'assistant' && i === lastAssistantIdx && !sending}
               />
+              </div>
               );
             });
             })()
