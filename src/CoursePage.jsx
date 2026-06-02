@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import CreateCourseModal from './CreateCourseModal.jsx';
 import SharingAccessModal from './SharingAccessModal.jsx';
 import MaterialsPage from './MaterialsPage.jsx';
-import ChatTab from './ChatTab.jsx';
+import ChatTab, { PROVIDER_MODELS } from './ChatTab.jsx';
 import Generations from './Generations.jsx';
+import CourseStatsWidget from './components/CourseStatsWidget';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -109,6 +110,11 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
   const [descStatus, setDescStatus] = useState(null); // null | 'saving' | 'error'
   const [descError, setDescError] = useState('');
 
+  // AI provider/model picker state
+  const [aiProvider, setAiProvider] = useState(course?.default_ai_provider || '');
+  const [aiModel, setAiModel] = useState(course?.default_ai_model || '');
+  const [aiPickerStatus, setAiPickerStatus] = useState(null); // null | 'saving' | 'saved' | 'error'
+
   // ─── progress panel state (persists across tab switches and page refresh) ────
   const [syncJobs, setSyncJobs] = useState([]);
   const [uploadItems, setUploadItems] = useState([]);
@@ -173,6 +179,29 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
     setEditingDesc(false);
     setDescStatus(null);
     setDescError('');
+  }
+
+  async function handleSaveAiModel() {
+    setAiPickerStatus('saving');
+    try {
+      const res = await fetch('/api/course', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          course_id: course.id,
+          default_ai_provider: aiProvider || null,
+          default_ai_model: aiModel || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      onCourseUpdate?.(data.course);
+      setAiPickerStatus('saved');
+      setTimeout(() => setAiPickerStatus(null), 2000);
+    } catch {
+      setAiPickerStatus('error');
+    }
   }
 
   return (
@@ -281,6 +310,58 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
                 </>
               )}
             </div>
+            <CourseStatsWidget courseId={course?.id} />
+            {isOwner && (
+              <div className="rounded-xl border border-gray-200 bg-white/80 px-4 py-4 space-y-3">
+                <h3 className="text-sm font-semibold text-gray-700">Default AI Model</h3>
+                <p className="text-xs text-gray-400">When set, chats in this course will default to this provider and model instead of the global default.</p>
+                <div className="flex flex-wrap gap-3 items-end">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-medium text-gray-500">Provider</label>
+                    <select
+                      value={aiProvider}
+                      onChange={(e) => {
+                        setAiProvider(e.target.value);
+                        setAiModel('');
+                        setAiPickerStatus(null);
+                      }}
+                      className="px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    >
+                      <option value="">None (use global)</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="claude">Claude</option>
+                      <option value="gemini">Gemini</option>
+                    </select>
+                  </div>
+                  {aiProvider && (
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium text-gray-500">Model</label>
+                      <select
+                        value={aiModel}
+                        onChange={(e) => { setAiModel(e.target.value); setAiPickerStatus(null); }}
+                        className="px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                      >
+                        <option value="">Default for provider</option>
+                        {(PROVIDER_MODELS[aiProvider] || []).map((m) => (
+                          <option key={m.id} value={m.id}>{m.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleSaveAiModel}
+                    disabled={aiPickerStatus === 'saving'}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                  >
+                    {aiPickerStatus === 'saving' ? 'Saving…' : aiPickerStatus === 'saved' ? 'Saved!' : 'Save'}
+                  </button>
+                </div>
+                {aiPickerStatus === 'error' && (
+                  <p className="text-xs text-red-600">Failed to save. Please try again.</p>
+                )}
+              </div>
+            )}
             {isOwner && (
             <SharingAccessModal
               courseId={course?.id}
