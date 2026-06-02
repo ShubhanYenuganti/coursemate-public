@@ -1968,14 +1968,25 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
     });
   }
 
-  async function handleBuildGeneration(msg) {
-    const p = msg._generationProposal;
-    if (!p) return;
-    const endpoint = ENDPOINT_BY_TYPE[p.generation_type];
-    if (!endpoint) return;
+  const VALID_REPORT_TEMPLATES = ['study-guide', 'briefing', 'summary', 'custom'];
 
-    setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, _proposalStatus: 'building' } : m));
-    try {
+  function normalizeReportTemplate(raw) {
+    const v = String(raw || 'study-guide').trim().replace(/_/g, '-').toLowerCase();
+    return VALID_REPORT_TEMPLATES.includes(v) ? v : 'study-guide';
+  }
+
+  // Queue a generation from a chat proposal. Quiz supports a direct (draft-less)
+  // generate. Flashcards and reports require a draft from `estimate` first, then
+  // `generate` with that generation_id — so we run the two-step flow for them.
+  async function queueProposalGeneration(p) {
+    const endpoint = ENDPOINT_BY_TYPE[p.generation_type];
+    if (!endpoint) throw new Error('unknown generation type');
+    const provider = selectedModel;
+    const model_id = selectedModelId || selectedModel;
+    const conversation_context = p.discussion_summary;
+    const material_ids = p.material_ids;
+
+    if (p.generation_type === 'quiz') {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1985,14 +1996,66 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
           course_id: course.id,
           title: p.title,
           topic: p.title,
-          material_ids: p.material_ids,
-          conversation_context: p.discussion_summary,
-          provider: selectedModel,
-          model_id: selectedModelId || selectedModel,
+          material_ids,
+          conversation_context,
+          provider,
+          model_id,
           ...p.params,
         }),
       });
       if (!res.ok) throw new Error('queue failed');
+      return;
+    }
+
+    // flashcards / reports: estimate (creates draft) -> generate (enqueues)
+    const estimateBody = {
+      action: 'estimate',
+      course_id: course.id,
+      topic: p.title,
+      material_ids,
+      conversation_context,
+      provider,
+      model_id,
+    };
+    if (p.generation_type === 'flashcards') {
+      estimateBody.card_count = Number(p.params?.card_count ?? p.params?.num_cards ?? 20);
+    } else if (p.generation_type === 'report') {
+      estimateBody.template_id = normalizeReportTemplate(p.params?.template_id ?? p.params?.template);
+    }
+
+    const estRes = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(estimateBody),
+    });
+    if (!estRes.ok) throw new Error('estimate failed');
+    const estData = await estRes.json();
+    const generationId = estData.generation_id;
+    if (!generationId) throw new Error('no generation_id from estimate');
+
+    const genRes = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        action: 'generate',
+        generation_id: generationId,
+        provider,
+        model_id,
+        conversation_context,
+      }),
+    });
+    if (!genRes.ok) throw new Error('queue failed');
+  }
+
+  async function handleBuildGeneration(msg) {
+    const p = msg._generationProposal;
+    if (!p || !ENDPOINT_BY_TYPE[p.generation_type]) return;
+
+    setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, _proposalStatus: 'building' } : m));
+    try {
+      await queueProposalGeneration(p);
       setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, _proposalStatus: 'queued' } : m));
     } catch (e) {
       setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, _proposalStatus: null } : m));
