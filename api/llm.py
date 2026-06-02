@@ -1775,9 +1775,10 @@ def _pageindex_stream_call_claude(api_key, model, system, messages, tools, on_ev
         "max_tokens": 2048,
         "system": system,
         "messages": messages,
-        "tools": _pageindex_tools_anthropic(tools),
         "stream": True,
     }
+    if tools:
+        body["tools"] = _pageindex_tools_anthropic(tools)
     resp = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={
@@ -1848,8 +1849,9 @@ def _pageindex_stream_call_gemini(api_key, model, system, contents, tools, on_ev
     body = {
         "system_instruction": {"parts": [{"text": system}]},
         "contents": contents,
-        "tools": _pageindex_tools_gemini(tools),
     }
+    if tools:
+        body["tools"] = _pageindex_tools_gemini(tools)
     resp = requests.post(url, json=body, stream=True, timeout=_TIMEOUT)
     resp.raise_for_status()
     all_parts = []
@@ -1992,6 +1994,26 @@ def run_agent_pageindex(
                 })
             claude_messages.append({"role": "user", "content": tool_results})
 
+        # If MAX_TOOL_ITERATIONS was exhausted without a final answer but pages were
+        # fetched, make one more call without tools so the model synthesizes from the
+        # accumulated context instead of returning an error (mirrors the OpenAI loop).
+        if not final_text and grounding_refs:
+            evt_cb, flush = _filtered_on_event(on_event)
+            blocks, _ = _pageindex_stream_call_claude(
+                api_key, model, system_content, claude_messages, [], evt_cb
+            )
+            flush()
+            full_text = "".join(b["text"] for b in blocks if b["type"] == "text")
+            raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+            (
+                reply_body,
+                assistant_reply_summary,
+                assistant_follow_ups,
+                assistant_clarifying_question,
+            ) = _parse_synthesis_json(raw_final)
+            final_text = reply_body if (reply_body or "").strip() else raw_final
+            tool_trace.append({"phase": "forced_synthesis"})
+
         if not final_text:
             final_text = "I could not find relevant content in the course materials."
 
@@ -2064,6 +2086,26 @@ def run_agent_pageindex(
                         }
                     })
             contents.append({"role": "user", "parts": fn_responses})
+
+        # Forced synthesis on iteration exhaustion (mirrors the OpenAI loop): if pages
+        # were fetched but no final answer was produced, make one tool-less call so the
+        # model answers from the accumulated context instead of returning an error.
+        if not final_text and grounding_refs:
+            evt_cb, flush = _filtered_on_event(on_event)
+            parts, _ = _pageindex_stream_call_gemini(
+                api_key, model, system_content, contents, [], evt_cb
+            )
+            flush()
+            full_text = "".join(p.get("text", "") for p in parts if "text" in p)
+            raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+            (
+                reply_body,
+                assistant_reply_summary,
+                assistant_follow_ups,
+                assistant_clarifying_question,
+            ) = _parse_synthesis_json(raw_final)
+            final_text = reply_body if (reply_body or "").strip() else raw_final
+            tool_trace.append({"phase": "forced_synthesis"})
 
         if not final_text:
             final_text = "I could not find relevant content in the course materials."
