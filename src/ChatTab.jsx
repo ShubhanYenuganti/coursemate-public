@@ -3,6 +3,7 @@ import { formatDateTime, parseUTC } from './utils/dateUtils';
 import { getMaterialUrl } from './utils/materialUtils';
 import SearchChat from './SearchChat';
 import GenerationProposalCard from './components/GenerationProposalCard';
+import PromptLibrary from './components/PromptLibrary';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
@@ -275,7 +276,7 @@ const MODEL_LABELS = {
   claude: 'Claude',
 };
 
-const PROVIDER_MODELS = {
+export const PROVIDER_MODELS = {
   claude: [
     { label: 'Claude Opus 4.6',   id: 'claude-opus-4-6' },
     { label: 'Claude Sonnet 4.6', id: 'claude-sonnet-4-6' },
@@ -1297,6 +1298,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
+  const [promptLibOpen, setPromptLibOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(
     () => localStorage.getItem('chat_web_search_enabled') === '1'
@@ -1503,8 +1505,10 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
           .map(([provider]) => provider);
         setAvailableModels(available);
         if (available.length > 0) {
-          const savedProvider = localStorage.getItem('chat_selected_provider');
-          const savedModelId = localStorage.getItem('chat_selected_model_id');
+          const savedProvider = localStorage.getItem('chat_selected_provider')
+            || course?.default_ai_provider || null;
+          const savedModelId = localStorage.getItem('chat_selected_model_id')
+            || course?.default_ai_model || null;
           const provider = available.includes(savedProvider) ? savedProvider : available[0];
           const modelList = PROVIDER_MODELS[provider] ?? [];
           const modelId = modelList.find((m) => m.id === savedModelId)?.id ?? modelList[0]?.id ?? null;
@@ -1513,7 +1517,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
         }
       })
       .catch(() => {});
-  }, []);
+  }, [course?.default_ai_provider, course?.default_ai_model]);
 
   useEffect(() => {
     if (!modelDropdownOpen) return;
@@ -3029,7 +3033,16 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
             onChange={handleFileInputChange}
           />
 
-          <div className="flex items-stretch gap-2 pl-4 pr-3 py-2 rounded-2xl border border-gray-200 bg-white hover:shadow-lg focus-within:border-indigo-300 focus-within:shadow-lg transition-all" style={{ boxShadow: '0 4px 24px 0 rgba(0,0,0,0.13)' }}>
+          <div className="relative flex items-stretch gap-2 pl-4 pr-3 py-2 rounded-2xl border border-gray-200 bg-white hover:shadow-lg focus-within:border-indigo-300 focus-within:shadow-lg transition-all" style={{ boxShadow: '0 4px 24px 0 rgba(0,0,0,0.13)' }}>
+            {promptLibOpen && (
+              <PromptLibrary
+                onInsert={(text) => {
+                  setInput((v) => (v ? `${v}\n${text}` : text));
+                  setPromptLibOpen(false);
+                }}
+                onClose={() => setPromptLibOpen(false)}
+              />
+            )}
             <textarea
               ref={textareaRef}
               value={input}
@@ -3113,6 +3126,21 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                     )}
                   </>
                 )}
+                <button
+                  type="button"
+                  onClick={() => setPromptLibOpen((o) => !o)}
+                  title="Saved prompts"
+                  aria-pressed={promptLibOpen}
+                  className={`flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full border transition-colors ${
+                    promptLibOpen
+                      ? 'border-indigo-400 text-indigo-600 bg-indigo-50'
+                      : 'border-gray-200 text-gray-400 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'
+                  }`}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                  </svg>
+                </button>
                 <button
                   type="button"
                   onClick={toggleWebSearch}
