@@ -19,6 +19,12 @@ except ImportError:
     from db import get_db
 
 
+def _extract_default_model_fields(body: dict) -> tuple:
+    p = (body.get('default_ai_provider') or '').strip() or None
+    m = (body.get('default_ai_model') or '').strip() or None
+    return (p, m)
+
+
 def _shape_stats(materials, quizzes, flashcards, reports, chats, messages) -> dict:
     return {
         "materials": materials,
@@ -198,7 +204,14 @@ class handler(BaseHTTPRequestHandler):
 
         title = sanitize_string(data.get('title', '') or '', max_length=200) or None
         description = sanitize_string(data.get('description', '') or '', max_length=2000) or None
-        updated = Course.update(course_id, title=title, description=description)
+
+        kwargs = {"title": title, "description": description}
+        if 'default_ai_provider' in data or 'default_ai_model' in data:
+            default_provider, default_model = _extract_default_model_fields(data)
+            kwargs['default_ai_provider'] = default_provider
+            kwargs['default_ai_model'] = default_model
+
+        updated = Course.update(course_id, **kwargs)
         send_json(self, 200, {"course": updated})
 
     # ---------------------------------------------------------------- PATCH --
