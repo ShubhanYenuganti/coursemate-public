@@ -11,6 +11,21 @@
       },
       "ResultSelector": { "body.$": "$.Payload" },
       "ResultPath": "$.result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkFailed"
+        }
+      ],
       "Next": "CheckDone"
     },
     "CheckDone": {
@@ -37,13 +52,33 @@
       },
       "Next": "IndexWorker"
     },
+    "MarkFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "index_materials",
+        "Payload": {
+          "mark_failed": true,
+          "s3_key.$": "$.s3_key",
+          "error.$": "$.error"
+        }
+      },
+      "ResultPath": "$.markResult",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "Failed"
+        }
+      ],
+      "Next": "Failed"
+    },
     "Done": {
       "Type": "Succeed"
     },
     "Failed": {
       "Type": "Fail",
       "Error": "IndexFailed",
-      "Cause": "Lambda returned status=failed"
+      "Cause": "Indexing failed or worker errored"
     }
   }
 }

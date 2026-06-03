@@ -30,7 +30,7 @@ except ImportError:
 _FLASHCARDS_QUEUE_URL = os.environ.get('FLASHCARDS_GENERATION_QUEUE_URL')
 _AWS_REGION = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
 
-_MATERIAL_CHUNK_LIMIT = 80
+_MATERIAL_PAGE_LIMIT = 80
 _CONTEXT_CHAR_BUDGET = 24_000
 _ALLOWED_DEPTHS = {'brief', 'moderate', 'in-depth'}
 
@@ -57,14 +57,15 @@ def _fetch_material_context(conn, material_ids: list) -> str:
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT c.content
-        FROM chunks c
-        JOIN documents d ON c.document_id = d.id
-        WHERE d.material_id = ANY(%s::int[])
-        ORDER BY d.material_id, c.chunk_index
+        SELECT text_content
+        FROM material_page_text
+        WHERE material_id = ANY(%s::int[])
+          AND text_content IS NOT NULL
+          AND text_content != ''
+        ORDER BY material_id, page_number
         LIMIT %s
         """,
-        (material_ids, _MATERIAL_CHUNK_LIMIT),
+        (material_ids, _MATERIAL_PAGE_LIMIT),
     )
     rows = cursor.fetchall()
     cursor.close()
@@ -75,7 +76,7 @@ def _fetch_material_context(conn, material_ids: list) -> str:
     parts = []
     total = 0
     for row in rows:
-        content = row.get('content') or ''
+        content = row.get('text_content') or ''
         if total + len(content) > _CONTEXT_CHAR_BUDGET:
             remaining = _CONTEXT_CHAR_BUDGET - total
             if remaining > 200:

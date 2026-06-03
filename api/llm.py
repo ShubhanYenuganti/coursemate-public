@@ -24,10 +24,6 @@ try:
     from .crypto_utils import decrypt_api_key
 except ImportError:
     from crypto_utils import decrypt_api_key
-try:
-    from .tools import execute_rerank, execute_search_materials, execute_web_search, pull_grounding_context, resolve_references_llm
-except ImportError:
-    from tools import execute_rerank, execute_search_materials, execute_web_search, pull_grounding_context, resolve_references_llm
 
 
 def _fetch_images_as_base64(s3_keys: list) -> list:
@@ -53,6 +49,44 @@ def _fetch_images_as_base64(s3_keys: list) -> list:
         except Exception:
             logging.getLogger(__name__).warning("Failed to fetch S3 image %s", key)
     return result
+
+
+def _recall_prior_chat_images(conn, chat_id, query, exclude_s3_keys=None, top_k=3):
+    """Similarity-search this chat's prior images and return (mime, base64) tuples
+    for the best matches, so the model can "see" images discussed earlier in the
+    conversation.
+
+    Uses the embed_query Lambda + the chat_image_embeddings table — independent of
+    the retired chunk/embedding (embed_materials) pipeline. Gated on a cheap
+    existence check so chats with no stored images skip the embedding call.
+    """
+    if not chat_id or not (query or "").strip():
+        return []
+    exclude = set(exclude_s3_keys or [])
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 1 FROM chat_image_embeddings WHERE chat_id = %s LIMIT 1", (chat_id,)
+    )
+    has_images = cursor.fetchone() is not None
+    cursor.close()
+    if not has_images:
+        return []
+    try:
+        from rag import _invoke_embed_query, _search_chat_images
+    except ImportError:
+        from .rag import _invoke_embed_query, _search_chat_images
+    vis_emb, txt_emb = _invoke_embed_query(query=query)
+    emb = vis_emb or txt_emb
+    if not emb:
+        return []
+    keys = []
+    for hit in _search_chat_images(conn, emb, chat_id):
+        key = hit.get("s3_key")
+        if key and key not in exclude and key not in keys:
+            keys.append(key)
+        if len(keys) >= top_k:
+            break
+    return _fetch_images_as_base64(keys)
 
 
 _SYSTEM_PROMPT_BASE = (
@@ -202,10 +236,11 @@ def _is_enabled(env_name: str, default: bool = False) -> bool:
 
 
 def _is_pageindex_enabled() -> bool:
-    legacy_value = os.environ.get("PAGEINDEX_RETRIEVAL_ENABLED")
-    if legacy_value is not None:
-        return legacy_value.strip().lower() in ("1", "true", "yes", "on")
-    return _is_enabled("PAGEINDEX_RAG_ENABLED", default=True)
+    # PageIndex is now the only retrieval path. The legacy chunk/embedding
+    # pipeline (embed_materials) has been retired, so this is unconditional —
+    # the PAGEINDEX_RAG_ENABLED / PAGEINDEX_RETRIEVAL_ENABLED env toggles no
+    # longer disable it.
+    return True
 
 
 def _safe_int_env(env_name: str, default: int, low: int, high: int) -> int:
@@ -858,507 +893,6 @@ def _emit_web_results(on_event, text: str, max_results: int = 3):
         emitted += 1
 
 
-def run_agent_openai(
-    conn,
-    user_message: str,
-    model: str,
-    api_key: str,
-    chunks: list,
-    chat_id: int | None,
-    context_material_ids: list,
-    selected_model_draft: str = "",
-    model_web_handoff: dict | None = None,
-    on_event=None,
-    image_s3_keys: list | None = None,
-) -> tuple[str, list, list, dict, str | None]:
-    debug = _is_enabled("AGENTIC_LOOP_DEBUG", default=False)
-    resolver_enabled = _is_enabled("GROUNDING_RESOLVER_ENABLED", default=True)
-    fusion_enabled = _is_enabled("GROUNDING_FUSION_ENABLED", default=True)
-    verifier_enabled = _is_enabled("GROUNDING_VERIFIER_ENABLED", default=True)
-    mode = "fresh"
-    resolver_result = {
-        "intent_type": "fresh",
-        "resolved_query": user_message,
-        "resolved_entities": [],
-        "carryover_chunk_ids": [],
-        "confidence": 0.0,
-        "reasoning_brief": "resolver disabled",
-    }
-    if resolver_enabled:
-        resolver_result = resolve_references_llm(
-            conn=conn,
-            chat_id=chat_id,
-            current_query=user_message,
-            selected_material_ids=context_material_ids,
-            api_key=api_key,
-            model=model,
-        )
-    mode = resolver_result.get("intent_type", "fresh")
-    resolved_query = resolver_result.get("resolved_query") or user_message
-    resolved_entities = resolver_result.get("resolved_entities") or []
-    required_entities = resolver_result.get("required_entities") or []
-    resolver_confidence = float(resolver_result.get("confidence", 0.0) or 0.0)
-
-    initial_search = execute_search_materials(
-        conn=conn,
-        query=resolved_query,
-        material_ids=context_material_ids,
-        top_k=10 if mode in ("followup", "mixed") else 8,
-        mode=mode if fusion_enabled else "fresh",
-        anchor_chunk_ids=resolver_result.get("carryover_chunk_ids") or [],
-        resolved_entities=resolved_entities,
-        chat_id=chat_id,
-    )
-    initial_chunks = chunks or []
-    if initial_search.get("chunk_ids"):
-        initial_chunks = []
-        for cid in initial_search["chunk_ids"]:
-            initial_chunks.append(
-                {
-                    "id": cid,
-                    "chunk_type": "fused",
-                    "similarity": 0.7,
-                    "chunk_text": f"[ref:{cid}]",
-                }
-            )
-
-    grounding_refs = _dedupe_preserve_order(
-        [_json_safe_chunk_id(c.get("id")) for c in initial_chunks if c.get("id") is not None]
-    )
-    grounding_text = ""
-    pulled_chunk_ids = []
-    carryover_text = ""
-    fresh_text = initial_search.get("text", "")
-    carryover_count = initial_search.get("meta", {}).get("carryover_count", 0)
-    fresh_count = initial_search.get("meta", {}).get("fresh_count", len(chunks or []))
-    if chat_id is not None:
-        pulled = pull_grounding_context(conn, chat_id, user_message)
-        grounding_text = pulled.get("text", "")
-        pulled_chunk_ids = pulled.get("chunk_ids", []) or []
-        grounding_refs.extend(pulled_chunk_ids)
-        grounding_refs = _dedupe_preserve_order(grounding_refs)
-        carryover_text = grounding_text
-
-    if debug:
-        logger.info(
-            "agentic_loop_debug",
-            extra={
-                "event": "loop_start",
-                "chat_id": chat_id,
-                "model": model,
-                "seed_chunk_count": len(initial_chunks or []),
-                "seed_chunk_ids": _id_preview(
-                    [_json_safe_chunk_id(c.get("id")) for c in initial_chunks if c.get("id") is not None]
-                ),
-                "seed_chunk_previews": _chunk_previews(initial_chunks),
-                "grounding_pull_chunk_ids": _id_preview(pulled_chunk_ids),
-                "grounding_text_excerpt": _truncate_text(grounding_text, 280),
-                "resolver_intent_type": mode,
-                "resolver_confidence": resolver_confidence,
-                "resolver_entities": resolved_entities,
-                "required_entities": required_entities,
-            },
-        )
-
-    handoff = _normalize_web_search_handoff(model_web_handoff)
-    handoff_conf_threshold = float(
-        os.environ.get("AGENTIC_HANDOFF_NOT_NEEDED_MIN_CONFIDENCE", "0.70") or 0.70
-    )
-    handoff_conf_threshold = max(0.0, min(1.0, handoff_conf_threshold))
-    low_conf_not_needed_override = (
-        handoff.get("web_search_recommendation") == "not_needed"
-        and float(handoff.get("confidence", 0.0) or 0.0) < handoff_conf_threshold
-    )
-    web_search_allowed_by_handoff = (
-        handoff.get("web_search_recommendation") != "not_needed"
-        or low_conf_not_needed_override
-    )
-
-    if on_event:
-        on_event(
-            {
-                "type": "handoff_decision",
-                "recommendation": handoff.get("web_search_recommendation"),
-                "confidence": handoff.get("confidence"),
-                "threshold": handoff_conf_threshold,
-                "override": low_conf_not_needed_override,
-                "web_search_allowed": web_search_allowed_by_handoff,
-                "missing_facts": handoff.get("missing_facts", []),
-                "suggested_queries": handoff.get("suggested_queries", []),
-                "reasoning": handoff.get("reasoning", ""),
-            }
-        )
-
-    conflict_notes = ""
-    if mode == "followup" and fresh_count and carryover_count == 0:
-        conflict_notes = "Followup intent detected but no carryover evidence available."
-    elif mode == "fresh" and carryover_count > 0:
-        conflict_notes = "Fresh intent selected; carryover evidence deprioritized."
-
-    messages = [
-        {
-            "role": "system",
-            "content": _build_layered_system_context(
-                task_and_policy=AGENTIC_SYSTEM_PROMPT,
-                resolver_result=resolver_result,
-                carryover_evidence_text=carryover_text,
-                fresh_evidence_text=fresh_text,
-                conflict_notes=conflict_notes,
-                user_turn=user_message,
-                required_entities=required_entities,
-                selected_model_draft=selected_model_draft,
-                model_web_handoff=handoff,
-                low_conf_not_needed_override=low_conf_not_needed_override,
-            ),
-        },
-        {"role": "user", "content": resolved_query},
-    ]
-
-    # Build multimodal user content: current-message images → retrieved prior images → text.
-    all_image_blocks = []
-
-    if image_s3_keys:
-        try:
-            current_pairs = _fetch_images_as_base64(image_s3_keys)
-            all_image_blocks.extend(
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
-                for mime, data in current_pairs
-            )
-        except Exception:
-            logger.warning("Failed to inject current-message images into agentic context")
-
-    retrieved_chat_images = initial_search.get("chat_image_chunks") or []
-    if retrieved_chat_images:
-        prior_keys = [c["s3_key"] for c in retrieved_chat_images if c.get("s3_key")]
-        try:
-            prior_pairs = _fetch_images_as_base64(prior_keys) if prior_keys else []
-            all_image_blocks.extend(
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
-                for mime, data in prior_pairs
-            )
-        except Exception:
-            logger.warning("Failed to inject retrieved chat images into agentic context")
-
-    if all_image_blocks:
-        messages[1]["content"] = all_image_blocks + [{"type": "text", "text": resolved_query or user_message}]
-
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "search_materials",
-                "description": (
-                    "Search selected course materials for relevant chunks and return evidence."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "top_k": {"type": "integer", "default": 8},
-                    },
-                    "required": ["query"],
-                },
-            },
-        }
-    ]
-    if _is_enabled("AGENTIC_WEB_SEARCH_ENABLED") and web_search_allowed_by_handoff:
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "description": "Search the web for information not fully covered by course materials. Use this whenever search_materials results are vague, incomplete, or don't directly answer the question — especially for implementation details, API usage, external libraries, or concepts that need more depth.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string"},
-                        },
-                        "required": ["query"],
-                    },
-                },
-            }
-        )
-    if _is_enabled("AGENTIC_RERANK_ENABLED"):
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": "rerank_results",
-                    "description": (
-                        "Re-rank a set of retrieved chunk IDs by relevance to a query using a neural reranker. "
-                        "Call this after search_materials when the results feel noisy, loosely related, or the query "
-                        "is complex and multi-faceted. Pass the chunk_ids from the prior search call."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string"},
-                            "chunk_ids": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Chunk UUIDs to rerank, from a prior search_materials result.",
-                            },
-                            "top_n": {"type": "integer", "default": 5},
-                        },
-                        "required": ["query", "chunk_ids"],
-                    },
-                },
-            }
-        )
-
-    max_iterations = _safe_int_env("AGENTIC_MAX_ITERATIONS", MAX_TOOL_ITERATIONS, 1, 8)
-    tool_trace = []
-    final_text = ""
-    assistant_reply_summary = None
-    assistant_follow_ups: list = []
-    assistant_clarifying_question: str | None = None
-
-    for iteration in range(1, max_iterations + 1):
-        started = time.time()
-        if on_event:
-            on_event({"type": "loop_start", "iteration": iteration, "max": max_iterations})
-        if debug:
-            logger.info(
-                "agentic_loop_debug",
-                extra={
-                    "event": "openai_request",
-                    "chat_id": chat_id,
-                    "iteration": iteration,
-                    "message_count": len(messages),
-                    "grounding_ref_count": len(grounding_refs),
-                    "grounding_ref_ids": _id_preview(grounding_refs),
-                },
-            )
-        response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": messages,
-                "tools": tools,
-                "tool_choice": "auto",
-                "temperature": 0.2,
-            },
-            timeout=_TIMEOUT,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        choice = payload["choices"][0]
-        message = choice.get("message", {})
-        tool_calls = message.get("tool_calls") or []
-        if debug:
-            logger.info(
-                "agentic_loop_debug",
-                extra={
-                    "event": "openai_response",
-                    "chat_id": chat_id,
-                    "iteration": iteration,
-                    "finish_reason": choice.get("finish_reason"),
-                    "tool_call_count": len(tool_calls),
-                    "assistant_excerpt": _truncate_text(_message_text(message), 240),
-                },
-            )
-
-        if not tool_calls:
-            raw_final = _message_text(message).strip()
-            if not raw_final:
-                raw_final = "I could not synthesize a response from the available context."
-            reply_body, assistant_reply_summary, assistant_follow_ups, assistant_clarifying_question = _parse_synthesis_json(raw_final)
-            if not (reply_body or "").strip():
-                reply_body = raw_final
-                assistant_reply_summary = None
-                assistant_follow_ups = []
-                assistant_clarifying_question = None
-            final_text = reply_body
-            tool_trace.append(
-                {
-                    "iteration": iteration,
-                    "finish_reason": choice.get("finish_reason"),
-                    "tool_calls": 0,
-                    "latency_ms": int((time.time() - started) * 1000),
-                }
-            )
-            break
-
-        messages.append(
-            {
-                "role": "assistant",
-                "content": message.get("content") or "",
-                "tool_calls": tool_calls,
-            }
-        )
-
-        for call in tool_calls:
-            name = call.get("function", {}).get("name")
-            raw_args = call.get("function", {}).get("arguments") or "{}"
-            try:
-                args = json.loads(raw_args)
-            except json.JSONDecodeError:
-                args = {}
-            if debug:
-                logger.info(
-                    "agentic_loop_debug",
-                    extra={
-                        "event": "tool_dispatch",
-                        "chat_id": chat_id,
-                        "iteration": iteration,
-                        "tool_name": name,
-                        "tool_args": args,
-                    },
-                )
-
-            if name == "search_materials":
-                result = execute_search_materials(
-                    conn=conn,
-                    query=args.get("query", ""),
-                    material_ids=context_material_ids,
-                    top_k=args.get("top_k", 8),
-                    mode=mode if fusion_enabled else "fresh",
-                    anchor_chunk_ids=grounding_refs,
-                    resolved_entities=resolved_entities,
-                )
-                if on_event:
-                    found_count = len(result.get("chunk_ids", []))
-                    on_event({"type": "sources_found", "chunks": result.get("chunks", []), "result_count": found_count})
-            elif name == "web_search":
-                if on_event:
-                    on_event({"type": "web_search_start", "query": args.get("query", "")})
-                result = execute_web_search(conn, args.get("query", ""))
-                if on_event:
-                    _emit_web_results(on_event, result.get("text", ""))
-            elif name == "rerank_results":
-                result = execute_rerank(conn, args.get("query", ""), args.get("chunk_ids", []), args.get("top_n", 5))
-                if on_event:
-                    meta = result.get("meta", {})
-                    on_event({
-                        "type": "rerank",
-                        "input_count": meta.get("input_count", len(args.get("chunk_ids", []))),
-                        "output_count": meta.get("output_count", len(result.get("chunk_ids", []))),
-                    })
-            else:
-                result = {
-                    "text": f"Unsupported tool: {name}",
-                    "chunk_ids": [],
-                    "meta": {"tool": name or "unknown", "error": "unsupported_tool"},
-                }
-
-            grounding_refs.extend(result.get("chunk_ids", []))
-            grounding_refs = _dedupe_preserve_order(grounding_refs)
-            if debug:
-                logger.info(
-                    "agentic_loop_debug",
-                    extra={
-                        "event": "tool_result",
-                        "chat_id": chat_id,
-                        "iteration": iteration,
-                        "tool_name": name,
-                        "result_chunk_count": len(result.get("chunk_ids", []) or []),
-                        "result_chunk_ids": _id_preview(result.get("chunk_ids", []) or []),
-                        "result_excerpt": _truncate_text(result.get("text", ""), 280),
-                        "grounding_ref_count": len(grounding_refs),
-                        "grounding_ref_ids": _id_preview(grounding_refs),
-                    },
-                )
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.get("id"),
-                    "name": name,
-                    "content": result.get("text", ""),
-                }
-            )
-            trace_entry = {
-                "iteration": iteration,
-                "tool": name,
-                "latency_ms": result.get("meta", {}).get("latency_ms"),
-                "result_count": result.get("meta", {}).get("result_count"),
-                "mode": result.get("meta", {}).get("mode"),
-            }
-            if name == "web_search":
-                trace_entry["urls"] = result.get("meta", {}).get("urls") or []
-            tool_trace.append(trace_entry)
-        tool_trace.append(
-            {
-                "iteration": iteration,
-                "finish_reason": choice.get("finish_reason"),
-                "tool_calls": len(tool_calls),
-                "latency_ms": int((time.time() - started) * 1000),
-            }
-        )
-
-    if not final_text:
-        final_text = (
-            "I ran out of tool-call iterations before finishing. "
-            "Please ask a narrower follow-up."
-        )
-
-    verifier_result = {
-        "passed": True,
-        "missing_entities": [],
-        "has_citation": False,
-        "looks_generic": False,
-    }
-    repair_invoked = False
-    if verifier_enabled:
-        verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
-        if not verifier_result["passed"]:
-            repair_invoked = True
-            raw_repair = _repair_response_openai(
-                api_key=api_key,
-                model=model,
-                messages=messages,
-                verifier_result=verifier_result,
-                grounding_refs=grounding_refs,
-                required_entities=required_entities,
-            )
-            # Repair calls inherit the JSON system prompt, so parse its output too
-            repaired_reply, _, _, _ = _parse_synthesis_json(raw_repair)
-            final_text = repaired_reply if (repaired_reply or "").strip() else raw_repair
-            verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
-
-    final_text = _normalize_llm_markdown(final_text)
-
-    if on_event:
-        on_event({"type": "text", "content": final_text})
-
-    if debug:
-        logger.info(
-            "agentic_loop_debug",
-            extra={
-                "event": "loop_end",
-                "chat_id": chat_id,
-                "max_iterations": max_iterations,
-                "trace_entries": len(tool_trace),
-                "tool_call_entries": len([t for t in tool_trace if t.get("tool")]),
-                "grounding_ref_count": len(grounding_refs),
-                "grounding_ref_ids": _id_preview(grounding_refs),
-                "final_excerpt": _truncate_text(final_text, 280),
-                "verifier_passed": verifier_result.get("passed", True),
-                "repair_invoked": repair_invoked,
-            },
-        )
-    metadata = {
-        "intent_type": mode,
-        "resolver_confidence": resolver_confidence,
-        "resolver_entities": resolved_entities,
-        "required_entities": required_entities,
-        "verifier_passed": verifier_result.get("passed", True),
-        "verifier_missing_required": verifier_result.get("missing_required") or [],
-        "repair_invoked": repair_invoked,
-        "carryover_ref_count": carryover_count,
-        "fresh_ref_count": fresh_count,
-        "resolver_reasoning": resolver_result.get("reasoning_brief"),
-        "web_handoff": handoff,
-        "web_handoff_not_needed_conf_threshold": handoff_conf_threshold,
-        "web_handoff_low_conf_override": low_conf_not_needed_override,
-        "web_search_allowed_by_handoff": web_search_allowed_by_handoff,
-    }
-    return final_text, grounding_refs, tool_trace, metadata, assistant_reply_summary, assistant_follow_ups, assistant_clarifying_question
-
-
 def _format_routing_index_block(materials: list[dict]) -> str:
     if not materials:
         return "<course_materials>\n(no materials available)\n</course_materials>"
@@ -1885,6 +1419,7 @@ def run_agent_pageindex(
     on_event=None,
     provider: str = "openai",
     web_search_enabled: bool = False,
+    image_s3_keys: list | None = None,
 ) -> tuple:
     from pageindex_retrieval import get_course_routing_index
 
@@ -1901,9 +1436,27 @@ def run_agent_pageindex(
         + "\n\nUse the material IDs above when calling get_material_structure or get_page_content."
     )
 
+    # Attached images travel with the first user turn. Each provider has its own
+    # multimodal content shape (mirrors _synthesize_claude/openai/gemini). Prior
+    # images discussed earlier in the chat are recalled by similarity and prepended
+    # so the model retains cross-turn visual context.
+    current_images = _fetch_images_as_base64(image_s3_keys) if image_s3_keys else []
+    recalled_images = _recall_prior_chat_images(
+        conn, chat_id, user_message, exclude_s3_keys=image_s3_keys
+    )
+    request_images = recalled_images + current_images
+
+    if request_images:
+        openai_user_content = [
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
+            for mime, data in request_images
+        ] + [{"type": "text", "text": user_message}]
+    else:
+        openai_user_content = user_message
+
     messages = [
         {"role": "system", "content": system_content},
-        {"role": "user", "content": user_message},
+        {"role": "user", "content": openai_user_content},
     ]
     grounding_refs: list = []
     tool_trace: list = []
@@ -1926,7 +1479,14 @@ def run_agent_pageindex(
         return result
 
     if provider == "claude":
-        claude_messages = [{"role": "user", "content": user_message}]
+        if request_images:
+            claude_user_content = [
+                {"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}}
+                for mime, data in request_images
+            ] + [{"type": "text", "text": user_message}]
+        else:
+            claude_user_content = user_message
+        claude_messages = [{"role": "user", "content": claude_user_content}]
         for iteration in range(MAX_TOOL_ITERATIONS):
             evt_cb, flush = _filtered_on_event(on_event)
             blocks, stop_reason = _pageindex_stream_call_claude(
@@ -2028,7 +1588,14 @@ def run_agent_pageindex(
         )
 
     if provider == "gemini":
-        contents = [{"role": "user", "parts": [{"text": user_message}]}]
+        if request_images:
+            gemini_user_parts = [
+                {"inline_data": {"mime_type": mime, "data": data}}
+                for mime, data in request_images
+            ] + [{"text": user_message}]
+        else:
+            gemini_user_parts = [{"text": user_message}]
+        contents = [{"role": "user", "parts": gemini_user_parts}]
         for iteration in range(MAX_TOOL_ITERATIONS):
             evt_cb, flush = _filtered_on_event(on_event)
             parts, has_fc = _pageindex_stream_call_gemini(
@@ -2350,133 +1917,58 @@ def synthesize(
     if ai_provider not in _PROVIDERS:
         raise ValueError(f"Unsupported provider: {ai_provider}")
 
-    selected_provider_api_key = _get_api_key(conn, user_id, ai_provider)
+    # PageIndex is the only retrieval path. `chunks` and `force_context_only`
+    # remain in the signature for caller compatibility but are no longer used.
     material_scope = context_material_ids if isinstance(context_material_ids, list) else []
-    use_pageindex = _is_pageindex_enabled()
-    if use_pageindex and not force_context_only:
-        agentic_api_key = _get_api_key(conn, user_id, ai_provider)
-        pageindex_course_id = None
-        if context_material_ids:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT course_id FROM materials WHERE id = %s",
-                (context_material_ids[0],),
-            )
-            row = cursor.fetchone()
-            cursor.close()
-            if row:
-                pageindex_course_id = row["course_id"]
-        if pageindex_course_id is None and chat_id is not None:
-            cursor = conn.cursor()
-            cursor.execute("SELECT course_id FROM chats WHERE id = %s", (chat_id,))
-            row = cursor.fetchone()
-            cursor.close()
-            if row:
-                pageindex_course_id = row["course_id"]
-        (
-            text,
-            grounding_refs,
-            tool_trace,
-            metadata,
-            msg_summary,
-            follow_ups,
-            clarifying_question,
-        ) = run_agent_pageindex(
-            conn=conn,
-            user_message=user_message,
-            model=ai_model,
-            api_key=agentic_api_key,
-            provider=ai_provider,
-            chat_id=chat_id,
-            course_id=pageindex_course_id,
-            context_material_ids=material_scope,
-            on_event=on_event,
-            web_search_enabled=web_search_enabled,
+    agentic_api_key = _get_api_key(conn, user_id, ai_provider)
+    pageindex_course_id = None
+    if context_material_ids:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT course_id FROM materials WHERE id = %s",
+            (context_material_ids[0],),
         )
-        return (
-            text,
-            grounding_refs,
-            metadata,
-            tool_trace,
-            msg_summary,
-            follow_ups,
-            clarifying_question,
-        )
-    use_agentic = _is_enabled("AGENTIC_LOOP_ENABLED", default=False)
-    if force_context_only:
-        use_agentic = False
-
-    if use_agentic:
-        context = _format_context(chunks)
-        fn = _PROVIDERS[ai_provider]
-        selected_model_draft = fn(context, user_message, ai_model, selected_provider_api_key)
-        draft_reply, _, _, _ = _parse_synthesis_json(selected_model_draft)
-        if draft_reply and str(draft_reply).strip():
-            selected_model_draft = draft_reply
-        web_handoff_enabled = _is_enabled("AGENTIC_WEB_HANDOFF_ENABLED", default=True)
-        selected_model_handoff = None
-        if web_handoff_enabled:
-            selected_model_handoff = _assess_web_search_handoff(
-                synthesis_fn=fn,
-                model=ai_model,
-                api_key=selected_provider_api_key,
-                user_message=user_message,
-                selected_model_draft=selected_model_draft,
-            )
-        agentic_api_key = _get_api_key(conn, user_id, DEFAULT_AGENTIC_PROVIDER)
-        text, grounding_refs, tool_trace, metadata, msg_summary, follow_ups, clarifying_question = run_agent_openai(
-            conn=conn,
-            user_message=user_message,
-            model=DEFAULT_AGENTIC_MODEL,
-            api_key=agentic_api_key,
-            chunks=chunks,
-            chat_id=chat_id,
-            context_material_ids=material_scope,
-            selected_model_draft=selected_model_draft,
-            model_web_handoff=selected_model_handoff,
-            on_event=on_event,
-            image_s3_keys=image_s3_keys,
-        )
-        logger.info(
-            "agentic_loop_trace",
-            extra={
-                "chat_id": chat_id,
-                "provider": ai_provider,
-                "model": ai_model,
-                "agentic_provider": DEFAULT_AGENTIC_PROVIDER,
-                "agentic_model": DEFAULT_AGENTIC_MODEL,
-                "iterations": len([t for t in tool_trace if "tool_calls" in t]),
-                "tool_calls": len([t for t in tool_trace if t.get("tool")]),
-                "intent_type": metadata.get("intent_type"),
-                "resolver_confidence": metadata.get("resolver_confidence"),
-                "verifier_passed": metadata.get("verifier_passed"),
-                "repair_invoked": metadata.get("repair_invoked"),
-                "web_handoff_recommendation": (metadata.get("web_handoff") or {}).get("web_search_recommendation"),
-                "web_handoff_confidence": (metadata.get("web_handoff") or {}).get("confidence"),
-                "web_handoff_low_conf_override": metadata.get("web_handoff_low_conf_override"),
-                "web_search_allowed_by_handoff": metadata.get("web_search_allowed_by_handoff"),
-            },
-        )
-        return text, grounding_refs, metadata, tool_trace, msg_summary, follow_ups, clarifying_question
-
-    context = _format_context(chunks)
-    fn = _PROVIDERS[ai_provider]
-    raw = fn(context, user_message, ai_model, selected_provider_api_key, image_s3_keys=image_s3_keys)
-    reply, msg_summary, follow_ups, clarifying_question = _parse_synthesis_json(raw)
-    reply = _normalize_llm_markdown(reply)
-    chunk_ids = [
-        _json_safe_chunk_id(c.get("id"))
-        for c in chunks
-        if c.get("id") is not None
-    ]
-    return reply, chunk_ids, {
-        "intent_type": "fresh",
-        "resolver_confidence": 0.0,
-        "verifier_passed": True,
-        "repair_invoked": False,
-        "carryover_ref_count": 0,
-        "fresh_ref_count": len(chunk_ids),
-    }, [], msg_summary, follow_ups, clarifying_question
+        row = cursor.fetchone()
+        cursor.close()
+        if row:
+            pageindex_course_id = row["course_id"]
+    if pageindex_course_id is None and chat_id is not None:
+        cursor = conn.cursor()
+        cursor.execute("SELECT course_id FROM chats WHERE id = %s", (chat_id,))
+        row = cursor.fetchone()
+        cursor.close()
+        if row:
+            pageindex_course_id = row["course_id"]
+    (
+        text,
+        grounding_refs,
+        tool_trace,
+        metadata,
+        msg_summary,
+        follow_ups,
+        clarifying_question,
+    ) = run_agent_pageindex(
+        conn=conn,
+        user_message=user_message,
+        model=ai_model,
+        api_key=agentic_api_key,
+        provider=ai_provider,
+        chat_id=chat_id,
+        course_id=pageindex_course_id,
+        context_material_ids=material_scope,
+        on_event=on_event,
+        web_search_enabled=web_search_enabled,
+        image_s3_keys=image_s3_keys,
+    )
+    return (
+        text,
+        grounding_refs,
+        metadata,
+        tool_trace,
+        msg_summary,
+        follow_ups,
+        clarifying_question,
+    )
 
 
 # Depth-aware prompt pressure for clarification rounds.

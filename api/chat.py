@@ -27,20 +27,13 @@ try:
     from .models import User
     from .courses import Course
     from .db import get_db
-    from .rag import retrieve_chunks
     from .llm import synthesize, synthesize_with_clarification
 except ImportError:
     from middleware import send_json, send_sse_headers, send_sse_event, handle_options, authenticate_request, sanitize_string, check_rate_limit
     from models import User
     from courses import Course
     from db import get_db
-    from rag import retrieve_chunks
     from llm import synthesize, synthesize_with_clarification
-
-try:
-    from services.query.retrieval import _fetch_chunk_context
-except ImportError:
-    _fetch_chunk_context = None
 
 try:
     from services.query.persistence import embed_text_via_lambda, write_chat_message_embedding, embed_image_via_lambda
@@ -231,13 +224,6 @@ def _is_enabled(env_name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
-
-
-def _is_pageindex_active() -> bool:
-    legacy_value = os.environ.get("PAGEINDEX_RETRIEVAL_ENABLED")
-    if legacy_value is not None:
-        return legacy_value.strip().lower() in ("1", "true", "yes", "on")
-    return os.environ.get("PAGEINDEX_RAG_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _is_agentic_request(ai_provider: str, ai_model: str) -> bool:
@@ -751,7 +737,10 @@ class handler(BaseHTTPRequestHandler):
                 send_json(self, 200, {"chunks": serialized})
                 return
 
-            raw_chunks = _fetch_chunk_context(conn, chunk_ids)
+            # Legacy (pre-PageIndex) messages stored vector chunk IDs; that
+            # citation source (the chunks table) has been retired, so there is
+            # nothing to hydrate — return no chunk citations for such messages.
+            raw_chunks = []
 
         chunk_map = {str(c['id']): c for c in raw_chunks}
         ordered = [chunk_map[str(cid)] for cid in chunk_ids if str(cid) in chunk_map]
@@ -975,7 +964,7 @@ class handler(BaseHTTPRequestHandler):
                 metrics["embedding_null"] += 1
 
             # RAG retrieval + LLM synthesis
-            chunks = retrieve_chunks(conn, content, context_material_ids) if not _is_pageindex_active() else []
+            chunks = []
 
             # Check if the prior assistant message has a pending clarification.
             prior_is_clarification, prior_clarification_skipped, prior_clarification_depth, \
@@ -1214,11 +1203,7 @@ class handler(BaseHTTPRequestHandler):
             send_sse_headers(self)
             send_sse_event(self, {"type": "user_message", "message": dict(user_message)})
 
-            chunks = retrieve_chunks(
-                conn, content or "", context_material_ids,
-                image_s3_keys=image_s3_keys or [],
-                current_message_id=user_message['id'],
-            ) if not _is_pageindex_active() else []
+            chunks = []
 
             # Check if the prior assistant message has a pending clarification.
             prior_is_clarification, prior_clarification_skipped, prior_clarification_depth, \
@@ -1427,7 +1412,7 @@ class handler(BaseHTTPRequestHandler):
                 cursor.close()
                 return
 
-            chunks = retrieve_chunks(conn, content, context_material_ids) if not _is_pageindex_active() else []
+            chunks = []
 
             # Compute image diff (tasks 2.2–2.5)
             original_keys = list(msg.get('image_s3_keys') or [])
@@ -2140,45 +2125,10 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             context_material_ids = user_msg.get('context_material_ids') or []
-            locked_chunk_ids = msg.get('retrieved_chunk_ids') or []
-            if isinstance(locked_chunk_ids, str):
-                try:
-                    locked_chunk_ids = json.loads(locked_chunk_ids)
-                except json.JSONDecodeError:
-                    locked_chunk_ids = []
-            if not isinstance(locked_chunk_ids, list):
-                locked_chunk_ids = []
-            locked_chunk_ids = [str(cid) for cid in locked_chunk_ids if cid is not None]
-
-            # PageIndex refs ("material:N") are not vector chunk IDs and would just
-            # return empty rows from _fetch_chunk_context. Skip them.
-            integer_locked_chunk_ids = [
-                cid for cid in locked_chunk_ids
-                if not cid.startswith("material:")
-            ]
-
-            locked_chunks = []
-            if integer_locked_chunk_ids and _fetch_chunk_context:
-                hydrated_locked_chunks = _fetch_chunk_context(conn, integer_locked_chunk_ids)
-                by_id = {str(c.get('id')): c for c in hydrated_locked_chunks}
-                ordered_hydrated = [by_id[cid] for cid in integer_locked_chunk_ids if cid in by_id]
-                for idx, chunk in enumerate(ordered_hydrated):
-                    locked_chunks.append(
-                        {
-                            "id": chunk.get("id"),
-                            "chunk_text": chunk.get("chunk_text", ""),
-                            "chunk_type": chunk.get("chunk_type", ""),
-                            "page_number": chunk.get("page_number"),
-                            # Keep stable, deterministic ordering signal for prompt context.
-                            "similarity": max(0.0, 1.0 - (idx * 0.01)),
-                            "source_type": chunk.get("source_type", ""),
-                            "material_id": chunk.get("material_id"),
-                        }
-                    )
-
-            # Regenerate should default to the exact same grounding snapshot when available.
-            # Fall back to fresh retrieval only for legacy rows without stored chunk refs.
-            chunks = locked_chunks or (retrieve_chunks(conn, user_msg['content'], context_material_ids) if not _is_pageindex_active() else [])
+            # Regeneration goes through the PageIndex agent like a fresh turn. The
+            # legacy exact-chunk replay (hydrating vector chunk IDs from the retired
+            # chunks table) has been removed; PageIndex re-derives grounding fresh.
+            chunks = []
 
             if is_streaming:
                 send_sse_headers(self)
@@ -2211,7 +2161,6 @@ class handler(BaseHTTPRequestHandler):
                     chat_id=msg['chat_id'],
                     context_material_ids=context_material_ids,
                     on_event=on_event,
-                    force_context_only=bool(locked_chunks),
                 )
                 logger.info(
                     "chat_synthesize_done",

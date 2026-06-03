@@ -16,7 +16,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from db import get_db
 
 TIMEOUT_SECONDS = 90
-MATERIAL_CHUNK_LIMIT = 80
+MATERIAL_PAGE_LIMIT = 80
 CONTEXT_CHAR_BUDGET = 24_000
 
 TYPE_ALIASES = {
@@ -109,14 +109,15 @@ def _fetch_material_context(conn, material_ids: list) -> str:
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT c.content
-        FROM chunks c
-        JOIN documents d ON c.document_id = d.id
-        WHERE d.material_id = ANY(%s::int[])
-        ORDER BY d.material_id, c.chunk_index
+        SELECT text_content
+        FROM material_page_text
+        WHERE material_id = ANY(%s::int[])
+          AND text_content IS NOT NULL
+          AND text_content != ''
+        ORDER BY material_id, page_number
         LIMIT %s
         """,
-        (material_ids, MATERIAL_CHUNK_LIMIT),
+        (material_ids, MATERIAL_PAGE_LIMIT),
     )
     rows = cursor.fetchall()
     cursor.close()
@@ -125,7 +126,7 @@ def _fetch_material_context(conn, material_ids: list) -> str:
     parts = []
     total = 0
     for row in rows:
-        content = row['content'] or ''
+        content = row['text_content'] or ''
         if total + len(content) > CONTEXT_CHAR_BUDGET:
             remaining = CONTEXT_CHAR_BUDGET - total
             if remaining > 200:

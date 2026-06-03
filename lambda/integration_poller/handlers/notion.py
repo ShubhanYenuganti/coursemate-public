@@ -5,7 +5,7 @@ sync_source_point(source_point, token):
   - Queries the Notion database for pages edited since last_synced_at
   - Converts each page to PDF via reportlab
   - Uploads to S3 and upserts into `materials`
-  - Triggers the embed_materials Step Function
+  - Triggers the index_materials (PageIndex) Step Function
   - Updates last_synced_at on success
 """
 
@@ -40,7 +40,7 @@ sfn = boto3.client(
 )
 
 BUCKET = os.environ.get("AWS_S3_BUCKET_NAME", "")
-STATE_MACHINE_ARN = os.environ.get("STATE_MACHINE_ARN", "")
+INDEX_STATE_MACHINE_ARN = os.environ.get("INDEX_STATE_MACHINE_ARN", "")
 
 
 # ─── Notion API helpers ──────────────────────────────────────────────────────
@@ -381,20 +381,20 @@ def _upsert_material(
 
 
 def _doc_type_changed(material_id: int) -> bool:
-    """Return True if materials.doc_type differs from the doc_type used in the last ingest.
+    """Return True if materials.doc_type differs from the doc_type used in the last index.
 
-    Compares materials.doc_type (current user setting) against documents.source_type
-    (the doc_type that was active when chunks were last generated). Returns False if
-    no documents row exists — no prior ingest means no drift to detect.
+    Compares materials.doc_type (current user setting) against
+    material_page_index.doc_type (the doc_type active when the material was last
+    PageIndex-indexed). Returns False if the material has not been indexed yet —
+    no prior index means no drift to detect.
     """
     with get_db() as db:
         row = db.execute(
             """
-            SELECT m.doc_type, d.source_type AS last_doc_type
+            SELECT m.doc_type, mpi.doc_type AS last_doc_type
             FROM materials m
-            LEFT JOIN documents d ON d.material_id = m.id
+            LEFT JOIN material_page_index mpi ON mpi.material_id = m.id
             WHERE m.id = %s
-            ORDER BY d.ingested_at DESC NULLS LAST
             LIMIT 1
             """,
             (material_id,),
@@ -404,19 +404,14 @@ def _doc_type_changed(material_id: int) -> bool:
     return row["doc_type"] != row["last_doc_type"]
 
 
-def _delete_old_chunks(material_id):
-    """Delete all embedding chunks for a material before re-ingestion."""
+def _delete_old_index(material_id):
+    """Clear a material's per-page PageIndex data before re-indexing so a
+    re-indexed version with fewer pages doesn't leave stale page rows behind.
+    (material_page_index / course_material_index are single-row upserts the
+    indexer overwrites, so they don't need explicit clearing.)"""
     with get_db() as db:
-        db.execute(
-            """
-            DELETE FROM chunks
-            WHERE document_id IN (
-                SELECT id FROM documents WHERE material_id = %s
-            )
-        """,
-            (material_id,),
-        )
-        db.execute("DELETE FROM documents WHERE material_id = %s", (material_id,))
+        db.execute("DELETE FROM material_page_text WHERE material_id = %s", (material_id,))
+        db.execute("DELETE FROM material_page_visuals WHERE material_id = %s", (material_id,))
 
 
 def _upload_pdf_to_s3(page_id, pdf_bytes):
@@ -467,17 +462,17 @@ def _enqueue_embed_job(material_id):
     )
 
 
-def _trigger_embed(s3_key):
-    if not STATE_MACHINE_ARN:
+def _trigger_index(s3_key):
+    if not INDEX_STATE_MACHINE_ARN:
         print(
-            f"[notion_handler] STATE_MACHINE_ARN not set, skipping embed trigger for key={s3_key}"
+            f"[notion_handler] INDEX_STATE_MACHINE_ARN not set, skipping index trigger for key={s3_key}"
         )
         return
     print(
-        f"[notion_handler] Triggering embed Step Function arn={STATE_MACHINE_ARN} key={s3_key}"
+        f"[notion_handler] Triggering index Step Function arn={INDEX_STATE_MACHINE_ARN} key={s3_key}"
     )
     sfn.start_execution(
-        stateMachineArn=STATE_MACHINE_ARN,
+        stateMachineArn=INDEX_STATE_MACHINE_ARN,
         input=json.dumps({"s3_key": s3_key, "cursor": 0}),
     )
 
@@ -500,7 +495,7 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
         f"[notion_handler] Starting sync source_point_id={source_point_id} "
         f"course_id={course_id} user_id={user_id} "
         f"force_full_sync={force_full_sync} external_ids={external_ids} "
-        f"bucket={BUCKET!r} has_state_machine={bool(STATE_MACHINE_ARN)}"
+        f"bucket={BUCKET!r} has_state_machine={bool(INDEX_STATE_MACHINE_ARN)}"
     )
 
     # Determine which page IDs to process
@@ -613,8 +608,8 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
             blocks = _fetch_all_blocks(page_id, token)
 
             if not needs_ingest:
-                # force_full_sync or doc_type changed: clear stale embeddings before re-ingest
-                _delete_old_chunks(material_id)
+                # force_full_sync or doc_type changed: clear stale PageIndex data before re-index
+                _delete_old_index(material_id)
                 try:
                     s3.delete_object(Bucket=BUCKET, Key=f"notion/{page_id}.pdf")
                 except Exception:
@@ -624,7 +619,7 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
             s3_key = _upload_pdf_to_s3(page_id, pdf_bytes)
             _update_material_after_upload(material_id, s3_key, last_edited_time)
             _enqueue_embed_job(material_id)
-            _trigger_embed(s3_key)
+            _trigger_index(s3_key)
             pages_processed += 1
 
         except Exception as exc:

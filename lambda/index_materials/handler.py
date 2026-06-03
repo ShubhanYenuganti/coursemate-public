@@ -47,6 +47,16 @@ def lambda_handler(event, context):
     if not s3_key:
         return {"status": "failed", "error": "missing s3_key"}
 
+    # Step Functions Catch routes hard failures (timeout / OOM / unhandled error)
+    # here so the job reaches a terminal DB state instead of being frozen at
+    # 'processing'. The original worker invocation never got to write a status.
+    if event.get("mark_failed"):
+        row = _resolve_material(s3_key)
+        if row:
+            mark_job(row["id"], "failed",
+                     error=str(event.get("error", "indexing failed"))[:1000])
+        return {"status": "marked_failed", "s3_key": s3_key}
+
     row = _resolve_material(s3_key)
     material_id = row["id"] if row else None
 

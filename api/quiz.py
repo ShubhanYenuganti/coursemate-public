@@ -117,23 +117,24 @@ def _validate_and_normalize_questions(questions: list) -> list:
     return result
 
 
-_MATERIAL_CHUNK_LIMIT = 80
+_MATERIAL_PAGE_LIMIT = 80
 _CONTEXT_CHAR_BUDGET = 24_000
 
 
 def _fetch_material_context(conn, material_ids: list) -> str:
-    """Fetch chunk content for given material IDs and concatenate into a context string."""
+    """Fetch indexed page text for given material IDs and concatenate into a context string."""
     if not material_ids:
         return "No course materials selected."
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT c.content
-        FROM chunks c
-        JOIN documents d ON c.document_id = d.id
-        WHERE d.material_id = ANY(%s::int[])
-        ORDER BY d.material_id, c.chunk_index
+        SELECT text_content
+        FROM material_page_text
+        WHERE material_id = ANY(%s::int[])
+          AND text_content IS NOT NULL
+          AND text_content != ''
+        ORDER BY material_id, page_number
         LIMIT %s
-    """, (material_ids, _MATERIAL_CHUNK_LIMIT))
+    """, (material_ids, _MATERIAL_PAGE_LIMIT))
     rows = cursor.fetchall()
     cursor.close()
     if not rows:
@@ -141,7 +142,7 @@ def _fetch_material_context(conn, material_ids: list) -> str:
     parts = []
     total = 0
     for row in rows:
-        content = row['content'] or ''
+        content = row['text_content'] or ''
         if total + len(content) > _CONTEXT_CHAR_BUDGET:
             remaining = _CONTEXT_CHAR_BUDGET - total
             if remaining > 200:
