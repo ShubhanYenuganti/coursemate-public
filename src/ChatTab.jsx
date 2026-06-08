@@ -1463,10 +1463,8 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
           .map(([provider]) => provider);
         setAvailableModels(available);
         if (available.length > 0) {
-          const savedProvider = localStorage.getItem('chat_selected_provider')
-            || course?.default_ai_provider || null;
-          const savedModelId = localStorage.getItem('chat_selected_model_id')
-            || course?.default_ai_model || null;
+          const savedProvider = course?.default_ai_provider || localStorage.getItem('chat_selected_provider');
+          const savedModelId = course?.default_ai_model || localStorage.getItem('chat_selected_model_id');
           const provider = available.includes(savedProvider) ? savedProvider : available[0];
           const modelList = PROVIDER_MODELS[provider] ?? [];
           const modelId = modelList.find((m) => m.id === savedModelId)?.id ?? modelList[0]?.id ?? null;
