@@ -16,59 +16,68 @@ For simple migrations (one-liners or a few SQL commands), provide the commands d
 - If a task would normally end with pushing, stop after local changes and ask for confirmation.
 - Default behavior: local-only (`git status`, `git diff`, local commits only when asked).
 
-## Figma Capture Workflow
+# CLAUDE.md
 
-This project uses the Figma MCP server (remote) to push the live production UI back to Figma as editable design layers.
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
-### Prerequisites
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
-- Figma MCP connected via `/plugin` in Claude Code
-- Production URL set in environment: `PRODUCTION_URL`
-- **Google OAuth**: the human completes sign-in in the capture browser before capturing authenticated views (see `.cursor/skills/capture-ui-to-figma/SKILL.md`)
+## 1. Think Before Coding
 
-### Capture Instructions
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
 
-When asked to capture the UI to Figma:
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
 
-1. Read the production URL from the environment variable `PRODUCTION_URL`. If not set, ask the user to provide it before proceeding — do not fall back to localhost.
+## 2. Simplicity First
 
-2. Use the Figma MCP capture tool (`generate_figma_design`) and Playwright MCP as described in the capture skill: open a browser pointed at the production URL, with the user signed in via Google OAuth in that same browser session where required.
+**Minimum code that solves the problem. Nothing speculative.**
 
-3. On the **first** capture run for this workflow, capture the following states **in order** (navigate to the correct routes or query params for each):
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
 
-   - **Login page** — logged-out / sign-in entry (before OAuth completes)
-   - **Dashboard** — after successful Google sign-in
-   - **Robotics — materials** — course materials view for the robotics flow
-   - **Robotics — chat** — main chat surface for that flow
-   - **Robotics — chat (new chat + verbose stream)** — create a **new** chat, send this exact user message, wait for the response stream, and capture the UI showing **both** the verbose stream and the chat together:
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
-     `provide me with a detailed documentation from Robosuite about tracking a robotic arm's pose`
+## 3. Surgical Changes
 
-4. Send all captured frames to a **new** Figma file in Drafts. Name the file: `CourseMate — UI Capture YYYY-MM-DD` (use today’s date).
+**Touch only what you must. Clean up only your own mess.**
 
-5. Return the Figma file link when complete.
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
 
-### After Capture
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
 
-Once frames are in Figma:
+The test: Every changed line should trace directly to the user's request.
 
-- Designer refines layout/spacing in Make
-- Paste updated Figma frame URL back into Claude Code
+## 4. Goal-Driven Execution
 
-### Implementing from Figma (design → code)
+**Define success criteria. Loop until verified.**
 
-When the task is to **read a Figma design and implement it in this codebase**:
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
 
-1. Use the **Figma MCP `get_screenshot`** tool for the target frame as the primary visual reference (parse `fileKey` and `nodeId` from the user’s Figma URL). **Do not** call `get_design_context`, generated design/code export, or other full ingest unless the user explicitly asks for that.
-2. If `get_screenshot` is unavailable or the user already attached a PNG of the frame, use that image instead.
-3. Implement as **visual diffs** against existing components (see **Important** below): match layout, spacing, and hierarchy from the screenshot; preserve logic, Tailwind patterns, and props.
-4. Example prompt: `Implement the changes from this Figma frame: [URL]` — agent uses **`get_screenshot`** on that node, then implements from the image.
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
 
-**Why:** Full Figma ingest is token-heavy; **`get_screenshot`** keeps context small while still showing layout and style.
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
-### Important
+---
 
-- Never fall back to a local dev server — production only
-- Never regenerate components from scratch — apply only visual diffs
-- Preserve all existing `className` conventions (Tailwind + indigo/gray)
-- Do not remove or rename existing props or event handlers
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
