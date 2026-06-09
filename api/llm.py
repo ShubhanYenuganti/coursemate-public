@@ -1955,7 +1955,22 @@ def run_agent_pageindex(
 
     # Synthesis: always the user-selected model, always a separate call from retrieval.
     started = time.time()
-    synthesis_message, _ = _synthesis_call(messages)
+    if _openai_should_use_responses_api(model):
+        # Responses API models see the Chat Completions tool-call history and re-generate
+        # retrieval reasoning instead of synthesizing.  Build a clean two-message prompt:
+        # retrieved page text goes into the system message as plain context.
+        tool_contents = [m["content"] for m in messages if m.get("role") == "tool"]
+        if tool_contents:
+            retrieved = "\n\n---\n\n".join(str(c) for c in tool_contents)
+            synthesis_msgs = [
+                {"role": "system", "content": system_content + f"\n\nRetrieved course material:\n{retrieved}"},
+                messages[1],  # original user message (preserves image content if any)
+            ]
+        else:
+            synthesis_msgs = messages[:2]
+        synthesis_message, _ = _synthesis_call(synthesis_msgs)
+    else:
+        synthesis_message, _ = _synthesis_call(messages)
     raw_final = (
         _message_text(synthesis_message).strip()
         or "I could not find relevant content in the course materials."
