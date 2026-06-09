@@ -705,7 +705,27 @@ function MessageBubble({
             </div>
           ) : (
             <div className="space-y-1">
-              {msg.image_download_urls?.length > 0 && (
+              {msg._inflightImages?.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-1">
+                  {msg._inflightImages.map((img, i) => (
+                    <div key={i} className="relative flex flex-col items-center gap-0.5">
+                      <div
+                        className={`relative w-14 h-14 rounded-lg overflow-hidden border border-gray-200 bg-gray-50 flex-shrink-0 ${!msg._isTemp ? 'cursor-pointer' : ''}`}
+                        onClick={!msg._isTemp ? () => window.open(img.objectUrl, '_blank') : undefined}
+                      >
+                        <img src={img.objectUrl} alt={img.filename} className="w-full h-full object-cover" />
+                        {msg._isTemp && (
+                          <div className="absolute inset-0 bg-white/70 flex items-center justify-center">
+                            <SpinnerIcon />
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-[9px] text-gray-400 max-w-[56px] truncate">{img.filename}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!msg._inflightImages?.length && msg.image_download_urls?.length > 0 && (
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
                   <span className="text-gray-400 flex-shrink-0"><PaperclipIcon /></span>
                   {msg.image_download_urls.map((img, i) => (
@@ -1786,11 +1806,15 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   function handleStreamEvent(evt, { tempId, tempAssistantId, chatId, setActiveConvFn }) {
     switch (evt.type) {
       case 'user_message':
-        setMessages((prev) => [
-          ...prev.filter((m) => m.id !== tempId),
-          evt.message,
-          { id: tempAssistantId, role: 'assistant', content: '', _streaming: true },
-        ]);
+        setMessages((prev) => {
+          const temp = prev.find((m) => m.id === tempId);
+          const enriched = temp?._inflightImages ? { ...evt.message, _inflightImages: temp._inflightImages, _isTemp: true } : evt.message;
+          return [
+            ...prev.filter((m) => m.id !== tempId),
+            enriched,
+            { id: tempAssistantId, role: 'assistant', content: '', _streaming: true },
+          ];
+        });
         break;
       case 'tool_call':
         setMessages((prev) => {
@@ -1820,10 +1844,14 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
         break;
       case 'done':
         setMessages((prev) => {
+          const prevUserMsg = prev.find((m) => m.id === tempId || m.id === evt.user_message?.id);
+          const enrichedUser = prevUserMsg?._inflightImages
+            ? { ...evt.user_message, _inflightImages: prevUserMsg._inflightImages }
+            : evt.user_message;
           const withoutTemp = prev.filter(
             (m) => m.id !== tempId && m.id !== tempAssistantId && m.id !== evt.user_message?.id
           );
-          return [...withoutTemp, evt.user_message, evt.assistant_message];
+          return [...withoutTemp, enrichedUser, evt.assistant_message];
         });
         setChats((prev) => prev.map((c) =>
           c.id === chatId
@@ -2042,7 +2070,15 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
 
     const tempId = Date.now();
     const tempAssistantId = tempId + 1;
-    const tempUserMsg = { id: tempId, role: 'user', content: text };
+    const tempUserMsg = {
+      id: tempId,
+      role: 'user',
+      content: text,
+      ...(stagedImages.length > 0 ? {
+        _inflightImages: stagedImages.map((f) => ({ objectUrl: URL.createObjectURL(f), filename: f.name })),
+        _isTemp: true,
+      } : {}),
+    };
     setMessages((prev) => [...prev, tempUserMsg]);
 
     let imageAttachments = [];
