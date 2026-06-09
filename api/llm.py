@@ -1067,13 +1067,33 @@ def _filtered_on_event(on_event):
     return _evt, filt.flush
 
 
+def _convert_content_to_responses_format(content):
+    """Convert a Chat Completions content value to Responses API format.
+
+    Strings are returned as-is. Content arrays have their part types remapped:
+    'image_url' → 'input_image', 'text' → 'input_text'.
+    """
+    if not isinstance(content, list):
+        return content
+    out = []
+    for part in content:
+        if part.get("type") == "image_url":
+            url = part["image_url"] if isinstance(part["image_url"], str) else part["image_url"]["url"]
+            out.append({"type": "input_image", "image_url": url})
+        elif part.get("type") == "text":
+            out.append({"type": "input_text", "text": part["text"]})
+        else:
+            out.append(part)
+    return out
+
+
 def _messages_to_responses_input(messages: list) -> list:
     """Convert Chat Completions messages list to Responses API input items."""
     result = []
     for msg in messages:
         role = msg.get("role")
         if role in ("system", "user"):
-            result.append({"role": role, "content": msg["content"]})
+            result.append({"role": role, "content": _convert_content_to_responses_format(msg["content"])})
         elif role == "assistant":
             content = msg.get("content")
             if content:
