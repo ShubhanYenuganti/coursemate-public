@@ -10,11 +10,11 @@ For simple migrations (one-liners or a few SQL commands), provide the commands d
 
 ## Git Safety Rules (Mandatory)
 
-- DONT suggest git commands `git commit` or `git add` unless I request it explicitly.
+- `git add` and `git commit` are allowed freely — commit local work as part of normal task flow without asking.
 - NEVER run `git push` unless I explicitly say: "push now".
 - NEVER run `gh` commands that modify remote state (`gh pr create`, `gh issue create`, merges, releases) unless explicitly requested.
-- If a task would normally end with pushing, stop after local changes and ask for confirmation.
-- Default behavior: local-only (`git status`, `git diff`, local commits only when asked).
+- If a task would normally end with pushing, stop after committing locally and ask for confirmation before pushing.
+- Default behavior: local-only (commits OK; no remote operations without explicit request).
 
 # CLAUDE.md
 

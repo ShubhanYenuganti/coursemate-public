@@ -97,7 +97,7 @@ npm run build                                            # ✓ built
 
 ---
 
-## 4. Single-Course Chat Search (snippet + jump-to)  (feature #5 / CS)
+## 4. Single-Course Chat Search (snippet + jump-to)  (feature #5 / CS) VERIFIED
 
 **Validates:** message-level search results with snippet + deep-link to the matched message.
 
@@ -118,7 +118,7 @@ npm run build                                            # ✓ built
 
 ---
 
-## 5. Flashcard Play Mode + Rating  (feature #2)
+## 5. Flashcard Play Mode + Rating  (feature #2) VERIFIED
 
 **Validates:** Play study mode + per-card thumb rating. **Regression for C-1** (viewer
 previously crashed on render due to a temporal-dead-zone `ReferenceError`).
@@ -179,7 +179,7 @@ indexed multi-page materials.
 
 ---
 
-## 7. Web Search User Toggle  (feature #3)
+## 7. Web Search User Toggle  (feature #3) VERIFIED
 
 **Validates:** per-chat web-search toggle threaded into the PageIndex loop, gated by both the
 server env flag and the per-chat flag.
@@ -204,7 +204,7 @@ server env flag and the per-chat flag.
 
 ---
 
-## 8. Generate-From-Chat (rich)  (feature #4 / GFC)
+## 8. Generate-From-Chat (rich)  (feature #4 / GFC) VERIFIED
 
 **Validates:** the `propose_generation` tool → proposal card → **Build** (queues a generation)
 and **Refine** (opens prefilled modal). **Regression for H-1** (Build now works for

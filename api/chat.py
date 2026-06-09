@@ -734,6 +734,19 @@ class handler(BaseHTTPRequestHandler):
                         "pages": pages,
                         "citation_type": "page",
                     })
+                for cid in chunk_ids:
+                    if not isinstance(cid, str) or not cid.startswith('web:'):
+                        continue
+                    rest = cid[4:]
+                    if '\t' in rest:
+                        url, title = rest.split('\t', 1)
+                    else:
+                        url, title = rest, rest
+                    serialized.append({
+                        "citation_type": "web",
+                        "url": url,
+                        "title": title,
+                    })
                 send_json(self, 200, {"chunks": serialized})
                 return
 

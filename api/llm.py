@@ -1422,8 +1422,9 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
     return tools
 
 
-def _dispatch_pageindex_tool(conn, name, args, course_id, grounding_refs, on_event) -> str:
-    """Dispatch a single PageIndex tool call. Returns tool-result text, appends to grounding_refs, emits events."""
+def _dispatch_pageindex_tool(conn, name, args, course_id, grounding_refs, on_event) -> tuple[str, dict]:
+    """Dispatch a single PageIndex tool call. Returns (tool-result text, extra trace metadata).
+    Appends to grounding_refs and emits events as a side effect."""
     from pageindex_retrieval import get_material_structure, get_page_content
 
     if name == "get_material_structure":
@@ -1487,10 +1488,20 @@ def _dispatch_pageindex_tool(conn, name, args, course_id, grounding_refs, on_eve
             on_event({"type": "web_search_start", "query": args.get("query", "")})
         result = execute_web_search(conn, args.get("query", ""))
         tool_result = result.get("text", "")
+        urls = []
+        for url_info in (result.get("meta") or {}).get("urls") or []:
+            url = url_info.get("url", "")
+            title = url_info.get("title") or url
+            if url:
+                if on_event:
+                    on_event({"type": "web_url_view", "url": url, "title": title})
+                grounding_refs.append(f"web:{url}\t{title}")
+                urls.append({"url": url, "title": title})
+        return str(tool_result), {"urls": urls} if urls else {}
     else:
         tool_result = f"Unknown tool: {name}"
 
-    return str(tool_result)
+    return str(tool_result), {}
 
 
 def _pageindex_tools_anthropic(tools: list) -> list:
@@ -1652,6 +1663,12 @@ def run_agent_pageindex(
         + routing_block
         + "\n\nUse the material IDs above when calling get_material_structure or get_page_content."
     )
+    if web_search_enabled:
+        system_content += (
+            "\n\n**Web search**: `web_search` is also available. Use it when the question "
+            "asks about something not covered in the course materials — such as current software "
+            "versions, external libraries, or real-world information. Call it with a specific query."
+        )
 
     # Attached images travel with the first user turn. Each provider has its own
     # multimodal content shape (mirrors _synthesize_claude/openai/gemini). Prior
@@ -1751,6 +1768,7 @@ def run_agent_pageindex(
             tool_results = []
             for b in tool_use_blocks:
                 args = json.loads(b["input_json"]) if b["input_json"] else {}
+                _tmeta = {}
                 if b["name"] == "propose_generation":
                     proposal = {
                         "type": "generation_proposal",
@@ -1765,7 +1783,7 @@ def run_agent_pageindex(
                     proposal_emitted = True
                     result_text = ""
                 else:
-                    result_text = _dispatch_pageindex_tool(
+                    result_text, _tmeta = _dispatch_pageindex_tool(
                         conn=conn,
                         name=b["name"],
                         args=args,
@@ -1773,7 +1791,10 @@ def run_agent_pageindex(
                         grounding_refs=grounding_refs,
                         on_event=on_event,
                     )
-                tool_trace.append({"tool": b["name"], "args": args, "iteration": iteration})
+                _te = {"tool": b["name"], "args": args, "iteration": iteration}
+                if _tmeta.get("urls"):
+                    _te["urls"] = _tmeta["urls"]
+                tool_trace.append(_te)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": b["id"],
@@ -1851,6 +1872,7 @@ def run_agent_pageindex(
                 if "functionCall" in p:
                     fc = p["functionCall"]
                     args = fc.get("args", {})
+                    _tmeta = {}
                     if fc["name"] == "propose_generation":
                         proposal = {
                             "type": "generation_proposal",
@@ -1865,7 +1887,7 @@ def run_agent_pageindex(
                         proposal_emitted = True
                         result_text = ""
                     else:
-                        result_text = _dispatch_pageindex_tool(
+                        result_text, _tmeta = _dispatch_pageindex_tool(
                             conn=conn,
                             name=fc["name"],
                             args=args,
@@ -1873,7 +1895,10 @@ def run_agent_pageindex(
                             grounding_refs=grounding_refs,
                             on_event=on_event,
                         )
-                    tool_trace.append({"tool": fc["name"], "args": args, "iteration": iteration})
+                    _te = {"tool": fc["name"], "args": args, "iteration": iteration}
+                    if _tmeta.get("urls"):
+                        _te["urls"] = _tmeta["urls"]
+                    tool_trace.append(_te)
                     function_response = {
                         "name": fc["name"],
                         "response": {"content": result_text},
@@ -1951,6 +1976,7 @@ def run_agent_pageindex(
             except json.JSONDecodeError:
                 args = {}
 
+            _tmeta = {}
             if name == "propose_generation":
                 proposal = {
                     "type": "generation_proposal",
@@ -1965,7 +1991,7 @@ def run_agent_pageindex(
                 proposal_emitted = True
                 tool_result = ""
             else:
-                tool_result = _dispatch_pageindex_tool(
+                tool_result, _tmeta = _dispatch_pageindex_tool(
                     conn=conn,
                     name=name,
                     args=args,
@@ -1974,7 +2000,10 @@ def run_agent_pageindex(
                     on_event=on_event,
                 )
 
-            tool_trace.append({"tool": name, "args": args, "iteration": iteration})
+            _te = {"tool": name, "args": args, "iteration": iteration}
+            if _tmeta.get("urls"):
+                _te["urls"] = _tmeta["urls"]
+            tool_trace.append(_te)
             messages.append(
                 {
                     "role": "tool",
@@ -2003,11 +2032,19 @@ def run_agent_pageindex(
         # Responses API models see the Chat Completions tool-call history and re-generate
         # retrieval reasoning instead of synthesizing.  Build a clean two-message prompt:
         # retrieved page text goes into the system message as plain context.
-        tool_contents = [m["content"] for m in messages if m.get("role") == "tool"]
-        if tool_contents:
-            retrieved = "\n\n---\n\n".join(str(c) for c in tool_contents)
+        course_contents = [m["content"] for m in messages if m.get("role") == "tool" and m.get("name") != "web_search"]
+        web_contents = [m["content"] for m in messages if m.get("role") == "tool" and m.get("name") == "web_search"]
+        extra = ""
+        if course_contents:
+            extra += "\n\nRetrieved course material:\n" + "\n\n---\n\n".join(str(c) for c in course_contents)
+        if web_contents:
+            extra += (
+                "\n\nWeb search results — use these to answer questions not covered by course materials:\n"
+                + "\n\n---\n\n".join(str(c) for c in web_contents)
+            )
+        if extra:
             synthesis_msgs = [
-                {"role": "system", "content": system_content + f"\n\nRetrieved course material:\n{retrieved}"},
+                {"role": "system", "content": system_content + extra},
                 messages[1],  # original user message (preserves image content if any)
             ]
         else:
@@ -2026,6 +2063,14 @@ def run_agent_pageindex(
         assistant_clarifying_question,
     ) = _parse_synthesis_json(raw_final)
     final_text = reply_body if (reply_body or "").strip() else raw_final
+    import re as _re
+    # Always strip [WN] markers; also strip plain [N] markers when web search was used
+    # (model may renumber web results as [1], [2] without page chunks to back them up)
+    has_web_refs = any(r.startswith("web:") for r in grounding_refs)
+    has_page_refs = any(r.startswith("material:") for r in grounding_refs)
+    if has_web_refs and not has_page_refs:
+        final_text = _re.sub(r'\s*\[\d+\]', '', final_text or "").strip()
+    final_text = _re.sub(r'\s*\[W\d+\]', '', final_text or "").strip()
     tool_trace.append(
         {"phase": "synthesis", "latency_ms": int((time.time() - started) * 1000)}
     )

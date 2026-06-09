@@ -187,7 +187,8 @@ export default function FlashcardViewer({
   const [exportStatus, setExportStatus] = useState('idle');
   const [resolving, setResolving] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const PLAY_INTERVAL_MS = 4000;
+  const [playInterval, setPlayInterval] = useState(4);
+  const [whitingOut, setWhitingOut] = useState(false);
 
   // Export state
   const courseId = course?.id;
@@ -219,7 +220,9 @@ export default function FlashcardViewer({
     const tick = setInterval(() => {
       setIsFlipped((flipped) => {
         if (!flipped) return true; // first tick: show answer
-        // second tick: advance or stop
+        // second tick: white out back face, advance card, flip to front
+        setWhitingOut(true);
+        setTimeout(() => setWhitingOut(false), 450);
         setCurrentIndex((i) => {
           const lastIndex = displayCards.length - 1;
           if (i >= lastIndex) {
@@ -231,9 +234,9 @@ export default function FlashcardViewer({
         });
         return false; // reset flip for next card
       });
-    }, PLAY_INTERVAL_MS);
+    }, playInterval * 1000);
     return () => clearInterval(tick);
-  }, [playing, displayCards, trackProgress]);
+  }, [playing, playInterval, displayCards, trackProgress]);
 
   const total = displayCards.length;
   const card = displayCards[currentIndex] || {};
@@ -631,6 +634,7 @@ export default function FlashcardViewer({
                 transform: 'rotateY(180deg)',
               }}
             >
+              {whitingOut && <div className="absolute inset-0 bg-white z-10 rounded-2xl" />}
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-50">
                 <span className="text-xs text-gray-400">Answer</span>
                 <div className="flex items-center gap-1">
@@ -730,6 +734,16 @@ export default function FlashcardViewer({
             >
               <PlayIcon />
             </button>
+            <select
+              value={playInterval}
+              onChange={(e) => setPlayInterval(Number(e.target.value))}
+              className="text-xs border border-gray-200 rounded-md px-1.5 py-1 text-gray-500 bg-white hover:border-indigo-400 focus:outline-none focus:border-indigo-400 cursor-pointer"
+              aria-label="Play speed"
+            >
+              {[1, 2, 3, 4, 5, 8, 10, 15].map((s) => (
+                <option key={s} value={s}>{s}s</option>
+              ))}
+            </select>
             <button
               type="button"
               onClick={toggleShuffle}

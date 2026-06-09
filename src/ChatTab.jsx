@@ -398,6 +398,42 @@ function SourcesPanel({ open, chunks, focusIndex, onClose, materials }) {
           const isFocused = n === focusIndex;
           const material = chunk.material_id != null ? materialMap[chunk.material_id] : null;
           const downloadUrl = getMaterialUrl(material) || null;
+          const pageCount = (chunks || []).filter((c) => c.citation_type === 'page').length;
+
+          if (chunk.citation_type === 'web') {
+            const webNum = idx - pageCount + 1;
+            let hostname = chunk.url || '';
+            try { hostname = new URL(chunk.url).hostname.replace(/^www\./, ''); } catch {}
+            return (
+              <div
+                key={idx}
+                ref={isFocused ? focusRef : null}
+                className={`rounded-lg px-3 py-2.5 border text-xs transition-colors ${
+                  isFocused ? 'border-l-4 border-teal-400 bg-teal-50' : 'border-gray-100 bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center justify-center px-1 h-4 rounded bg-teal-100 text-teal-700 font-semibold text-[10px] flex-shrink-0">
+                    W{webNum}
+                  </span>
+                  <span className="text-gray-700 font-medium truncate flex-1">{chunk.title || hostname}</span>
+                  {chunk.url && (
+                    <a
+                      href={chunk.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1 rounded text-gray-400 hover:text-teal-600 hover:bg-teal-50 transition-colors flex-shrink-0"
+                    >
+                      <ExternalLinkIcon />
+                    </a>
+                  )}
+                </div>
+                {hostname && chunk.title && (
+                  <div className="mt-0.5 ml-6 text-[10px] text-gray-400 truncate">{hostname}</div>
+                )}
+              </div>
+            );
+          }
 
           if (chunk.citation_type === 'page') {
             const pages = chunk.pages || [];
@@ -544,21 +580,36 @@ function MessageBubble({
     const nodes = Array.isArray(children) ? children : [children];
     return nodes.flatMap((child, ci) => {
       if (typeof child !== 'string') return [child];
-      // Only match [N] not immediately adjacent to another bracket group
-      const parts = child.split(/(?<!\])(\[\d+\])(?!\[)/);
+      // Match [N] (page) and [W1],[W2] (web) citations
+      const parts = child.split(/(?<!\])(\[(?:\d+|W\d+)\])(?!\[)/);
       return parts.map((part, i) => {
-        const m = part.match(/^\[(\d+)\]$/);
-        if (!m) return part;
-        const n = Number(m[1]);
-        return (
-          <button
-            key={`${ci}-${i}`}
-            onClick={() => onCiteClick && onCiteClick(n)}
-            className="inline-flex items-center justify-center w-4 h-4 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-600 hover:bg-indigo-200 cursor-pointer align-super mx-0.5"
-          >
-            {n}
-          </button>
-        );
+        const pageM = part.match(/^\[(\d+)\]$/);
+        if (pageM) {
+          const n = Number(pageM[1]);
+          return (
+            <button
+              key={`${ci}-${i}`}
+              onClick={() => onCiteClick && onCiteClick(n)}
+              className="inline-flex items-center justify-center w-4 h-4 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-600 hover:bg-indigo-200 cursor-pointer align-super mx-0.5"
+            >
+              {n}
+            </button>
+          );
+        }
+        const webM = part.match(/^\[W(\d+)\]$/);
+        if (webM) {
+          const wn = Number(webM[1]);
+          return (
+            <button
+              key={`${ci}-${i}`}
+              onClick={() => onCiteClick && onCiteClick(`W${wn}`)}
+              className="inline-flex items-center justify-center px-1 h-4 rounded text-[10px] font-semibold bg-teal-100 text-teal-700 hover:bg-teal-200 cursor-pointer align-super mx-0.5"
+            >
+              W{wn}
+            </button>
+          );
+        }
+        return part;
       });
     });
   }
@@ -985,10 +1036,21 @@ function LiveStatusLine({ liveToolTrace, materials }) {
   const last = liveToolTrace?.[liveToolTrace.length - 1];
   let text = 'Searching course materials…';
   if (last) {
-    const name = materialTraceName(materialMap, last.args?.material_id);
-    if (last.tool === 'get_page_content') text = `Retrieving pages ${last.args?.pages || '?'} from ${name}`;
-    else if (last.tool === 'get_material_structure') text = `Reading structure of ${name}`;
-    else if (last.tool === 'get_related_materials') text = `Finding related materials for ${name}`;
+    if (last.tool === 'web_search') {
+      text = 'Searching the web…';
+    } else if (last.tool === 'web_url_view') {
+      let display = last.args?.url || '';
+      try {
+        const u = new URL(display);
+        display = (u.hostname + u.pathname).replace(/^www\./, '').slice(0, 50);
+      } catch {}
+      text = `Viewing ${display}…`;
+    } else {
+      const name = materialTraceName(materialMap, last.args?.material_id);
+      if (last.tool === 'get_page_content') text = `Retrieving pages ${last.args?.pages || '?'} from ${name}`;
+      else if (last.tool === 'get_material_structure') text = `Reading structure of ${name}`;
+      else if (last.tool === 'get_related_materials') text = `Finding related materials for ${name}`;
+    }
   }
   return (
     <div className="flex items-center gap-2 mb-2">
@@ -1813,16 +1875,27 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
     }
   }
 
+  function resolveWebFocusIndex(chunks, focusIndex) {
+    if (typeof focusIndex !== 'string' || !/^W\d+$/.test(focusIndex)) return focusIndex;
+    const pageCount = (chunks || []).filter((c) => c.citation_type === 'page').length;
+    return pageCount + Number(focusIndex.slice(1));
+  }
+
   function openSources(messageId, focusIndex) {
     if (!msgChunks[messageId]) {
       fetch(`/api/chat?resource=chunks&message_id=${messageId}`, {
         credentials: 'include',
       })
         .then((r) => r.json())
-        .then((data) => setMsgChunks((prev) => ({ ...prev, [messageId]: data.chunks || [] })))
+        .then((data) => {
+          const chunks = data.chunks || [];
+          setMsgChunks((prev) => ({ ...prev, [messageId]: chunks }));
+          setSourcesPanel({ open: true, messageId, focusIndex: resolveWebFocusIndex(chunks, focusIndex) });
+        })
         .catch(() => {});
+      return;
     }
-    setSourcesPanel({ open: true, messageId, focusIndex });
+    setSourcesPanel({ open: true, messageId, focusIndex: resolveWebFocusIndex(msgChunks[messageId], focusIndex) });
   }
 
   function handleStreamEvent(evt, { tempId, tempAssistantId, chatId, setActiveConvFn }) {
@@ -1841,6 +1914,34 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
       case 'tool_call':
         setMessages((prev) => {
           const entry = { tool: evt.tool, args: { material_id: evt.material_id, pages: evt.pages } };
+          const existing = prev.find((m) => m.id === tempAssistantId);
+          if (existing) {
+            return prev.map((m) =>
+              m.id === tempAssistantId
+                ? { ...m, _liveToolTrace: [...(m._liveToolTrace || []), entry] }
+                : m
+            );
+          }
+          return [...prev, { id: tempAssistantId, role: 'assistant', content: '', _streaming: true, _liveToolTrace: [entry] }];
+        });
+        break;
+      case 'web_search_start':
+        setMessages((prev) => {
+          const entry = { tool: 'web_search', args: { query: evt.query } };
+          const existing = prev.find((m) => m.id === tempAssistantId);
+          if (existing) {
+            return prev.map((m) =>
+              m.id === tempAssistantId
+                ? { ...m, _liveToolTrace: [...(m._liveToolTrace || []), entry] }
+                : m
+            );
+          }
+          return [...prev, { id: tempAssistantId, role: 'assistant', content: '', _streaming: true, _liveToolTrace: [entry] }];
+        });
+        break;
+      case 'web_url_view':
+        setMessages((prev) => {
+          const entry = { tool: 'web_url_view', args: { url: evt.url } };
           const existing = prev.find((m) => m.id === tempAssistantId);
           if (existing) {
             return prev.map((m) =>
@@ -3013,6 +3114,12 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                   .flatMap((t) => t.urls)
                   .filter((u) => u.url && !seen.has(u.url) && seen.add(u.url));
               })() : null;
+              const usedWebOnly = msg.role === 'assistant' && (() => {
+                const trace = Array.isArray(msg.tool_trace) ? msg.tool_trace : [];
+                const hasWeb = trace.some((t) => t.tool === 'web_search');
+                const hasPage = trace.some((t) => t.tool === 'get_page_content');
+                return hasWeb && !hasPage;
+              })();
               return (
               <div
                 key={msg.id}
@@ -3023,7 +3130,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                 msg={msg}
                 courseName={course?.title}
                 userPicture={userData?.picture}
-                onCiteClick={msg.role === 'assistant' ? (n) => openSources(msg.id, n) : null}
+                onCiteClick={msg.role === 'assistant' && !usedWebOnly ? (n) => openSources(msg.id, n) : null}
                 webSearchUrls={webSearchUrls?.length ? webSearchUrls : null}
                 isEditing={editingMsgId === msg.id}
                 editingContent={editingContent}
