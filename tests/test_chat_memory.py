@@ -97,3 +97,35 @@ def test_load_chat_history_queries_active_branch_and_maps_rows():
 def test_load_chat_history_none_chat_returns_empty():
     assert llm._load_chat_history(MagicMock(), chat_id=None, before_index=5) == []
     assert llm._load_chat_history(MagicMock(), chat_id=1, before_index=None) == []
+
+
+def test_build_history_turns_end_to_end(monkeypatch):
+    monkeypatch.setattr(llm, "_load_chat_history", lambda c, cid, bi: [
+        {"role": "user", "content": "a" * 400},       # 100 tokens
+        {"role": "assistant", "content": "b" * 400},  # 100 tokens
+    ])
+    # Big window -> both kept.
+    kept = llm._build_history_turns(
+        conn=MagicMock(), chat_id=1, before_index=9,
+        model="gpt-4o-mini", system_text="s", current_user_text="u",
+    )
+    assert len(kept) == 2
+
+
+def test_shape_history_openai_roles_passthrough():
+    turns = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
+    assert llm._shape_history_openai(turns) == turns
+
+
+def test_shape_history_gemini_maps_assistant_to_model():
+    turns = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
+    out = llm._shape_history_gemini(turns)
+    assert out == [
+        {"role": "user", "parts": [{"text": "hi"}]},
+        {"role": "model", "parts": [{"text": "yo"}]},
+    ]
+
+
+def test_shape_history_claude_roles_passthrough():
+    turns = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
+    assert llm._shape_history_claude(turns) == turns

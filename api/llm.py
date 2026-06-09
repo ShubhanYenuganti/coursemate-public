@@ -584,6 +584,36 @@ def _load_chat_history(conn, chat_id, before_index) -> list:
     return [{"role": r["role"], "content": r["content"]} for r in rows]
 
 
+def _build_history_turns(conn, chat_id, before_index, model, system_text, current_user_text) -> list:
+    """Load active-branch history and trim it to the model's budget.
+    Returns kept turns as [{"role", "content"}] in chronological order."""
+    prior = _load_chat_history(conn, chat_id, before_index)
+    if not prior:
+        return []
+    window = _context_window_for(model)
+    budget = _history_budget(window, system_text, current_user_text)
+    return _compose_history(prior, budget)
+
+
+def _shape_history_openai(turns: list) -> list:
+    """OpenAI / Responses message shape == canonical {role, content}."""
+    return [{"role": t["role"], "content": t["content"]} for t in turns]
+
+
+def _shape_history_claude(turns: list) -> list:
+    """Claude messages use the same role names (user/assistant)."""
+    return [{"role": t["role"], "content": t["content"]} for t in turns]
+
+
+def _shape_history_gemini(turns: list) -> list:
+    """Gemini contents: role 'assistant' -> 'model', content -> parts[].text."""
+    out = []
+    for t in turns:
+        role = "model" if t["role"] == "assistant" else "user"
+        out.append({"role": role, "parts": [{"text": t["content"]}]})
+    return out
+
+
 def _chunk_previews(chunks: list, max_items: int = 3, excerpt_chars: int = 120) -> list:
     previews = []
     for chunk in (chunks or [])[:max_items]:
