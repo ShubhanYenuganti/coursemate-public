@@ -38,6 +38,7 @@ ROUTES = {
     '/api/notion':     'api.notion',
     '/api/gdrive':     'api.gdrive',
     '/api/quiz':       'api.quiz',
+    '/api/prompts':    'api.prompts',
     '/api/reports':    'api.reports',
     '/api/sharing':    'api.sharing',
     '/api/user':       'api.user',

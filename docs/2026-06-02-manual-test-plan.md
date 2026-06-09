@@ -61,7 +61,7 @@ npm run build                                            # ✓ built
 
 ---
 
-## 2. Dashboard Analytics Widget  (feature #7 / DA)
+## 2. Dashboard Analytics Widget  (feature #7 / DA) VERIFIED
 
 **Validates:** `GET /api/course?action=stats` and `CourseStatsWidget`. **Regression for C-2**
 (stats endpoint previously 500’d on `cursor.fetchone()[0]`).
@@ -77,7 +77,7 @@ npm run build                                            # ✓ built
 
 ---
 
-## 3. Saved Prompt Library  (feature #8 / SPL)
+## 3. Saved Prompt Library  (feature #8 / SPL) VERIFIED
 
 **Validates:** `GET/POST/DELETE /api/prompts` + compose-bar picker. **Regression for C-3**
 (list/create previously 500’d on dict-row indexing).

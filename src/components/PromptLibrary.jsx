@@ -7,8 +7,8 @@ export default function PromptLibrary({ onInsert, onClose }) {
 
   const load = () =>
     fetch('/api/prompts', { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : []))
-      .then(setPrompts)
+      .then((r) => (r.ok ? r.json() : { prompts: [] }))
+      .then((data) => setPrompts(data.prompts ?? []))
       .catch(() => {});
   useEffect(() => { load(); }, []);
 
