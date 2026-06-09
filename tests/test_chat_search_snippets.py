@@ -37,7 +37,7 @@ def _stub_chat_deps():
     _stub("rag").retrieve_chunks = None
 
     llm_mod = _stub("llm")
-    for attr in ("synthesize", "synthesize_with_clarification", "suggest_chat_title"):
+    for attr in ("synthesize", "suggest_chat_title"):
         setattr(llm_mod, attr, None)
 
     _stub("services")

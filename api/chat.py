@@ -27,13 +27,13 @@ try:
     from .models import User
     from .courses import Course
     from .db import get_db
-    from .llm import synthesize, synthesize_with_clarification
+    from .llm import synthesize
 except ImportError:
     from middleware import send_json, send_sse_headers, send_sse_event, handle_options, authenticate_request, sanitize_string, check_rate_limit
     from models import User
     from courses import Course
     from db import get_db
-    from llm import synthesize, synthesize_with_clarification
+    from llm import synthesize
 
 try:
     from services.query.persistence import embed_text_via_lambda, write_chat_message_embedding, embed_image_via_lambda
@@ -1002,33 +1002,18 @@ class handler(BaseHTTPRequestHandler):
             )
 
             try:
-                if clarification_pending:
-                    original_prompt = _get_prior_user_message(conn, chat_id) or content
-                    assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize_with_clarification(
-                        conn=conn,
-                        user_id=user['id'],
-                        ai_provider=ai_provider,
-                        ai_model=ai_model,
-                        original_prompt=original_prompt,
-                        prior_reply=prior_reply_content or "",
-                        clarifying_question=prior_clarification_question or "",
-                        user_clarification=content,
-                        clarification_depth=prior_clarification_depth,
-                        chunks=chunks,
-                        chat_id=chat_id,
-                        context_material_ids=context_material_ids,
-                    )
-                else:
-                    assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize(
-                        conn,
-                        user['id'],
-                        ai_provider,
-                        ai_model,
-                        content,
-                        chunks,
-                        chat_id=chat_id,
-                        context_material_ids=context_material_ids,
-                    )
+                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize(
+                    conn,
+                    user['id'],
+                    ai_provider,
+                    ai_model,
+                    content,
+                    chunks,
+                    chat_id=chat_id,
+                    context_material_ids=context_material_ids,
+                    history_before_index=user_message['message_index'],
+                    clarification_depth=prior_clarification_depth,
+                )
                 logger.info(
                     "chat_synthesize_done",
                     extra={
@@ -1060,14 +1045,17 @@ class handler(BaseHTTPRequestHandler):
                 raise
 
             new_clarification_depth = (prior_clarification_depth + 1) if assistant_clarifying_question else 0
+            context_token_count = (grounding_meta or {}).get("history_token_estimate")
+            response_token_count = max(1, len(assistant_content or "") // 4)
             cursor.execute("""
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                      ai_provider, ai_model, context_material_ids,
                      grounding_meta, tool_trace,
                      retrieved_chunk_ids, follow_ups, message_index,
-                     clarification_question, is_clarification_request, clarification_depth)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     clarification_question, is_clarification_request, clarification_depth,
+                     context_token_count, response_token_count)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at, tool_trace, follow_ups,
@@ -1085,6 +1073,7 @@ class handler(BaseHTTPRequestHandler):
                 assistant_clarifying_question,
                 bool(assistant_clarifying_question),
                 new_clarification_depth,
+                context_token_count, response_token_count,
             ))
             assistant_message = cursor.fetchone()
             if embed_text_via_lambda and write_chat_message_embedding:
@@ -1244,52 +1233,38 @@ class handler(BaseHTTPRequestHandler):
                 send_sse_event(self, evt)
 
             try:
-                if clarification_pending:
-                    original_prompt = _get_prior_user_message(conn, chat_id) or content
-                    assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize_with_clarification(
-                        conn=conn,
-                        user_id=user['id'],
-                        ai_provider=ai_provider,
-                        ai_model=ai_model,
-                        original_prompt=original_prompt,
-                        prior_reply=prior_reply_content or "",
-                        clarifying_question=prior_clarification_question or "",
-                        user_clarification=content,
-                        clarification_depth=prior_clarification_depth,
-                        chunks=chunks,
-                        chat_id=chat_id,
-                        context_material_ids=context_material_ids,
-                        on_event=on_event,
-                        image_s3_keys=image_s3_keys or None,
-                    )
-                else:
-                    assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize(
-                        conn,
-                        user['id'],
-                        ai_provider,
-                        ai_model,
-                        content,
-                        chunks,
-                        chat_id=chat_id,
-                        context_material_ids=context_material_ids,
-                        on_event=on_event,
-                        image_s3_keys=image_s3_keys or None,
-                        web_search_enabled=web_search_enabled,
-                    )
+                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize(
+                    conn,
+                    user['id'],
+                    ai_provider,
+                    ai_model,
+                    content,
+                    chunks,
+                    chat_id=chat_id,
+                    context_material_ids=context_material_ids,
+                    on_event=on_event,
+                    image_s3_keys=image_s3_keys or None,
+                    web_search_enabled=web_search_enabled,
+                    history_before_index=user_message['message_index'],
+                    clarification_depth=prior_clarification_depth,
+                )
             except Exception as e:
                 send_sse_event(self, {"type": "error", "message": str(e)})
                 cursor.close()
                 return
 
             new_clarification_depth = (prior_clarification_depth + 1) if assistant_clarifying_question else 0
+            context_token_count = (grounding_meta or {}).get("history_token_estimate")
+            response_token_count = max(1, len(assistant_content or "") // 4)
             cursor.execute("""
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                      ai_provider, ai_model, context_material_ids,
                      grounding_meta, tool_trace,
                      retrieved_chunk_ids, follow_ups, message_index,
-                     clarification_question, is_clarification_request, clarification_depth)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     clarification_question, is_clarification_request, clarification_depth,
+                     context_token_count, response_token_count)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at, tool_trace, follow_ups,
@@ -1307,6 +1282,7 @@ class handler(BaseHTTPRequestHandler):
                 assistant_clarifying_question,
                 bool(assistant_clarifying_question),
                 new_clarification_depth,
+                context_token_count, response_token_count,
             ))
             assistant_message = cursor.fetchone()
             if embed_text_via_lambda and write_chat_message_embedding:
