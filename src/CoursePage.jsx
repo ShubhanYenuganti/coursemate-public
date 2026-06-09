@@ -90,17 +90,12 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
       return saved;
     }
   );
-  const [generatePrefill, setGeneratePrefill] = useState(null);
-
   function handleTabChange(tab) {
     localStorage.setItem(storageKey, tab);
     setActiveTab(tab);
   }
 
-  function handleGoToTab(tab, payload) {
-    if (tab === 'generate' && payload) {
-      setGeneratePrefill(payload);
-    }
+  function handleGoToTab(tab) {
     handleTabChange(tab);
   }
 
@@ -399,8 +394,6 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
               course={course}
               userData={userData}
               onAddSource={() => handleTabChange('materials')}
-              prefill={generatePrefill}
-              onPrefillConsumed={() => setGeneratePrefill(null)}
             />
           </div>
         )}

@@ -148,13 +148,19 @@ const DEPTH_OPTIONS = [
 
 const MODEL_LABELS = { gemini: 'Gemini', openai: 'GPT', claude: 'Claude' };
 
-export default function Flashcards({ course, onAddSource, prefill, onPrefillConsumed }) {
+export default function Flashcards({ course, onAddSource }) {
   const [materials, setMaterials] = useState([]);
   const [materialsLoading, setMaterialsLoading] = useState(true);
 
-  const [topic, setTopic] = useState('');
-  const [cardCount, setCardCount] = useState(20);
-  const [depth, setDepth] = useState('moderate');
+  const [topic, setTopic] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`flashcards_fields_${course?.id}`) || '{}').topic || ''; } catch { return ''; }
+  });
+  const [cardCount, setCardCount] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`flashcards_fields_${course?.id}`) || '{}').card_count ?? 20; } catch { return 20; }
+  });
+  const [depth, setDepth] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`flashcards_fields_${course?.id}`) || '{}').depth || 'moderate'; } catch { return 'moderate'; }
+  });
 
   const [availableProviders, setAvailableProviders] = useState([]);
   const [selectedProvider, setSelectedProvider] = useState(
@@ -186,13 +192,6 @@ export default function Flashcards({ course, onAddSource, prefill, onPrefillCons
     generatingIdsRef.current = generatingIds;
   }, [generatingIds]);
 
-  // Apply prefill from a chat Refine action
-  useEffect(() => {
-    if (!prefill) return;
-    if (prefill.topic) setTopic(prefill.topic);
-    onPrefillConsumed?.();
-  }, [prefill]); // eslint-disable-line react-hooks/exhaustive-deps
-
   useEffect(() => {
     if (!providerDropdownOpen) return;
     function onOutsideClick(e) {
@@ -211,7 +210,18 @@ export default function Flashcards({ course, onAddSource, prefill, onPrefillCons
       credentials: 'include',
     })
       .then((r) => r.json())
-      .then((data) => setMaterials(Array.isArray(data) ? data : (data.materials || [])))
+      .then((data) => {
+        const mats = Array.isArray(data) ? data : (data.materials || []);
+        try {
+          const stored = JSON.parse(localStorage.getItem(`flashcards_fields_${course.id}`) || '{}');
+          if (Array.isArray(stored.material_ids) && stored.material_ids.length > 0) {
+            const ids = new Set(stored.material_ids.map(Number));
+            setMaterials(mats.map((m) => ({ ...m, selected: ids.has(Number(m.id)) })));
+            return;
+          }
+        } catch {}
+        setMaterials(mats);
+      })
       .catch(() => {})
       .finally(() => setMaterialsLoading(false));
   }, [course?.id]);
@@ -395,6 +405,13 @@ export default function Flashcards({ course, onAddSource, prefill, onPrefillCons
       const depthToUse = overrides?.depth ?? depth;
       const providerToUse = overrides?.provider ?? selectedProvider;
       const modelIdToUse = overrides?.model_id ?? selectedModelId;
+
+      try {
+        localStorage.setItem(`flashcards_fields_${course?.id}`, JSON.stringify({
+          topic: topicToUse, card_count: cardCountToUse, depth: depthToUse,
+          material_ids: contextIds,
+        }));
+      } catch {}
 
       const res = await fetch('/api/flashcards', {
         method: 'POST',

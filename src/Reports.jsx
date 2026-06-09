@@ -202,8 +202,12 @@ export default function Reports({ course, onAddSource }) {
   const [materials, setMaterials] = useState([]);
   const [materialsLoading, setMaterialsLoading] = useState(true);
 
-  const [template, setTemplate] = useState('study-guide');
-  const [customPrompt, setCustomPrompt] = useState('');
+  const [template, setTemplate] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`reports_fields_${course?.id}`) || '{}').template || 'study-guide'; } catch { return 'study-guide'; }
+  });
+  const [customPrompt, setCustomPrompt] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`reports_fields_${course?.id}`) || '{}').customPrompt || ''; } catch { return ''; }
+  });
   const [selectedProvider, setSelectedProvider] = useState(
     () => localStorage.getItem('reports_selected_provider') || 'openai'
   );
@@ -254,7 +258,18 @@ export default function Reports({ course, onAddSource }) {
     setMaterialsLoading(true);
     fetch(`/api/material?action=selections&course_id=${course.id}&context=report`, { credentials: 'include' })
       .then((r) => r.json())
-      .then((data) => setMaterials(Array.isArray(data) ? data : (data.materials || [])))
+      .then((data) => {
+        const mats = Array.isArray(data) ? data : (data.materials || []);
+        try {
+          const stored = JSON.parse(localStorage.getItem(`reports_fields_${course.id}`) || '{}');
+          if (Array.isArray(stored.material_ids) && stored.material_ids.length > 0) {
+            const ids = new Set(stored.material_ids.map(Number));
+            setMaterials(mats.map((m) => ({ ...m, selected: ids.has(Number(m.id)) })));
+            return;
+          }
+        } catch {}
+        setMaterials(mats);
+      })
       .catch(() => {})
       .finally(() => setMaterialsLoading(false));
   }, [course?.id]);
@@ -433,6 +448,14 @@ export default function Reports({ course, onAddSource }) {
       const materialIds = materials.filter((m) => m.selected).map((m) => m.id);
       const providerToUse = selectedProvider || 'openai';
       const modelIdToUse = selectedModelId || PROVIDER_MODELS[providerToUse]?.[0]?.id || 'gpt-4o-mini';
+
+      try {
+        localStorage.setItem(`reports_fields_${course?.id}`, JSON.stringify({
+          template, customPrompt: isCustom ? customPrompt.trim() : '',
+          material_ids: materialIds,
+        }));
+      } catch {}
+
       const res = await fetch('/api/reports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

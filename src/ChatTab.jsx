@@ -521,6 +521,8 @@ function MessageBubble({
   onEditImageAdd,
   onEditImageRemove,
   editFileInputRef,
+  onBuild,
+  onRefine,
 }) {
   const isUser = msg.role === 'user';
   const modelLabel = getMessageModelLabel(msg);
@@ -783,19 +785,21 @@ function MessageBubble({
             <span className="w-1 h-1 rounded-full bg-indigo-300" />
           )}
         </div>
-        {msg._streaming && !msg.content && (
+        {msg._streaming && !msg.content && !msg._generationProposal && (
           <LiveStatusLine liveToolTrace={msg._liveToolTrace} materials={materials} />
         )}
-        <ToolTraceIndicator toolTrace={msg.tool_trace} materials={materials} />
-        <div className="text-sm text-gray-700 leading-relaxed space-y-0.5">
-          {renderContent(msg.content)}
-        </div>
+        {!msg._generationProposal && <ToolTraceIndicator toolTrace={msg.tool_trace} materials={materials} />}
+        {!msg._generationProposal && (
+          <div className="text-sm text-gray-700 leading-relaxed space-y-0.5">
+            {renderContent(msg.content)}
+          </div>
+        )}
         {msg._generationProposal && (
           <GenerationProposalCard
             proposal={msg._generationProposal}
             status={msg._proposalStatus}
-            onBuild={() => handleBuildGeneration(msg)}
-            onRefine={() => handleRefineGeneration(msg)}
+            onBuild={onBuild}
+            onRefine={onRefine}
           />
         )}
         {webSearchUrls && webSearchUrls.length > 0 && (
@@ -837,7 +841,7 @@ function MessageBubble({
             </button>
           </div>
         )}
-        {Array.isArray(msg.follow_ups) && msg.follow_ups.length > 0 && !(msg.is_clarification_request && !msg.clarification_skipped) && (
+        {!msg._generationProposal && Array.isArray(msg.follow_ups) && msg.follow_ups.length > 0 && !(msg.is_clarification_request && !msg.clarification_skipped) && (
           <div className="flex flex-wrap gap-1.5 mt-3">
             {isLastAssistantMsg && msg.is_clarification_request && msg.clarification_skipped && (
               <p className="w-full text-xs text-gray-500 mb-0.5">Would you like to discuss any of these further?</p>
@@ -1264,6 +1268,24 @@ const CHAT_COMPOSER_MAX_HEIGHT_PX = 280;
 /** Min height (px) — matches the send row (~h-6) so single-line text isn’t short vs controls. */
 const CHAT_COMPOSER_MIN_HEIGHT_PX = 24;
 
+function enrichMessageWithProposal(msg) {
+  if (msg.role !== 'assistant' || msg._generationProposal) return msg;
+  const trace = Array.isArray(msg.tool_trace) ? msg.tool_trace : [];
+  const entry = trace.find((t) => t.tool === 'propose_generation');
+  if (!entry) return msg;
+  const args = entry.args || {};
+  return {
+    ...msg,
+    _generationProposal: {
+      generation_type: args.generation_type || '',
+      title: args.title || '',
+      discussion_summary: args.discussion_summary || '',
+      material_ids: Array.isArray(args.material_ids) ? args.material_ids : [],
+      params: args.params || {},
+    },
+  };
+}
+
 export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   const [activeConv, setActiveConv] = useState(null);
   const [chats, setChats] = useState([]);
@@ -1467,7 +1489,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
       credentials: 'include',
     })
       .then((r) => r.json())
-      .then((data) => setMessages(data.messages || []))
+      .then((data) => setMessages((data.messages || []).map(enrichMessageWithProposal)))
       .catch(() => {});
   }, [activeConv]);
 
@@ -1845,13 +1867,17 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
       case 'done':
         setMessages((prev) => {
           const prevUserMsg = prev.find((m) => m.id === tempId || m.id === evt.user_message?.id);
+          const prevAssistantMsg = prev.find((m) => m.id === tempAssistantId);
           const enrichedUser = prevUserMsg?._inflightImages
             ? { ...evt.user_message, _inflightImages: prevUserMsg._inflightImages }
             : evt.user_message;
           const withoutTemp = prev.filter(
             (m) => m.id !== tempId && m.id !== tempAssistantId && m.id !== evt.user_message?.id
           );
-          return [...withoutTemp, enrichedUser, evt.assistant_message];
+          const finalAssistant = prevAssistantMsg?._generationProposal
+            ? { ...evt.assistant_message, _generationProposal: prevAssistantMsg._generationProposal }
+            : evt.assistant_message;
+          return [...withoutTemp, enrichedUser, finalAssistant];
         });
         setChats((prev) => prev.map((c) =>
           c.id === chatId
@@ -1941,16 +1967,31 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   function handleRefineGeneration(msg) {
     const p = msg._generationProposal;
     if (!p || !onGoToTab) return;
-    // Map generation_type to Generations sub-tab id ('report' → 'reports')
     const tabId = p.generation_type === 'report' ? 'reports' : p.generation_type;
-    onGoToTab('generate', {
-      generationType: tabId,
-      prefill: {
-        topic: p.title,
-        material_ids: p.material_ids,
-        conversation_context: p.discussion_summary,
-      },
-    });
+    const materialIds = Array.isArray(p.material_ids) && p.material_ids.length > 0 ? p.material_ids : null;
+    try {
+      if (tabId === 'quiz') {
+        const stored = JSON.parse(localStorage.getItem(`quiz_fields_${course.id}`) || '{}');
+        localStorage.setItem(`quiz_fields_${course.id}`, JSON.stringify({
+          ...stored, topic: p.title, ...(materialIds ? { material_ids: materialIds } : {}),
+        }));
+      } else if (tabId === 'flashcards') {
+        const stored = JSON.parse(localStorage.getItem(`flashcards_fields_${course.id}`) || '{}');
+        const cardCount = Number(p.params?.card_count ?? p.params?.num_cards ?? 0);
+        localStorage.setItem(`flashcards_fields_${course.id}`, JSON.stringify({
+          ...stored, topic: p.title,
+          ...(cardCount > 0 ? { card_count: cardCount } : {}),
+          ...(materialIds ? { material_ids: materialIds } : {}),
+        }));
+      } else if (tabId === 'reports') {
+        const stored = JSON.parse(localStorage.getItem(`reports_fields_${course.id}`) || '{}');
+        localStorage.setItem(`reports_fields_${course.id}`, JSON.stringify({
+          ...stored, template: 'custom', customPrompt: p.title, ...(materialIds ? { material_ids: materialIds } : {}),
+        }));
+      }
+      localStorage.setItem(`coursemate_generations_tab_${course.id}`, tabId);
+    } catch {}
+    onGoToTab('generate');
   }
 
   const VALID_REPORT_TEMPLATES = ['study-guide', 'briefing', 'summary', 'custom'];
@@ -1960,9 +2001,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
     return VALID_REPORT_TEMPLATES.includes(v) ? v : 'study-guide';
   }
 
-  // Queue a generation from a chat proposal. Quiz supports a direct (draft-less)
-  // generate. Flashcards and reports require a draft from `estimate` first, then
-  // `generate` with that generation_id — so we run the two-step flow for them.
+  // All generation types use the estimate → generate (async SQS) two-step flow.
   async function queueProposalGeneration(p) {
     const endpoint = ENDPOINT_BY_TYPE[p.generation_type];
     if (!endpoint) throw new Error('unknown generation type');
@@ -1971,28 +2010,6 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
     const conversation_context = p.discussion_summary;
     const material_ids = p.material_ids;
 
-    if (p.generation_type === 'quiz') {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          action: 'generate',
-          course_id: course.id,
-          title: p.title,
-          topic: p.title,
-          material_ids,
-          conversation_context,
-          provider,
-          model_id,
-          ...p.params,
-        }),
-      });
-      if (!res.ok) throw new Error('queue failed');
-      return;
-    }
-
-    // flashcards / reports: estimate (creates draft) -> generate (enqueues)
     const estimateBody = {
       action: 'estimate',
       course_id: course.id,
@@ -2002,7 +2019,17 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
       provider,
       model_id,
     };
-    if (p.generation_type === 'flashcards') {
+    if (p.generation_type === 'quiz') {
+      const tf = Number(p.params?.tf_count ?? 0);
+      const sa = Number(p.params?.sa_count ?? 0);
+      const la = Number(p.params?.la_count ?? 0);
+      const mcq = Number(p.params?.mcq_count ?? p.params?.question_count ?? 0);
+      estimateBody.tf_count = tf;
+      estimateBody.sa_count = sa;
+      estimateBody.la_count = la;
+      estimateBody.mcq_count = mcq || (!tf && !sa && !la ? 10 : 0);
+      estimateBody.mcq_options = Number(p.params?.mcq_options ?? 4);
+    } else if (p.generation_type === 'flashcards') {
       estimateBody.card_count = Number(p.params?.card_count ?? p.params?.num_cards ?? 20);
     } else if (p.generation_type === 'report') {
       estimateBody.template_id = normalizeReportTemplate(p.params?.template_id ?? p.params?.template);
@@ -3020,9 +3047,9 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                 editFileInputRef={editFileInputRef}
                 canEdit={msg.role === 'user' && typeof msg.message_index === 'number' && !sending}
                 replyHistory={replyHistory}
-                onRevert={replyHistory?.back?.length ? handleRevertMessage : null}
+                onRevert={!msg._generationProposal && replyHistory?.back?.length ? handleRevertMessage : null}
                 onRestore={replyHistory?.forward?.length ? handleRestoreMessage : null}
-                onRegenerate={msg.role === 'assistant' && !sending ? handleRegenerateMessage : null}
+                onRegenerate={msg.role === 'assistant' && !msg._generationProposal && !sending ? handleRegenerateMessage : null}
                 availableModels={availableModels}
                 materials={materials}
                 onPin={msg.role === 'assistant' ? () => {
@@ -3036,6 +3063,8 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                 } : null}
                 onSkipClarification={msg.role === 'assistant' ? () => handleSkipClarification(msg.id) : null}
                 isLastAssistantMsg={msg.role === 'assistant' && i === lastAssistantIdx && !sending}
+                onBuild={msg._generationProposal ? () => handleBuildGeneration(msg) : null}
+                onRefine={msg._generationProposal ? () => handleRefineGeneration(msg) : null}
               />
               </div>
               );

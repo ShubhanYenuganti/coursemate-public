@@ -157,17 +157,29 @@ const MODEL_LABELS = { gemini: 'Gemini', openai: 'GPT', claude: 'Claude' };
 
 // ─── Quiz component ───────────────────────────────────────────────────────────
 
-export default function Quiz({ course, onAddSource, prefill, onPrefillConsumed }) {
+export default function Quiz({ course, onAddSource }) {
   const [materials, setMaterials] = useState([]);
   const [materialsLoading, setMaterialsLoading] = useState(true);
 
-  // Quiz config
-  const [topic, setTopic] = useState('');
-  const [tfCount, setTfCount] = useState(5);
-  const [saCount, setSaCount] = useState(3);
-  const [laCount, setLaCount] = useState(2);
-  const [mcqCount, setMcqCount] = useState(10);
-  const [mcqOptions, setMcqOptions] = useState(4);
+  // Quiz config — seeded from localStorage so last-used fields persist across visits
+  const [topic, setTopic] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`quiz_fields_${course?.id}`) || '{}').topic || ''; } catch { return ''; }
+  });
+  const [tfCount, setTfCount] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`quiz_fields_${course?.id}`) || '{}').tf_count ?? 5; } catch { return 5; }
+  });
+  const [saCount, setSaCount] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`quiz_fields_${course?.id}`) || '{}').sa_count ?? 3; } catch { return 3; }
+  });
+  const [laCount, setLaCount] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`quiz_fields_${course?.id}`) || '{}').la_count ?? 2; } catch { return 2; }
+  });
+  const [mcqCount, setMcqCount] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`quiz_fields_${course?.id}`) || '{}').mcq_count ?? 10; } catch { return 10; }
+  });
+  const [mcqOptions, setMcqOptions] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`quiz_fields_${course?.id}`) || '{}').mcq_options ?? 4; } catch { return 4; }
+  });
   const [availableProviders, setAvailableProviders] = useState([]);
   const [selectedProvider, setSelectedProvider] = useState(
     () => localStorage.getItem('quiz_selected_provider') || 'openai'
@@ -195,13 +207,6 @@ export default function Quiz({ course, onAddSource, prefill, onPrefillConsumed }
   const [generatingIds, setGeneratingIds] = useState(new Set());
   const pollTimersRef = useRef({});
 
-  // Apply prefill from a chat Refine action
-  useEffect(() => {
-    if (!prefill) return;
-    if (prefill.topic) setTopic(prefill.topic);
-    onPrefillConsumed?.();
-  }, [prefill]); // eslint-disable-line react-hooks/exhaustive-deps
-
   useEffect(() => {
     if (!course?.id) return;
     setMaterialsLoading(true);
@@ -209,7 +214,18 @@ export default function Quiz({ course, onAddSource, prefill, onPrefillConsumed }
       credentials: 'include',
     })
       .then((r) => r.json())
-      .then((data) => setMaterials(Array.isArray(data) ? data : (data.materials || [])))
+      .then((data) => {
+        const mats = Array.isArray(data) ? data : (data.materials || []);
+        try {
+          const stored = JSON.parse(localStorage.getItem(`quiz_fields_${course.id}`) || '{}');
+          if (Array.isArray(stored.material_ids) && stored.material_ids.length > 0) {
+            const ids = new Set(stored.material_ids.map(Number));
+            setMaterials(mats.map((m) => ({ ...m, selected: ids.has(Number(m.id)) })));
+            return;
+          }
+        } catch {}
+        setMaterials(mats);
+      })
       .catch(() => {})
       .finally(() => setMaterialsLoading(false));
   }, [course?.id]);
@@ -512,6 +528,14 @@ export default function Quiz({ course, onAddSource, prefill, onPrefillConsumed }
       const mcqOptionsToUse = overrides?.mcq_options ?? mcqOptions;
       const providerToUse = overrides?.provider ?? selectedProvider;
       const modelIdToUse = overrides?.model_id ?? selectedModelId;
+
+      try {
+        localStorage.setItem(`quiz_fields_${course?.id}`, JSON.stringify({
+          topic: topicToUse, tf_count: tfCountToUse, sa_count: saCountToUse,
+          la_count: laCountToUse, mcq_count: mcqCountToUse, mcq_options: mcqOptionsToUse,
+          material_ids: contextIds,
+        }));
+      } catch {}
 
       const res = await fetch('/api/quiz', {
         method: 'POST',

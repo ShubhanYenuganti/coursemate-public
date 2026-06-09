@@ -1672,6 +1672,7 @@ def run_agent_pageindex(
     grounding_refs: list = []
     tool_trace: list = []
     final_text = ""
+    proposal_emitted = False
     assistant_follow_ups: list = []
     assistant_clarifying_question = None
     assistant_reply_summary = None
@@ -1755,10 +1756,8 @@ def run_agent_pageindex(
                     }
                     if on_event:
                         on_event(proposal)
-                    result_text = (
-                        "Proposal shown to the user as a card with Build and Refine actions. "
-                        "Now write a one-sentence reply confirming the proposal is ready."
-                    )
+                    proposal_emitted = True
+                    result_text = ""
                 else:
                     result_text = _dispatch_pageindex_tool(
                         conn=conn,
@@ -1774,12 +1773,15 @@ def run_agent_pageindex(
                     "tool_use_id": b["id"],
                     "content": result_text,
                 })
+            if proposal_emitted:
+                final_text = ""
+                break
             claude_messages.append({"role": "user", "content": tool_results})
 
         # If MAX_TOOL_ITERATIONS was exhausted without a final answer but pages were
         # fetched, make one more call without tools so the model synthesizes from the
         # accumulated context instead of returning an error (mirrors the OpenAI loop).
-        if not final_text and grounding_refs:
+        if not final_text and not proposal_emitted and grounding_refs:
             evt_cb, flush = _filtered_on_event(on_event)
             blocks, _ = _pageindex_stream_call_claude(
                 api_key, model, system_content, claude_messages, [], evt_cb
@@ -1796,7 +1798,7 @@ def run_agent_pageindex(
             final_text = reply_body if (reply_body or "").strip() else raw_final
             tool_trace.append({"phase": "forced_synthesis"})
 
-        if not final_text:
+        if not final_text and not proposal_emitted:
             final_text = "I could not find relevant content in the course materials."
 
         return (
@@ -1854,10 +1856,8 @@ def run_agent_pageindex(
                         }
                         if on_event:
                             on_event(proposal)
-                        result_text = (
-                            "Proposal shown to the user as a card with Build and Refine actions. "
-                            "Now write a one-sentence reply confirming the proposal is ready."
-                        )
+                        proposal_emitted = True
+                        result_text = ""
                     else:
                         result_text = _dispatch_pageindex_tool(
                             conn=conn,
@@ -1875,12 +1875,15 @@ def run_agent_pageindex(
                     if fc.get("id"):
                         function_response["id"] = fc["id"]
                     fn_responses.append({"functionResponse": function_response})
+            if proposal_emitted:
+                final_text = ""
+                break
             contents.append({"role": "user", "parts": fn_responses})
 
         # Forced synthesis on iteration exhaustion (mirrors the OpenAI loop): if pages
         # were fetched but no final answer was produced, make one tool-less call so the
         # model answers from the accumulated context instead of returning an error.
-        if not final_text and grounding_refs:
+        if not final_text and not proposal_emitted and grounding_refs:
             evt_cb, flush = _filtered_on_event(on_event)
             parts, _ = _pageindex_stream_call_gemini(
                 api_key, model, system_content, contents, [], evt_cb
@@ -1897,7 +1900,7 @@ def run_agent_pageindex(
             final_text = reply_body if (reply_body or "").strip() else raw_final
             tool_trace.append({"phase": "forced_synthesis"})
 
-        if not final_text:
+        if not final_text and not proposal_emitted:
             final_text = "I could not find relevant content in the course materials."
 
         return (
@@ -1953,10 +1956,8 @@ def run_agent_pageindex(
                 }
                 if on_event:
                     on_event(proposal)
-                tool_result = (
-                    "Proposal shown to the user as a card with Build and Refine actions. "
-                    "Now write a one-sentence reply confirming the proposal is ready."
-                )
+                proposal_emitted = True
+                tool_result = ""
             else:
                 tool_result = _dispatch_pageindex_tool(
                     conn=conn,
@@ -1977,7 +1978,20 @@ def run_agent_pageindex(
                 }
             )
 
+        if proposal_emitted:
+            break
+
     # Synthesis: always the user-selected model, always a separate call from retrieval.
+    if proposal_emitted:
+        return (
+            "",
+            grounding_refs,
+            tool_trace,
+            {"intent_type": "pageindex", "verifier_passed": True, "repair_invoked": False},
+            None,
+            [],
+            None,
+        )
     started = time.time()
     if _openai_should_use_responses_api(model):
         # Responses API models see the Chat Completions tool-call history and re-generate
