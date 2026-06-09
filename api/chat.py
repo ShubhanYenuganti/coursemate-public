@@ -525,7 +525,7 @@ class handler(BaseHTTPRequestHandler):
                     WHERE course_id = %s
                       AND user_id = %s
                       AND is_archived = FALSE
-                      AND to_tsvector('english', title) @@ {title_tsq_sql}
+                      AND to_tsvector('english', title) @@ ({title_tsq_sql})
                     ORDER BY score DESC
                     LIMIT 20
                 ),

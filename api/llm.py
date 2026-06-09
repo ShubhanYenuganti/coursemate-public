@@ -1630,6 +1630,10 @@ def run_agent_pageindex(
 ) -> tuple:
     from pageindex_retrieval import get_course_routing_index
 
+    # Image-only messages have no text query; give the retrieval model something to work with.
+    if not user_message.strip() and image_s3_keys:
+        user_message = "Please analyze this image and find any related course material."
+
     tools = _pageindex_tool_list(web_search_enabled=web_search_enabled)
 
     routing_materials = get_course_routing_index(
