@@ -3055,7 +3055,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
             onChange={handleFileInputChange}
           />
 
-          <div className="relative flex items-stretch gap-2 pl-4 pr-3 py-2 rounded-2xl border border-gray-200 bg-white hover:shadow-lg focus-within:border-indigo-300 focus-within:shadow-lg transition-all" style={{ boxShadow: '0 4px 24px 0 rgba(0,0,0,0.13)' }}>
+          <div className="relative flex flex-col rounded-2xl border border-gray-200 bg-white hover:shadow-lg focus-within:border-indigo-300 focus-within:shadow-lg transition-all" style={{ boxShadow: '0 4px 24px 0 rgba(0,0,0,0.13)' }}>
             {promptLibOpen && (
               <PromptLibrary
                 onInsert={(text) => {
@@ -3073,15 +3073,14 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
               onPaste={handlePaste}
               placeholder="Reply…"
               rows={1}
-              className="flex-1 min-h-0 min-w-0 bg-transparent resize-none text-xs text-gray-800 placeholder-gray-400 focus:outline-none leading-relaxed py-0.5"
+              className="w-full min-w-0 bg-transparent resize-none text-xs text-gray-800 placeholder-gray-400 focus:outline-none leading-relaxed px-4 pt-3 pb-1"
               style={{
                 minHeight: CHAT_COMPOSER_MIN_HEIGHT_PX,
                 maxHeight: CHAT_COMPOSER_MAX_HEIGHT_PX,
                 overflowY: 'auto',
               }}
             />
-            <div className="flex flex-col justify-end flex-shrink-0">
-              <div className="flex items-center gap-1">
+            <div className="flex items-center justify-end gap-1 px-3 pb-2 pt-1">
                 {/* Attachment button */}
                 <button
                   type="button"
@@ -3188,7 +3187,6 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                 >
                   <SendIcon />
                 </button>
-              </div>
             </div>
           </div>
           <p className="text-center text-[10px] text-gray-400 mt-1.5">
