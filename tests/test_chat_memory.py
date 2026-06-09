@@ -43,3 +43,28 @@ def test_history_budget_subtracts_reserves_and_margin():
 def test_history_budget_never_negative():
     budget = llm._history_budget(window=10, system_text="x" * 1000, current_user_text="y" * 1000)
     assert budget == 0
+
+
+def test_compose_history_keeps_all_when_under_budget():
+    turns = [
+        {"role": "user", "content": "aaaa"},       # 1 token
+        {"role": "assistant", "content": "bbbb"},  # 1 token
+    ]
+    out = llm._compose_history(turns, budget_tokens=100)
+    assert out == turns  # unchanged, chronological order preserved
+
+
+def test_compose_history_drops_oldest_first_when_over_budget():
+    turns = [
+        {"role": "user", "content": "a" * 400},       # 100 tokens (oldest)
+        {"role": "assistant", "content": "b" * 400},  # 100 tokens
+        {"role": "user", "content": "c" * 400},       # 100 tokens (newest)
+    ]
+    # Budget only fits the two newest (200 tokens).
+    out = llm._compose_history(turns, budget_tokens=200)
+    assert [t["content"][0] for t in out] == ["b", "c"]  # oldest "a" dropped
+
+
+def test_compose_history_empty_budget_returns_empty():
+    turns = [{"role": "user", "content": "a" * 400}]
+    assert llm._compose_history(turns, budget_tokens=0) == []

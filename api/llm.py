@@ -546,6 +546,20 @@ def _history_budget(window: int, system_text: str, current_user_text: str) -> in
     return max(0, window - used)
 
 
+def _compose_history(prior_turns: list, budget_tokens: int) -> list:
+    """Return the newest prior turns that fit within budget_tokens, in
+    chronological (oldest->newest) order. Drops oldest turns first."""
+    kept_reversed = []
+    running = 0
+    for turn in reversed(prior_turns):  # newest first
+        cost = _estimate_tokens(turn.get("content", ""))
+        if running + cost > budget_tokens:
+            break
+        kept_reversed.append(turn)
+        running += cost
+    return list(reversed(kept_reversed))
+
+
 def _chunk_previews(chunks: list, max_items: int = 3, excerpt_chars: int = 120) -> list:
     previews = []
     for chunk in (chunks or [])[:max_items]:
