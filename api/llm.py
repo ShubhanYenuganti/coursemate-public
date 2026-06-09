@@ -530,6 +530,22 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+RESPONSE_RESERVE_TOKENS = 4096
+SAFETY_MARGIN_RATIO = 0.15
+
+
+def _history_budget(window: int, system_text: str, current_user_text: str) -> int:
+    """Tokens left for replayed history after system prompt, response reserve,
+    current user message, and a safety margin. Never negative."""
+    used = (
+        _estimate_tokens(system_text)
+        + RESPONSE_RESERVE_TOKENS
+        + _estimate_tokens(current_user_text)
+        + int(window * SAFETY_MARGIN_RATIO)
+    )
+    return max(0, window - used)
+
+
 def _chunk_previews(chunks: list, max_items: int = 3, excerpt_chars: int = 120) -> list:
     previews = []
     for chunk in (chunks or [])[:max_items]:

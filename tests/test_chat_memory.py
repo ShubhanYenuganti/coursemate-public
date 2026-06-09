@@ -26,3 +26,20 @@ def test_context_window_known_model():
 
 def test_context_window_unknown_model_falls_back():
     assert llm._context_window_for("totally-made-up-model") == llm._DEFAULT_CONTEXT_WINDOW
+
+
+def test_history_budget_subtracts_reserves_and_margin():
+    # window=10000, system=40 tokens (160 chars), current user=10 tokens (40 chars).
+    # reserve=RESPONSE_RESERVE_TOKENS, margin=SAFETY_MARGIN_RATIO of window.
+    budget = llm._history_budget(
+        window=10000,
+        system_text="s" * 160,
+        current_user_text="u" * 40,
+    )
+    expected = 10000 - 40 - llm.RESPONSE_RESERVE_TOKENS - 10 - int(10000 * llm.SAFETY_MARGIN_RATIO)
+    assert budget == expected
+
+
+def test_history_budget_never_negative():
+    budget = llm._history_budget(window=10, system_text="x" * 1000, current_user_text="y" * 1000)
+    assert budget == 0
