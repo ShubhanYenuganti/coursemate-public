@@ -472,6 +472,64 @@ def _char_cap_from_tokens(tokens: int) -> int:
     return max(200, int(tokens * 4))
 
 
+# --- Multi-turn chat memory: budgeting -------------------------------------
+
+_DEFAULT_CONTEXT_WINDOW = 128000
+
+# Per-model context windows (tokens). Unknown models fall back to the default.
+MODEL_CONTEXT_WINDOWS = {
+    # Claude
+    "claude-opus-4-8": 200000,
+    "claude-opus-4-7": 200000,
+    "claude-opus-4-6": 200000,
+    "claude-sonnet-4-6": 200000,
+    "claude-haiku-4-5-20251001": 200000,
+    "claude-sonnet-4-5-20250929": 200000,
+    "claude-sonnet-4-20250514": 200000,
+    "claude-opus-4-20250514": 200000,
+    # Gemini
+    "gemini-3.5-flash": 1000000,
+    "gemini-3.1-pro-preview": 1000000,
+    "gemini-3-flash-preview": 1000000,
+    "gemini-2.5-pro": 1000000,
+    "gemini-2.5-flash": 1000000,
+    "gemini-2.5-flash-lite": 1000000,
+    "gemini-2.0-flash": 1000000,
+    "gemini-2.0-flash-lite": 1000000,
+    # OpenAI
+    "gpt-5.5": 400000,
+    "gpt-5.4-mini": 400000,
+    "gpt-5.4-nano": 400000,
+    "gpt-5.2": 400000,
+    "gpt-5.1": 400000,
+    "gpt-5-mini": 400000,
+    "gpt-5-nano": 400000,
+    "gpt-4.1": 1000000,
+    "gpt-4.1-mini": 1000000,
+    "gpt-4.1-nano": 1000000,
+    "gpt-4o": 128000,
+    "gpt-4o-mini": 128000,
+    "o3": 200000,
+    "o3-mini": 200000,
+    "o3-pro": 200000,
+    "o4-mini": 200000,
+    "o1": 200000,
+    "o1-pro": 200000,
+    "gpt-oss-120b": 128000,
+}
+
+
+def _context_window_for(model: str) -> int:
+    return MODEL_CONTEXT_WINDOWS.get(model, _DEFAULT_CONTEXT_WINDOW)
+
+
+def _estimate_tokens(text: str) -> int:
+    """Canonical token estimate: ~4 chars/token, floor of 1."""
+    if not text:
+        return 1
+    return max(1, len(text) // 4)
+
+
 def _chunk_previews(chunks: list, max_items: int = 3, excerpt_chars: int = 120) -> list:
     previews = []
     for chunk in (chunks or [])[:max_items]:
