@@ -1786,6 +1786,8 @@ def run_agent_pageindex(
     provider: str = "openai",
     web_search_enabled: bool = False,
     image_s3_keys: list | None = None,
+    history_before_index: int | None = None,
+    clarification_depth: int = 0,
 ) -> tuple:
     from pageindex_retrieval import get_course_routing_index
 
@@ -1812,6 +1814,21 @@ def run_agent_pageindex(
             "versions, external libraries, or real-world information. Call it with a specific query."
         )
 
+    if clarification_depth >= 2:
+        system_content += (
+            "\n\n**Do not ask any further clarifying questions.** Answer the user's question "
+            "directly and completely using the available materials."
+        )
+
+    _history_turns = _build_history_turns(
+        conn=conn,
+        chat_id=chat_id,
+        before_index=history_before_index,
+        model=model,
+        system_text=system_content,
+        current_user_text=user_message,
+    )
+
     # Attached images travel with the first user turn. Each provider has its own
     # multimodal content shape (mirrors _synthesize_claude/openai/gemini). Prior
     # images discussed earlier in the chat are recalled by similarity and prepended
@@ -1830,10 +1847,11 @@ def run_agent_pageindex(
     else:
         openai_user_content = user_message
 
-    messages = [
-        {"role": "system", "content": system_content},
-        {"role": "user", "content": openai_user_content},
-    ]
+    messages = (
+        [{"role": "system", "content": system_content}]
+        + _shape_history_openai(_history_turns)
+        + [{"role": "user", "content": openai_user_content}]
+    )
     grounding_refs: list = []
     tool_trace: list = []
     final_text = ""
@@ -1874,7 +1892,9 @@ def run_agent_pageindex(
             ] + [{"type": "text", "text": user_message}]
         else:
             claude_user_content = user_message
-        claude_messages = [{"role": "user", "content": claude_user_content}]
+        claude_messages = _shape_history_claude(_history_turns) + [
+            {"role": "user", "content": claude_user_content}
+        ]
         for iteration in range(MAX_TOOL_ITERATIONS):
             evt_cb, flush = _filtered_on_event(on_event)
             blocks, stop_reason = _pageindex_stream_call_claude(
@@ -1974,7 +1994,13 @@ def run_agent_pageindex(
             final_text,
             grounding_refs,
             tool_trace,
-            {"intent_type": "pageindex", "verifier_passed": True, "repair_invoked": False},
+            {
+                "intent_type": "pageindex",
+                "verifier_passed": True,
+                "repair_invoked": False,
+                "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+                "history_turn_count": len(_history_turns),
+            },
             assistant_reply_summary,
             assistant_follow_ups or [],
             assistant_clarifying_question,
@@ -1988,7 +2014,7 @@ def run_agent_pageindex(
             ] + [{"text": user_message}]
         else:
             gemini_user_parts = [{"text": user_message}]
-        contents = [{"role": "user", "parts": gemini_user_parts}]
+        contents = _shape_history_gemini(_history_turns) + [{"role": "user", "parts": gemini_user_parts}]
         for iteration in range(MAX_TOOL_ITERATIONS):
             evt_cb, flush = _filtered_on_event(on_event)
             parts, has_fc = _pageindex_stream_call_gemini(
@@ -2080,7 +2106,13 @@ def run_agent_pageindex(
             final_text,
             grounding_refs,
             tool_trace,
-            {"intent_type": "pageindex", "verifier_passed": True, "repair_invoked": False},
+            {
+                "intent_type": "pageindex",
+                "verifier_passed": True,
+                "repair_invoked": False,
+                "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+                "history_turn_count": len(_history_turns),
+            },
             assistant_reply_summary,
             assistant_follow_ups or [],
             assistant_clarifying_question,
@@ -2164,7 +2196,13 @@ def run_agent_pageindex(
             "",
             grounding_refs,
             tool_trace,
-            {"intent_type": "pageindex", "verifier_passed": True, "repair_invoked": False},
+            {
+                "intent_type": "pageindex",
+                "verifier_passed": True,
+                "repair_invoked": False,
+                "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+                "history_turn_count": len(_history_turns),
+            },
             None,
             [],
             None,
@@ -2221,7 +2259,13 @@ def run_agent_pageindex(
         final_text or "I could not find relevant content in the course materials.",
         grounding_refs,
         tool_trace,
-        {"intent_type": "pageindex", "verifier_passed": True, "repair_invoked": False},
+        {
+            "intent_type": "pageindex",
+            "verifier_passed": True,
+            "repair_invoked": False,
+            "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+            "history_turn_count": len(_history_turns),
+        },
         assistant_reply_summary,
         assistant_follow_ups or [],
         assistant_clarifying_question,
@@ -2330,6 +2374,8 @@ def synthesize(
     force_context_only: bool = False,
     image_s3_keys: list | None = None,
     web_search_enabled: bool = False,
+    history_before_index: int | None = None,
+    clarification_depth: int = 0,
 ) -> tuple:
     """
     Synthesize an LLM response using the user's chosen provider and model.
@@ -2387,6 +2433,8 @@ def synthesize(
         on_event=on_event,
         web_search_enabled=web_search_enabled,
         image_s3_keys=image_s3_keys,
+        history_before_index=history_before_index,
+        clarification_depth=clarification_depth,
     )
     return (
         text,
