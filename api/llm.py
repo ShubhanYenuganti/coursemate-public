@@ -1829,6 +1829,13 @@ def run_agent_pageindex(
         current_user_text=user_message,
     )
 
+    if _history_turns:
+        system_content += (
+            "\n\n**Conversation history**: The messages that follow (before the current user "
+            "message) are prior turns from this conversation, provided for context. "
+            "Respond only to the most recent user message."
+        )
+
     # Attached images travel with the first user turn. Each provider has its own
     # multimodal content shape (mirrors _synthesize_claude/openai/gemini). Prior
     # images discussed earlier in the chat are recalled by similarity and prepended
