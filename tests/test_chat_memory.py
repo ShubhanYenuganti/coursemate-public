@@ -68,3 +68,32 @@ def test_compose_history_drops_oldest_first_when_over_budget():
 def test_compose_history_empty_budget_returns_empty():
     turns = [{"role": "user", "content": "a" * 400}]
     assert llm._compose_history(turns, budget_tokens=0) == []
+
+
+def test_load_chat_history_queries_active_branch_and_maps_rows():
+    rows = [
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": "a1"},
+    ]
+    cursor = MagicMock()
+    cursor.fetchall.return_value = rows
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    out = llm._load_chat_history(conn, chat_id=7, before_index=5)
+
+    assert out == [
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": "a1"},
+    ]
+    # Query must filter is_deleted and message_index < before_index, ordered asc.
+    sql, params = cursor.execute.call_args[0]
+    assert "is_deleted = FALSE" in sql
+    assert "message_index <" in sql
+    assert "ORDER BY message_index ASC" in sql
+    assert params == (7, 5)
+
+
+def test_load_chat_history_none_chat_returns_empty():
+    assert llm._load_chat_history(MagicMock(), chat_id=None, before_index=5) == []
+    assert llm._load_chat_history(MagicMock(), chat_id=1, before_index=None) == []

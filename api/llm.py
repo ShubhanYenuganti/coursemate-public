@@ -560,6 +560,30 @@ def _compose_history(prior_turns: list, budget_tokens: int) -> list:
     return list(reversed(kept_reversed))
 
 
+def _load_chat_history(conn, chat_id, before_index) -> list:
+    """Active-branch prior turns (user + assistant), oldest->newest, excluding
+    soft-deleted rows and anything at/after before_index. Returns
+    [{"role", "content"}]. reply_history undo blobs are intentionally ignored."""
+    if chat_id is None or before_index is None:
+        return []
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT role, content
+        FROM chat_messages
+        WHERE chat_id = %s
+          AND is_deleted = FALSE
+          AND role IN ('user', 'assistant')
+          AND message_index < %s
+        ORDER BY message_index ASC
+        """,
+        (chat_id, before_index),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    return [{"role": r["role"], "content": r["content"]} for r in rows]
+
+
 def _chunk_previews(chunks: list, max_items: int = 3, excerpt_chars: int = 120) -> list:
     previews = []
     for chunk in (chunks or [])[:max_items]:
