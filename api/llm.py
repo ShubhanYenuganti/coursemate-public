@@ -1389,9 +1389,15 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
                         "params": {
                             "type": "object",
                             "description": (
-                                "Optional type-specific parameters, e.g. {\"tf_count\":3,"
-                                "\"sa_count\":2,\"la_count\":1} for quiz, {\"num_cards\":10} for "
-                                "flashcards, {\"template\":\"study_guide\"} for report."
+                                "Type-specific generation parameters. "
+                                "Quiz: {\"tf_count\":3,\"sa_count\":2,\"la_count\":1,\"mcq_count\":5}. "
+                                "Flashcards: {\"card_count\":20}. "
+                                "Report: {\"template_id\":\"<id>\"} where id is one of "
+                                "\"study-guide\" (structured outline with key concepts), "
+                                "\"briefing\" (executive summary for quick understanding), "
+                                "\"summary\" (condensed overview of main points), "
+                                "\"custom\" (anything else — also include \"custom_prompt\":\"<specific instruction>\"). "
+                                "Choose the most fitting template; use custom only when none of the others fit."
                             ),
                         },
                     },

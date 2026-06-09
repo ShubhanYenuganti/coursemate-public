@@ -1985,8 +1985,13 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
         }));
       } else if (tabId === 'reports') {
         const stored = JSON.parse(localStorage.getItem(`reports_fields_${course.id}`) || '{}');
+        const tpl = normalizeReportTemplate(p.params?.template_id ?? p.params?.template);
+        const isCustomTpl = tpl === 'custom';
         localStorage.setItem(`reports_fields_${course.id}`, JSON.stringify({
-          ...stored, template: 'custom', customPrompt: p.title, ...(materialIds ? { material_ids: materialIds } : {}),
+          ...stored,
+          template: tpl,
+          ...(isCustomTpl ? { customPrompt: p.params?.custom_prompt || p.title } : {}),
+          ...(materialIds ? { material_ids: materialIds } : {}),
         }));
       }
       localStorage.setItem(`coursemate_generations_tab_${course.id}`, tabId);
