@@ -4,7 +4,9 @@ import os
 from unittest.mock import MagicMock
 
 # Stub heavy imports so llm.py can load without a real environment.
-for mod in ("middleware", "models", "db", "boto3", "crypto_utils", "pageindex_retrieval"):
+# Note: pageindex_retrieval is NOT stubbed here — it's imported locally inside
+# run_agent_pageindex, so we scope that mock inside the one test that exercises it.
+for mod in ("middleware", "models", "db", "boto3", "crypto_utils"):
     sys.modules.setdefault(mod, MagicMock())
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "api"))
@@ -132,12 +134,11 @@ def test_shape_history_claude_roles_passthrough():
 
 
 def test_run_agent_seeds_openai_history(monkeypatch):
+    from unittest.mock import patch
+
     # No images, no real network.
     monkeypatch.setattr(llm, "_fetch_images_as_base64", lambda keys: [])
     monkeypatch.setattr(llm, "_recall_prior_chat_images", lambda *a, **k: [])
-    # pageindex_retrieval is stubbed at module level; configure the return value
-    import sys
-    sys.modules["pageindex_retrieval"].get_course_routing_index.return_value = []
     monkeypatch.setattr(llm, "_load_chat_history", lambda c, cid, bi: [
         {"role": "user", "content": "earlier question"},
         {"role": "assistant", "content": "earlier answer"},
@@ -152,17 +153,22 @@ def test_run_agent_seeds_openai_history(monkeypatch):
 
     monkeypatch.setattr(llm, "_pageindex_stream_call", fake_stream)
 
-    llm.run_agent_pageindex(
-        conn=MagicMock(),
-        user_message="current question",
-        model="gpt-4o-mini",
-        api_key="sk-test",
-        chat_id=1,
-        course_id=2,
-        context_material_ids=[],
-        provider="openai",
-        history_before_index=9,
-    )
+    # Scope the pageindex_retrieval stub to this test only so it doesn't pollute
+    # other test files (test_pageindex_retrieval.py, test_chat_citations.py).
+    pageindex_mock = MagicMock()
+    pageindex_mock.get_course_routing_index.return_value = []
+    with patch.dict(sys.modules, {"pageindex_retrieval": pageindex_mock}):
+        llm.run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="current question",
+            model="gpt-4o-mini",
+            api_key="sk-test",
+            chat_id=1,
+            course_id=2,
+            context_material_ids=[],
+            provider="openai",
+            history_before_index=9,
+        )
 
     contents = [m["content"] for m in captured["msgs"] if m["role"] in ("user", "assistant")]
     assert "earlier question" in contents
