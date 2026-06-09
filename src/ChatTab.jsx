@@ -1839,6 +1839,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
         sendingRef.current = false;
         break;
       case 'error':
+        console.error('[SSE error]', evt);
         setSending(false);
         sendingRef.current = false;
         setMessages((prev) => prev.filter((m) => m.id !== tempId && m.id !== tempAssistantId));
@@ -2152,7 +2153,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
           try {
             const evt = JSON.parse(part.slice(6));
             handleStreamEvent(evt, { tempId, tempAssistantId, chatId });
-          } catch {}
+          } catch (e) { console.error('[SSE parse error]', e, part); }
         }
       }
     } catch {
@@ -2318,6 +2319,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
               setSending(false);
               sendingRef.current = false;
             } else if (evt.type === 'error') {
+              console.error('[SSE error] edit', evt);
               editDoneReceived = true;
               setMessages(prevMessages);
               setMsgChunks(prevMsgChunks);
@@ -2326,7 +2328,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
             } else {
               handleStreamEvent(evt, { tempId: null, chatId: target.chat_id });
             }
-          } catch {}
+          } catch (e) { console.error('[SSE parse error] edit', e, part); }
         }
       }
       if (!editDoneReceived) {
@@ -2523,6 +2525,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
               setSending(false);
               sendingRef.current = false;
             } else if (evt.type === 'error') {
+              console.error('[SSE error] regen', evt);
               regenDoneReceived = true;
               setMessages(prevMessages);
               setMsgChunks(prevMsgChunks);

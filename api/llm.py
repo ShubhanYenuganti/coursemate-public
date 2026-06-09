@@ -13,12 +13,36 @@ Phase 2 (agentic loop): Each provider's tool-calling format will extend this mod
 """
 import json
 import logging
+import mimetypes
 import os
 import re
 import time
 
 import requests
 from uuid import UUID
+
+
+def _raise_for_status_verbose(response) -> None:
+    """Like response.raise_for_status() but includes the provider's error body."""
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as original:
+        try:
+            body = response.json()
+            err = body.get("error") or body
+            if isinstance(err, dict):
+                msg = err.get("message") or ""
+                code = err.get("code") or err.get("type") or ""
+                detail = f"{code}: {msg}" if code else msg
+            else:
+                detail = str(err)[:400]
+            if detail:
+                raise requests.HTTPError(
+                    f"{original} — {detail}", response=response
+                ) from None
+        except (ValueError, AttributeError, KeyError):
+            pass
+        raise
 
 try:
     from .crypto_utils import decrypt_api_key
@@ -44,7 +68,7 @@ def _fetch_images_as_base64(s3_keys: list) -> list:
         try:
             obj = client.get_object(Bucket=bucket, Key=key)
             data = obj['Body'].read()
-            mime = 'image/png' if key.endswith('.png') else 'image/jpeg'
+            mime = mimetypes.guess_type(key)[0] or "image/jpeg"
             result.append((mime, base64.standard_b64encode(data).decode('utf-8')))
         except Exception:
             logging.getLogger(__name__).warning("Failed to fetch S3 image %s", key)
@@ -662,7 +686,7 @@ def _repair_response_openai(
         json={"model": model, "messages": repair_messages, "temperature": 0.1},
         timeout=_TIMEOUT,
     )
-    response.raise_for_status()
+    _raise_for_status_verbose(response)
     return _message_text(response.json()["choices"][0]["message"]).strip()
 
 
@@ -814,12 +838,58 @@ def _synthesize_claude(context: str, user_message: str, model: str, api_key: str
         },
         timeout=_TIMEOUT,
     )
-    response.raise_for_status()
+    _raise_for_status_verbose(response)
     return response.json()["content"][0]["text"]
+
+
+def _openai_should_use_responses_api(model: str | None) -> bool:
+    model_id = (model or "").strip().lower()
+    return model_id.startswith("gpt-5")
+
+
+def _openai_chat_supports_temperature(model: str | None) -> bool:
+    model_id = (model or "").strip().lower()
+    return not model_id.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
+def _openai_response_text(payload: dict) -> str:
+    if isinstance(payload.get("output_text"), str):
+        return payload["output_text"]
+    for block in payload.get("output") or []:
+        if not isinstance(block, dict):
+            continue
+        if isinstance(block.get("output_text"), str):
+            return block["output_text"]
+        for item in block.get("content") or []:
+            if isinstance(item, dict) and item.get("type") == "output_text":
+                return item.get("text", "")
+    return ""
 
 
 def _synthesize_openai(context: str, user_message: str, model: str, api_key: str, image_s3_keys: list | None = None) -> str:
     images = _fetch_images_as_base64(image_s3_keys) if image_s3_keys else []
+    system_text = f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}"
+
+    if _openai_should_use_responses_api(model):
+        if images:
+            user_content = [
+                {"type": "input_image", "image_url": f"data:{mime};base64,{data}"}
+                for mime, data in images
+            ] + [{"type": "input_text", "text": user_message}]
+        else:
+            user_content = user_message
+        response = requests.post(
+            "https://api.openai.com/v1/responses",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": model, "input": [
+                {"role": "system", "content": system_text},
+                {"role": "user", "content": user_content},
+            ]},
+            timeout=_TIMEOUT,
+        )
+        _raise_for_status_verbose(response)
+        return _openai_response_text(response.json())
+
     if images:
         user_content = [
             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
@@ -827,26 +897,22 @@ def _synthesize_openai(context: str, user_message: str, model: str, api_key: str
         ] + [{"type": "text", "text": user_message}]
     else:
         user_content = user_message
+    req_body: dict = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_text},
+            {"role": "user", "content": user_content},
+        ],
+    }
+    if _openai_chat_supports_temperature(model):
+        req_body["temperature"] = 0.2
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}",
-                },
-                {"role": "user", "content": user_content},
-            ],
-            "response_format": {"type": "json_object"},
-        },
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json=req_body,
         timeout=_TIMEOUT,
     )
-    response.raise_for_status()
+    _raise_for_status_verbose(response)
     return response.json()["choices"][0]["message"]["content"]
 
 
@@ -873,7 +939,7 @@ def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str
         },
         timeout=_TIMEOUT,
     )
-    response.raise_for_status()
+    _raise_for_status_verbose(response)
     return response.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 
@@ -1001,6 +1067,111 @@ def _filtered_on_event(on_event):
     return _evt, filt.flush
 
 
+def _messages_to_responses_input(messages: list) -> list:
+    """Convert Chat Completions messages list to Responses API input items."""
+    result = []
+    for msg in messages:
+        role = msg.get("role")
+        if role in ("system", "user"):
+            result.append({"role": role, "content": msg["content"]})
+        elif role == "assistant":
+            content = msg.get("content")
+            if content:
+                result.append({"role": "assistant", "content": content})
+            for tc in msg.get("tool_calls") or []:
+                tc_id = tc["id"]
+                # Responses API requires item "id" to start with "fc_"; "call_id" stays as-is
+                item_id = "fc_" + tc_id[5:] if tc_id.startswith("call_") else tc_id
+                result.append({
+                    "type": "function_call",
+                    "id": item_id,
+                    "call_id": tc_id,
+                    "name": tc["function"]["name"],
+                    "arguments": tc["function"]["arguments"],
+                })
+        elif role == "tool":
+            result.append({
+                "type": "function_call_output",
+                "call_id": msg["tool_call_id"],
+                "output": msg["content"],
+            })
+    return result
+
+
+def _tools_to_responses_format(tools: list) -> list:
+    """Convert OpenAI Chat Completions tool dicts to Responses API function format."""
+    result = []
+    for t in tools:
+        fn = t.get("function", t)
+        result.append({
+            "type": "function",
+            "name": fn["name"],
+            "description": fn.get("description", ""),
+            "parameters": fn.get("parameters", {}),
+        })
+    return result
+
+
+def _parse_responses_api_output(payload: dict) -> tuple[str, list]:
+    """Extract text and tool calls from a Responses API response payload.
+    Returns (text, tool_calls) where tool_calls is in Chat Completions format."""
+    text_parts: list[str] = []
+    tool_calls: list[dict] = []
+    for item in payload.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "message":
+            for part in item.get("content") or []:
+                if isinstance(part, dict) and part.get("type") == "output_text":
+                    text_parts.append(part.get("text", ""))
+        elif item.get("type") == "function_call":
+            tool_calls.append({
+                "id": item.get("call_id") or item.get("id", ""),
+                "type": "function",
+                "function": {
+                    "name": item.get("name", ""),
+                    "arguments": item.get("arguments", "{}"),
+                },
+            })
+    if not text_parts and isinstance(payload.get("output_text"), str):
+        text_parts.append(payload["output_text"])
+    return "".join(text_parts), tool_calls
+
+
+def _pageindex_call_responses(
+    api_key: str,
+    model: str,
+    messages: list,
+    tools: list | None,
+    on_event,
+) -> tuple[dict, str | None]:
+    """Responses API call for gpt-5+ models in the agentic loop.
+    Returns the same (message_dict, finish_reason) shape as _pageindex_stream_call."""
+    req_body: dict = {
+        "model": model,
+        "input": _messages_to_responses_input(messages),
+    }
+    if tools:
+        req_body["tools"] = _tools_to_responses_format(tools)
+        req_body["tool_choice"] = "auto"
+    response = requests.post(
+        "https://api.openai.com/v1/responses",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json=req_body,
+        timeout=_TIMEOUT,
+    )
+    _raise_for_status_verbose(response)
+    payload = response.json()
+    text, tool_calls_list = _parse_responses_api_output(payload)
+    if text and on_event:
+        on_event({"type": "text", "chunk": text})
+    message: dict = {"content": text}
+    if tool_calls_list:
+        message["tool_calls"] = tool_calls_list
+    finish_reason = "tool_calls" if tool_calls_list else "stop"
+    return message, finish_reason
+
+
 def _pageindex_stream_call(
     api_key: str,
     model: str,
@@ -1014,6 +1185,9 @@ def _pageindex_stream_call(
     text content (the final answer). Returns (message_dict, finish_reason)
     with the same shape as a non-streaming choices[0]["message"].
     """
+    if _openai_should_use_responses_api(model):
+        return _pageindex_call_responses(api_key, model, messages, tools, on_event)
+
     req_body: dict = {
         "model": model,
         "messages": messages,
@@ -1034,7 +1208,7 @@ def _pageindex_stream_call(
         stream=True,
         timeout=_TIMEOUT,
     )
-    response.raise_for_status()
+    _raise_for_status_verbose(response)
 
     content_parts: list[str] = []
     tool_calls_acc: dict[int, dict] = {}
@@ -1053,7 +1227,12 @@ def _pageindex_stream_call(
             chunk = json.loads(data)
         except json.JSONDecodeError:
             continue
-        choice = chunk.get("choices", [{}])[0]
+        if chunk.get("error"):
+            raise RuntimeError(f"OpenAI stream error: {chunk['error']}")
+        choices = chunk.get("choices") or []
+        if not choices:
+            continue
+        choice = choices[0]
         delta = choice.get("delta", {})
         fr = choice.get("finish_reason")
         if fr:
@@ -1324,7 +1503,7 @@ def _pageindex_stream_call_claude(api_key, model, system, messages, tools, on_ev
         stream=True,
         timeout=_TIMEOUT,
     )
-    resp.raise_for_status()
+    _raise_for_status_verbose(resp)
     blocks = {}  # index -> {"type","id","name","input_json","text"}
     stop_reason = None
     for raw in resp.iter_lines():
@@ -1356,6 +1535,9 @@ def _pageindex_stream_call_claude(api_key, model, system, messages, tools, on_ev
                     on_event({"type": "text", "chunk": d["text"]})
         elif t == "message_delta":
             stop_reason = evt.get("delta", {}).get("stop_reason", stop_reason)
+        elif t == "error":
+            raise RuntimeError(f"Anthropic stream error: {evt}")
+        # ping, message_start, content_block_stop, message_stop → no-op
     ordered = [blocks[i] for i in sorted(blocks)]
     return ordered, stop_reason
 
@@ -1387,7 +1569,7 @@ def _pageindex_stream_call_gemini(api_key, model, system, contents, tools, on_ev
     if tools:
         body["tools"] = _pageindex_tools_gemini(tools)
     resp = requests.post(url, json=body, stream=True, timeout=_TIMEOUT)
-    resp.raise_for_status()
+    _raise_for_status_verbose(resp)
     all_parts = []
     has_function_call = False
     for raw in resp.iter_lines():
@@ -1396,7 +1578,12 @@ def _pageindex_stream_call_gemini(api_key, model, system, contents, tools, on_ev
         line = raw.decode() if isinstance(raw, bytes) else raw
         if not line.startswith("data: "):
             continue
-        evt = json.loads(line[6:])
+        try:
+            evt = json.loads(line[6:])
+        except json.JSONDecodeError:
+            continue
+        if evt.get("error"):
+            raise RuntimeError(f"Gemini stream error: {evt['error']}")
         for candidate in evt.get("candidates", []):
             for part in candidate.get("content", {}).get("parts", []):
                 all_parts.append(part)
@@ -1465,16 +1652,27 @@ def run_agent_pageindex(
     assistant_clarifying_question = None
     assistant_reply_summary = None
 
-    def _stream_with_filter(msgs, tls):
+    # Retrieval always uses gpt-4o-mini; synthesis always uses the user-selected model.
+    retrieval_model = DEFAULT_AGENTIC_MODEL
+
+    def _retrieval_call(msgs, tls):
+        """Tool-calling loop: always gpt-4o-mini, non-text events pass through."""
+        def _non_text_evt(evt):
+            if on_event and evt.get("type") != "text":
+                on_event(evt)
+        return _pageindex_stream_call(api_key, retrieval_model, msgs, tls, _non_text_evt if on_event else None)
+
+    def _synthesis_call(msgs):
+        """Final answer: user-selected model with full text streaming."""
         if on_event is None:
-            return _pageindex_stream_call(api_key, model, msgs, tls, None)
+            return _pageindex_stream_call(api_key, model, msgs, None, None)
         filt = _ReplyStreamFilter(lambda t: on_event({"type": "text", "chunk": t}))
         def _evt(evt):
             if evt.get("type") == "text":
                 filt.feed(evt["chunk"])
             else:
                 on_event(evt)
-        result = _pageindex_stream_call(api_key, model, msgs, tls, _evt)
+        result = _pageindex_stream_call(api_key, model, msgs, None, _evt)
         filt.flush()
         return result
 
@@ -1646,12 +1844,13 @@ def run_agent_pageindex(
                             on_event=on_event,
                         )
                     tool_trace.append({"tool": fc["name"], "args": args, "iteration": iteration})
-                    fn_responses.append({
-                        "functionResponse": {
-                            "name": fc["name"],
-                            "response": {"content": result_text},
-                        }
-                    })
+                    function_response = {
+                        "name": fc["name"],
+                        "response": {"content": result_text},
+                    }
+                    if fc.get("id"):
+                        function_response["id"] = fc["id"]
+                    fn_responses.append({"functionResponse": function_response})
             contents.append({"role": "user", "parts": fn_responses})
 
         # Forced synthesis on iteration exhaustion (mirrors the OpenAI loop): if pages
@@ -1689,21 +1888,10 @@ def run_agent_pageindex(
 
     for iteration in range(MAX_TOOL_ITERATIONS):
         started = time.time()
-        message, finish_reason = _stream_with_filter(messages, tools)
+        message, finish_reason = _retrieval_call(messages, tools)
         tool_calls = message.get("tool_calls") or []
 
         if not tool_calls:
-            raw_final = (
-                _message_text(message).strip()
-                or "I could not find relevant content in the course materials."
-            )
-            (
-                reply_body,
-                assistant_reply_summary,
-                assistant_follow_ups,
-                assistant_clarifying_question,
-            ) = _parse_synthesis_json(raw_final)
-            final_text = reply_body if (reply_body or "").strip() else raw_final
             tool_trace.append(
                 {
                     "iteration": iteration,
@@ -1765,32 +1953,26 @@ def run_agent_pageindex(
                 }
             )
 
-    # Q08 fix: if MAX_TOOL_ITERATIONS was exhausted without a final answer but
-    # pages were fetched, make one more call without tools so the model can
-    # synthesize from the accumulated context instead of returning an error.
-    if not final_text and grounding_refs:
-        started = time.time()
-        forced_message, _ = _stream_with_filter(messages, None)
-        raw_final = (
-            _message_text(forced_message).strip()
-            or "I could not find relevant content in the course materials."
-        )
-        (
-            reply_body,
-            assistant_reply_summary,
-            assistant_follow_ups,
-            assistant_clarifying_question,
-        ) = _parse_synthesis_json(raw_final)
-        final_text = reply_body if (reply_body or "").strip() else raw_final
-        tool_trace.append(
-            {"phase": "forced_synthesis", "latency_ms": int((time.time() - started) * 1000)}
-        )
-
-    if not final_text:
-        final_text = "I could not find relevant content in the course materials."
+    # Synthesis: always the user-selected model, always a separate call from retrieval.
+    started = time.time()
+    synthesis_message, _ = _synthesis_call(messages)
+    raw_final = (
+        _message_text(synthesis_message).strip()
+        or "I could not find relevant content in the course materials."
+    )
+    (
+        reply_body,
+        assistant_reply_summary,
+        assistant_follow_ups,
+        assistant_clarifying_question,
+    ) = _parse_synthesis_json(raw_final)
+    final_text = reply_body if (reply_body or "").strip() else raw_final
+    tool_trace.append(
+        {"phase": "synthesis", "latency_ms": int((time.time() - started) * 1000)}
+    )
 
     return (
-        final_text,
+        final_text or "I could not find relevant content in the course materials.",
         grounding_refs,
         tool_trace,
         {"intent_type": "pageindex", "verifier_passed": True, "repair_invoked": False},
@@ -1871,7 +2053,7 @@ def suggest_chat_title(
             },
             timeout=8,
         )
-        resp.raise_for_status()
+        _raise_for_status_verbose(resp)
         parsed = json.loads(resp.json()["choices"][0]["message"]["content"])
         title = str(parsed.get("title", "")).strip()
         if title:
