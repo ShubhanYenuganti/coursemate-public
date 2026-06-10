@@ -84,3 +84,20 @@ def test_store_page_visuals_defaults_missing_keys():
     assert params[2] == ""
     assert json.loads(params[3]) == []
     assert json.loads(params[4]) == []
+
+
+def test_store_page_texts_includes_token_count():
+    calls = []
+
+    class Conn:
+        def execute(self, sql, params):
+            calls.append((sql, params))
+
+    store_page_texts(
+        Conn(),
+        742,
+        [{"page_number": 1, "text_content": "Intro", "has_images": False, "token_count": 7}],
+    )
+
+    assert "token_count" in calls[0][0]
+    assert calls[0][1][5] == 7

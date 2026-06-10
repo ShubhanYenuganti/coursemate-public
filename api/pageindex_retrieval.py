@@ -86,7 +86,7 @@ def get_page_content(conn, material_id: int, pages: str) -> list[dict]:
         return []
     cursor = conn.cursor()
     cursor.execute(
-        """SELECT page_number, text_content, has_images
+        """SELECT page_number, text_content, has_images, token_count
            FROM material_page_text
            WHERE material_id = %s AND page_number = ANY(%s)
            ORDER BY page_number""",

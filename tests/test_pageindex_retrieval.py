@@ -88,3 +88,14 @@ def test_get_material_relations_both_directions():
     result = get_material_relations(conn, course_id=1, material_id=10)
     assert len(result) == 1
     assert result[0]["other_material_id"] == 20
+
+
+def test_get_page_content_returns_token_count():
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.fetchall.return_value = [
+        {"page_number": 1, "text_content": "Intro", "has_images": False, "token_count": 7},
+    ]
+    conn.cursor.return_value = cursor
+    rows = get_page_content(conn, material_id=742, pages="1")
+    assert rows[0]["token_count"] == 7
