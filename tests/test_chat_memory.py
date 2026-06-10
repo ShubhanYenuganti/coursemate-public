@@ -70,6 +70,15 @@ def test_openai_reasoning_models_use_responses_api():
         assert llm._openai_should_use_responses_api(model) is False
 
 
+def test_non_vision_model_rejects_image_input():
+    try:
+        llm._validate_model_supports_images("gpt-oss-120b", ["chat-images/1/a.png"])
+    except ValueError as exc:
+        assert "does not support image input" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
 def test_responses_api_sets_model_output_cap(monkeypatch):
     captured = {}
     response = MagicMock()

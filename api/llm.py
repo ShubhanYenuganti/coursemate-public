@@ -256,8 +256,14 @@ _TIMEOUT = 60  # seconds
 DEFAULT_AGENTIC_PROVIDER = "openai"
 DEFAULT_AGENTIC_MODEL = "gpt-4o-mini"
 MAX_TOOL_ITERATIONS = 4
+NON_VISION_MODEL_IDS = {"gpt-oss-120b"}
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_model_supports_images(model: str | None, image_s3_keys: list | None) -> None:
+    if image_s3_keys and (model or "").strip().lower() in NON_VISION_MODEL_IDS:
+        raise ValueError(f"Model {model} does not support image input")
 
 
 def _json_safe_chunk_id(value):
@@ -1882,6 +1888,8 @@ def run_agent_pageindex(
     clarification_depth: int = 0,
 ) -> tuple:
     from pageindex_retrieval import get_course_routing_index
+
+    _validate_model_supports_images(model, image_s3_keys)
 
     # Image-only messages have no text query; give the retrieval model something to work with.
     if not user_message.strip() and image_s3_keys:

@@ -50,4 +50,6 @@ export const PROVIDER_MODELS = {
 };
 
 // Models that cannot accept image input. Used to block image attachments in chat.
-export const NON_VISION_MODEL_IDS = new Set([]);
+export const NON_VISION_MODEL_IDS = new Set([
+  'gpt-oss-120b',
+]);
