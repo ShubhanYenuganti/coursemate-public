@@ -156,7 +156,7 @@ def test_format_pageindex_evidence_blocks_course_and_web_results():
         web_contents=["web result"],
     )
 
-    assert "Retrieved course material:" in evidence
+    assert "Raw retrieved course material:" in evidence
     assert "page one\n\n---\n\npage two" in evidence
     assert "Web search results" in evidence
     assert "web result" in evidence
@@ -1008,3 +1008,26 @@ def test_dispatch_select_page_candidates_materializes_evidence(monkeypatch):
     assert meta["raw_evidence"] == ["raw evidence"]
     assert meta["summary_evidence"] == ["summary evidence"]
     assert grounding_refs == ["material:742"]
+
+
+def test_format_pageindex_evidence_includes_candidate_summaries():
+    evidence = llm._format_pageindex_evidence(
+        ["raw course"],
+        ["web result"],
+        ["summary course"],
+    )
+
+    assert "Raw retrieved course material:" in evidence
+    assert "Candidate coverage summaries:" in evidence
+    assert "summary course" in evidence
+    assert "Web search results" in evidence
+
+
+def test_synthesis_prompt_distinguishes_raw_and_summary_evidence():
+    prompt = llm._build_pageindex_synthesis_system_context(
+        "Candidate coverage summaries:\nsummary",
+        clarification_depth=0,
+    )
+
+    assert "Raw material is direct evidence" in prompt
+    assert "Candidate coverage summaries" in prompt

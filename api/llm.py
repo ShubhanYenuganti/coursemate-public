@@ -11,15 +11,16 @@ Phase 2 (agentic loop): Each provider's tool-calling format will extend this mod
   - OpenAI:  tools + tool_calls function-calling format
   - Gemini:  tools with function_declarations + FunctionCall/FunctionResponse
 """
+
 import json
 import logging
 import mimetypes
 import os
 import re
 import time
+from uuid import UUID
 
 import requests
-from uuid import UUID
 
 
 def _raise_for_status_verbose(response) -> None:
@@ -44,6 +45,7 @@ def _raise_for_status_verbose(response) -> None:
             pass
         raise
 
+
 try:
     from .crypto_utils import decrypt_api_key
 except ImportError:
@@ -53,23 +55,24 @@ except ImportError:
 def _fetch_images_as_base64(s3_keys: list) -> list:
     """Fetch S3 images and return list of (mime_type, base64_data) tuples."""
     import base64
+
     import boto3
 
-    region = os.environ.get('AWS_REGION', 'us-east-1')
+    region = os.environ.get("AWS_REGION", "us-east-1")
     client = boto3.client(
-        's3',
+        "s3",
         region_name=region,
-        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
     )
-    bucket = os.environ.get('AWS_S3_BUCKET_NAME')
+    bucket = os.environ.get("AWS_S3_BUCKET_NAME")
     result = []
-    for key in (s3_keys or []):
+    for key in s3_keys or []:
         try:
             obj = client.get_object(Bucket=bucket, Key=key)
-            data = obj['Body'].read()
+            data = obj["Body"].read()
             mime = mimetypes.guess_type(key)[0] or "image/jpeg"
-            result.append((mime, base64.standard_b64encode(data).decode('utf-8')))
+            result.append((mime, base64.standard_b64encode(data).decode("utf-8")))
         except Exception:
             logging.getLogger(__name__).warning("Failed to fetch S3 image %s", key)
     return result
@@ -172,7 +175,7 @@ _JSON_SYNTHESIS_INSTRUCTION = (
     "your full markdown answer here (plain markdown, never JSON-encoded)\n"
     "</REPLY>\n"
     "<META>\n"
-    '{\"summary\": \"5-6 word phrase\", \"follow_ups\": [\"q1\", \"q2\", \"q3\"], \"clarifying_question\": null}\n'
+    '{"summary": "5-6 word phrase", "follow_ups": ["q1", "q2", "q3"], "clarifying_question": null}\n'
     "</META>\n\n"
     "Rules: The REPLY block is plain markdown — write LaTeX exactly as-is (e.g. $\\frac{a}{b}$, $\\lambda$), "
     "never double backslashes. Use $...$ for inline math and $$...$$ for display equations — NEVER \\[ \\] or \\( \\). "
@@ -188,7 +191,7 @@ _AGENTIC_JSON_FINAL_INSTRUCTION = (
     "your full markdown answer here (plain markdown, never JSON-encoded)\n"
     "</REPLY>\n"
     "<META>\n"
-    '{\"summary\": \"5-6 word phrase\", \"follow_ups\": [\"q1\", \"q2\", \"q3\"], \"clarifying_question\": null}\n'
+    '{"summary": "5-6 word phrase", "follow_ups": ["q1", "q2", "q3"], "clarifying_question": null}\n'
     "</META>\n\n"
     "Rules: The REPLY block is plain markdown — write LaTeX exactly as-is (e.g. $\\frac{a}{b}$, $\\lambda$), "
     "never double backslashes. Use $...$ for inline math and $$...$$ for display equations — NEVER \\[ \\] or \\( \\). "
@@ -227,7 +230,7 @@ _PAGEINDEX_TOOL_USE = (
     "budgeted subset and compact the rest into summaries. Use direct `get_page_content` for narrow "
     "lookups where only one small range is needed."
     "\n\n**Citation numbering**: Each `get_page_content` call you make becomes one numbered citation, "
-    "in the order you called it. The first `get_page_content` call is citation [1], the second is [2], "
+    "in the order you   q` called it. The first `get_page_content` call is citation [1], the second is [2], "
     "and so on. When you write the final answer, cite each fact using the bracket that matches the call "
     "that fetched its evidence. Do not invent citation numbers that do not correspond to a "
     "`get_page_content` call. If you fetched the same material on multiple calls, each call gets its own "
@@ -238,7 +241,9 @@ _PAGEINDEX_TOOL_USE = (
 # citations/formatting, a pageindex-specific tool-use section (not _SYSTEM_PROMPT_TOOL_USE,
 # which references search_materials/web_search that don't exist here), and the
 # JSON final-answer schema.
-PAGEINDEX_SYSTEM_PROMPT = _SYSTEM_PROMPT_BASE + _PAGEINDEX_TOOL_USE + _AGENTIC_JSON_FINAL_INSTRUCTION
+PAGEINDEX_SYSTEM_PROMPT = (
+    _SYSTEM_PROMPT_BASE + _PAGEINDEX_TOOL_USE + _AGENTIC_JSON_FINAL_INSTRUCTION
+)
 
 _PAGEINDEX_SYNTHESIS_INSTRUCTION = (
     "\n\n**Final synthesis mode**: Retrieval is complete. The retrieved course material "
@@ -246,6 +251,10 @@ _PAGEINDEX_SYNTHESIS_INSTRUCTION = (
     "message directly from that evidence and the conversation history. Do not say you "
     "will fetch, search, inspect, retrieve, call tools, or look at course materials in "
     "the future. If the provided evidence is insufficient, say what is missing clearly."
+    "\n\nRaw material is direct evidence — cite it precisely. "
+    "Candidate coverage summaries are compact course-index evidence for breadth and "
+    "orientation; use them for coverage and caveats, but do not invent details that "
+    "require raw text if only a summary was provided."
 )
 
 _CONVERSATION_HISTORY_NOTICE = (
@@ -262,14 +271,14 @@ DEFAULT_AGENTIC_PROVIDER = "openai"
 DEFAULT_AGENTIC_MODEL = "gpt-4o-mini"
 MAX_TOOL_ITERATIONS = 4
 NON_VISION_MODEL_IDS = {"gpt-oss-120b"}
-GENERATION_PROPOSAL_READY_MESSAGE = (
-    "I prepared a proposal for that. Review it and confirm when you're ready to generate it."
-)
+GENERATION_PROPOSAL_READY_MESSAGE = "I prepared a proposal for that. Review it and confirm when you're ready to generate it."
 
 logger = logging.getLogger(__name__)
 
 
-def _validate_model_supports_images(model: str | None, image_s3_keys: list | None) -> None:
+def _validate_model_supports_images(
+    model: str | None, image_s3_keys: list | None
+) -> None:
     if image_s3_keys and (model or "").strip().lower() in NON_VISION_MODEL_IDS:
         raise ValueError(f"Model {model} does not support image input")
 
@@ -340,8 +349,8 @@ def _cap_summary(value: str | None) -> str | None:
 
 def _normalize_math_delimiters(text: str) -> str:
     """Convert \[...\] and \(...\) to $$...$$ and $...$ so remark-math renders them."""
-    text = re.sub(r'\\\[([\s\S]*?)\\\]', r'$$\1$$', text)
-    text = re.sub(r'\\\(([\s\S]*?)\\\)', r'$\1$', text)
+    text = re.sub(r"\\\[([\s\S]*?)\\\]", r"$$\1$$", text)
+    text = re.sub(r"\\\(([\s\S]*?)\\\)", r"$\1$", text)
     return text
 
 
@@ -355,11 +364,19 @@ def _parse_meta_block(meta_text: str) -> tuple[str | None, list, str | None]:
         return None, [], None
     summ = obj.get("summary")
     raw_follow_ups = obj.get("follow_ups")
-    follow_ups = [q for q in raw_follow_ups if isinstance(q, str)] if isinstance(raw_follow_ups, list) else []
+    follow_ups = (
+        [q for q in raw_follow_ups if isinstance(q, str)]
+        if isinstance(raw_follow_ups, list)
+        else []
+    )
     clarifying_question = obj.get("clarifying_question")
     if not isinstance(clarifying_question, str) or not clarifying_question.strip():
         clarifying_question = None
-    return (_cap_summary(summ) if isinstance(summ, str) else None), follow_ups, clarifying_question
+    return (
+        (_cap_summary(summ) if isinstance(summ, str) else None),
+        follow_ups,
+        clarifying_question,
+    )
 
 
 def _parse_synthesis_json(raw: str) -> tuple[str, str | None, list, str | None]:
@@ -375,38 +392,45 @@ def _parse_synthesis_json(raw: str) -> tuple[str, str | None, list, str | None]:
     if reply_match:
         reply = _normalize_math_delimiters(reply_match.group(1).strip())
         if meta_match:
-            summary, follow_ups, clarifying_question = _parse_meta_block(meta_match.group(1))
+            summary, follow_ups, clarifying_question = _parse_meta_block(
+                meta_match.group(1)
+            )
         else:
             summary, follow_ups, clarifying_question = None, [], None
         return reply, summary, follow_ups, clarifying_question
 
     # Stage 2: Brace-boundary — trailing JSON object appended without tags.
     # Walk backward from the last '}' to find a balanced '{...}' candidate.
-    end = original.rfind('}')
+    end = original.rfind("}")
     if end != -1:
         depth = 0
         start = -1
         for i in range(end, -1, -1):
-            if original[i] == '}':
+            if original[i] == "}":
                 depth += 1
-            elif original[i] == '{':
+            elif original[i] == "{":
                 depth -= 1
                 if depth == 0:
                     start = i
                     break
         if start != -1:
-            candidate = original[start:end + 1]
+            candidate = original[start : end + 1]
             try:
                 obj = json.loads(candidate)
                 if isinstance(obj, dict) and ("summary" in obj or "follow_ups" in obj):
                     reply = _normalize_math_delimiters(original[:start].strip())
-                    summary, follow_ups, clarifying_question = _parse_meta_block(candidate)
+                    summary, follow_ups, clarifying_question = _parse_meta_block(
+                        candidate
+                    )
                     return reply, summary, follow_ups, clarifying_question
             except json.JSONDecodeError:
                 pass
 
     # Stage 3: Whole-text — treat entire output as reply with empty metadata.
-    logger.debug("synthesis_parse_whole_text_fallback", extra={"excerpt": _truncate_text(original, 200)})
+    logger.debug(
+        "synthesis_parse_whole_text_fallback",
+        extra={"excerpt": _truncate_text(original, 200)},
+    )
     return _normalize_math_delimiters(original), None, [], None
 
 
@@ -418,9 +442,7 @@ _INLINE_TOKEN_PATTERN = re.compile(
     r")$"
 )
 
-_LIKELY_MATH_PATTERN = re.compile(
-    r"(\\[A-Za-z]+|\d|[=+\-*/^_])"
-)
+_LIKELY_MATH_PATTERN = re.compile(r"(\\[A-Za-z]+|\d|[=+\-*/^_])")
 
 
 def _looks_inline_token(value: str) -> bool:
@@ -488,7 +510,9 @@ def _normalize_llm_markdown(text: str) -> str:
     normalized = re.sub(r"`([^`\n]+)`\n([:;,.!?])", r"`\1`\2", normalized)
 
     # Collapse sentence fragments split around converted inline code.
-    normalized = re.sub(r"([A-Za-z0-9)\]])\n`([^`\n]+)`\n([A-Za-z(])", r"\1 `\2` \3", normalized)
+    normalized = re.sub(
+        r"([A-Za-z0-9)\]])\n`([^`\n]+)`\n([A-Za-z(])", r"\1 `\2` \3", normalized
+    )
 
     # Strip lines with unclosed LaTeX $ delimiters to prevent broken KaTeX rendering.
     normalized = _fix_unclosed_latex_delimiters(normalized)
@@ -625,10 +649,14 @@ def _parse_retrieval_scope(text: str) -> str:
 
 
 def _retrieval_budget_for_scope(model: str, scope: str) -> dict:
-    return _retrieval_budget_for(model, expanded=_parse_retrieval_scope(scope) == "broad")
+    return _retrieval_budget_for(
+        model, expanded=_parse_retrieval_scope(scope) == "broad"
+    )
 
 
-def _classify_retrieval_scope(provider: str, model: str, api_key: str, user_message: str) -> str:
+def _classify_retrieval_scope(
+    provider: str, model: str, api_key: str, user_message: str
+) -> str:
     prompt = f"{_RETRIEVAL_SCOPE_PROMPT}\n\nUser message:\n{user_message}"
     try:
         if provider == "claude":
@@ -694,13 +722,19 @@ def _normalize_page_candidates(candidates: list) -> tuple[list[dict], int]:
     return normalized, dropped
 
 
-def _get_page_content_for_materialization(conn, material_id: int, pages: str) -> list[dict]:
+def _get_page_content_for_materialization(
+    conn, material_id: int, pages: str
+) -> list[dict]:
     from pageindex_retrieval import get_page_content
+
     return get_page_content(conn, material_id, pages)
 
 
-def _get_page_section_summaries_for_materialization(conn, material_ids: list[int]) -> dict:
+def _get_page_section_summaries_for_materialization(
+    conn, material_ids: list[int]
+) -> dict:
     from pageindex_retrieval import get_page_section_summaries
+
     return get_page_section_summaries(conn, material_ids)
 
 
@@ -732,9 +766,7 @@ def _materialize_page_candidates(
         "summary_tokens": 0,
         "omitted_summary_pages": 0,
     }
-    candidates_with_order = [
-        {**c, "_order": i} for i, c in enumerate(candidates or [])
-    ]
+    candidates_with_order = [{**c, "_order": i} for i, c in enumerate(candidates or [])]
     raw_budget = max(0, int(budget.get("raw_tokens") or 0))
     summary_candidates: list[dict] = []
     first = True
@@ -744,7 +776,10 @@ def _materialize_page_candidates(
             conn, candidate["material_id"], str(candidate["page"])
         )
         row_tokens = sum(
-            int(row.get("token_count") or _estimate_tokens(row.get("text_content") or ""))
+            int(
+                row.get("token_count")
+                or _estimate_tokens(row.get("text_content") or "")
+            )
             for row in rows
         )
         if rows and (first or meta["raw_tokens"] + row_tokens <= raw_budget):
@@ -756,8 +791,12 @@ def _materialize_page_candidates(
             summary_candidates.append(candidate)
         first = False
 
-    material_ids = _dedupe_preserve_order([c["material_id"] for c in summary_candidates])
-    summaries_by_page = _get_page_section_summaries_for_materialization(conn, material_ids)
+    material_ids = _dedupe_preserve_order(
+        [c["material_id"] for c in summary_candidates]
+    )
+    summaries_by_page = _get_page_section_summaries_for_materialization(
+        conn, material_ids
+    )
     summary_budget = max(0, int(budget.get("summary_tokens") or 0))
     running_tokens = 0
 
@@ -807,7 +846,9 @@ def _history_budget(
 
 def _output_token_cap(model: str) -> int:
     window = _context_window_for(model)
-    return max(MIN_OUTPUT_TOKENS, min(MAX_OUTPUT_TOKENS, int(window * OUTPUT_CONTEXT_RATIO)))
+    return max(
+        MIN_OUTPUT_TOKENS, min(MAX_OUTPUT_TOKENS, int(window * OUTPUT_CONTEXT_RATIO))
+    )
 
 
 def _compose_history(prior_turns: list, budget_tokens: int) -> list:
@@ -920,7 +961,7 @@ def _get_api_key(conn, user_id: int, provider: str) -> str:
     cursor.close()
     if not row:
         raise ValueError(f"No {provider} API key found. Add your key in Settings.")
-    return decrypt_api_key(row['encrypted_key'])
+    return decrypt_api_key(row["encrypted_key"])
 
 
 def _format_context(chunks: list) -> str:
@@ -930,7 +971,7 @@ def _format_context(chunks: list) -> str:
     parts = []
     for i, c in enumerate(chunks, 1):
         header = f"[{i}] (type={c['chunk_type']}"
-        if c.get('page_number'):
+        if c.get("page_number"):
             header += f", page {c['page_number']}"
         header += f", similarity={c['similarity']:.3f})"
         parts.append(f"{header}\n{c['chunk_text']}")
@@ -983,7 +1024,9 @@ def _build_layered_system_context(
             "## WebSearchHandoff\n"
             f"{_truncate_text(json.dumps(model_web_handoff), 2000)}\n\n"
         )
-        recommendation = str(model_web_handoff.get("web_search_recommendation", "optional")).lower()
+        recommendation = str(
+            model_web_handoff.get("web_search_recommendation", "optional")
+        ).lower()
         if recommendation == "required":
             handoff_policy = (
                 "## WebSearchHandoffPolicy\n"
@@ -1029,7 +1072,9 @@ def _build_layered_system_context(
     )
 
 
-def _verify_grounding(final_text: str, resolver_result: dict, grounding_refs: list) -> dict:
+def _verify_grounding(
+    final_text: str, resolver_result: dict, grounding_refs: list
+) -> dict:
     text = (final_text or "").strip()
     intent = str((resolver_result or {}).get("intent_type", "fresh")).lower()
     entities = (resolver_result or {}).get("resolved_entities") or []
@@ -1101,7 +1146,10 @@ def _repair_response_openai(
     repair_messages = list(messages) + [{"role": "user", "content": prompt}]
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json={"model": model, "messages": repair_messages, "temperature": 0.1},
         timeout=_TIMEOUT,
     )
@@ -1122,7 +1170,9 @@ def _message_text(message: dict) -> str:
     return ""
 
 
-def _resolve_provider_model(ai_provider: str | None, ai_model: str | None) -> tuple[str, str]:
+def _resolve_provider_model(
+    ai_provider: str | None, ai_model: str | None
+) -> tuple[str, str]:
     provider = ai_provider or DEFAULT_AGENTIC_PROVIDER
     model = ai_model
     if provider == "openai" and not model:
@@ -1158,7 +1208,9 @@ def _extract_json_object(text: str) -> dict | None:
 
 def _normalize_web_search_handoff(handoff: dict | None) -> dict:
     data = handoff if isinstance(handoff, dict) else {}
-    recommendation = str(data.get("web_search_recommendation", "optional")).strip().lower()
+    recommendation = (
+        str(data.get("web_search_recommendation", "optional")).strip().lower()
+    )
     if recommendation not in ("required", "optional", "not_needed"):
         recommendation = "optional"
 
@@ -1176,7 +1228,9 @@ def _normalize_web_search_handoff(handoff: dict | None) -> dict:
     suggested_queries = data.get("suggested_queries")
     if not isinstance(suggested_queries, list):
         suggested_queries = []
-    suggested_queries = [str(v).strip() for v in suggested_queries if str(v).strip()][:4]
+    suggested_queries = [str(v).strip() for v in suggested_queries if str(v).strip()][
+        :4
+    ]
 
     reasoning = str(data.get("reasoning", "") or "").strip()
     return {
@@ -1198,9 +1252,13 @@ def _assess_web_search_handoff(
 ) -> dict:
     """Ask the selected model for web-search routing hints and normalize response."""
     if not (selected_model_draft or "").strip():
-        return _normalize_web_search_handoff({"web_search_recommendation": "optional", "confidence": 0.5})
+        return _normalize_web_search_handoff(
+            {"web_search_recommendation": "optional", "confidence": 0.5}
+        )
 
-    assessment_context = "Assessment-only context for tool routing. No citations required."
+    assessment_context = (
+        "Assessment-only context for tool routing. No citations required."
+    )
     assessment_prompt = (
         "You are creating a structured handoff for another model that orchestrates tools.\n"
         "Given USER_QUESTION and DRAFT_ANSWER, decide whether external web search is needed.\n"
@@ -1228,16 +1286,27 @@ def _assess_web_search_handoff(
         normalized["raw_handoff_excerpt"] = _truncate_text(raw, 400)
         return normalized
     except Exception as exc:
-        fallback = _normalize_web_search_handoff({"web_search_recommendation": "optional", "confidence": 0.5})
+        fallback = _normalize_web_search_handoff(
+            {"web_search_recommendation": "optional", "confidence": 0.5}
+        )
         fallback["error"] = f"handoff_assessment_failed: {exc}"
         return fallback
 
 
-def _synthesize_claude(context: str, user_message: str, model: str, api_key: str, image_s3_keys: list | None = None) -> str:
+def _synthesize_claude(
+    context: str,
+    user_message: str,
+    model: str,
+    api_key: str,
+    image_s3_keys: list | None = None,
+) -> str:
     images = _fetch_images_as_base64(image_s3_keys) if image_s3_keys else []
     if images:
         content = [
-            {"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}}
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": mime, "data": data},
+            }
             for mime, data in images
         ] + [{"type": "text", "text": user_message}]
     else:
@@ -1285,7 +1354,13 @@ def _openai_response_text(payload: dict) -> str:
     return ""
 
 
-def _synthesize_openai(context: str, user_message: str, model: str, api_key: str, image_s3_keys: list | None = None) -> str:
+def _synthesize_openai(
+    context: str,
+    user_message: str,
+    model: str,
+    api_key: str,
+    image_s3_keys: list | None = None,
+) -> str:
     images = _fetch_images_as_base64(image_s3_keys) if image_s3_keys else []
     system_text = f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}"
 
@@ -1299,11 +1374,17 @@ def _synthesize_openai(context: str, user_message: str, model: str, api_key: str
             user_content = user_message
         response = requests.post(
             "https://api.openai.com/v1/responses",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": model, "input": [
-                {"role": "system", "content": system_text},
-                {"role": "user", "content": user_content},
-            ]},
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "input": [
+                    {"role": "system", "content": system_text},
+                    {"role": "user", "content": user_content},
+                ],
+            },
             timeout=_TIMEOUT,
         )
         _raise_for_status_verbose(response)
@@ -1327,7 +1408,10 @@ def _synthesize_openai(context: str, user_message: str, model: str, api_key: str
         req_body["temperature"] = 0.2
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json=req_body,
         timeout=_TIMEOUT,
     )
@@ -1335,12 +1419,17 @@ def _synthesize_openai(context: str, user_message: str, model: str, api_key: str
     return response.json()["choices"][0]["message"]["content"]
 
 
-def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str, image_s3_keys: list | None = None) -> str:
+def _synthesize_gemini(
+    context: str,
+    user_message: str,
+    model: str,
+    api_key: str,
+    image_s3_keys: list | None = None,
+) -> str:
     images = _fetch_images_as_base64(image_s3_keys) if image_s3_keys else []
     if images:
         parts = [
-            {"inline_data": {"mime_type": mime, "data": data}}
-            for mime, data in images
+            {"inline_data": {"mime_type": mime, "data": data}} for mime, data in images
         ] + [{"text": user_message}]
     else:
         parts = [{"text": user_message}]
@@ -1352,7 +1441,11 @@ def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str
         },
         json={
             "system_instruction": {
-                "parts": [{"text": f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}"}]
+                "parts": [
+                    {
+                        "text": f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}"
+                    }
+                ]
             },
             "contents": [{"parts": parts}],
         },
@@ -1364,16 +1457,16 @@ def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str
 
 def _emit_web_results(on_event, text: str, max_results: int = 3):
     """Parse web search result text and emit one web_result event per result (up to max_results)."""
-    blocks = re.split(r'\[W\d+\]', text)
+    blocks = re.split(r"\[W\d+\]", text)
     emitted = 0
     for block in blocks[1:]:  # skip header block
         if emitted >= max_results:
             break
-        url_match = re.search(r'url=(\S+)', block)
+        url_match = re.search(r"url=(\S+)", block)
         if not url_match:
             continue
         url = url_match.group(1)
-        content = block[url_match.end():].strip()[:200]
+        content = block[url_match.end() :].strip()[:200]
         on_event({"type": "web_result", "url": url, "excerpt": content})
         emitted += 1
 
@@ -1450,7 +1543,9 @@ def _build_pageindex_synthesis_system_context(
     if evidence_text.strip():
         system_content += "\n\nEvidence:\n" + evidence_text.strip()
     else:
-        system_content += "\n\nEvidence:\nNo retrieved course material or web results were provided."
+        system_content += (
+            "\n\nEvidence:\nNo retrieved course material or web results were provided."
+        )
     if clarification_depth >= 2:
         system_content += (
             "\n\n**Do not ask any further clarifying questions.** Answer the user's question "
@@ -1465,12 +1560,21 @@ def _build_pageindex_synthesis_system_context(
     return system_content
 
 
-def _format_pageindex_evidence(course_contents: list, web_contents: list) -> str:
+def _format_pageindex_evidence(
+    course_contents: list,
+    web_contents: list,
+    summary_contents: list | None = None,
+) -> str:
     parts = []
     if course_contents:
         parts.append(
-            "Retrieved course material:\n"
+            "Raw retrieved course material:\n"
             + "\n\n---\n\n".join(str(c) for c in course_contents)
+        )
+    if summary_contents:
+        parts.append(
+            "Candidate coverage summaries:\n"
+            + "\n\n---\n\n".join(str(c) for c in summary_contents)
         )
     if web_contents:
         parts.append(
@@ -1501,7 +1605,6 @@ def _looks_like_retrieval_preamble(text: str) -> bool:
     return any(prefix.startswith(p) for p in patterns)
 
 
-
 class _ReplyStreamFilter:
     """Strip <REPLY>…</REPLY><META>…</META> wrapper from a streamed response.
 
@@ -1527,7 +1630,7 @@ class _ReplyStreamFilter:
         if self._state == "probing":
             stripped = self._buf.lstrip()
             if stripped.startswith(self._OPEN):
-                self._buf = stripped[len(self._OPEN):]
+                self._buf = stripped[len(self._OPEN) :]
                 self._state = "in_reply"
                 self._drain()
             elif len(stripped) >= len(self._OPEN):
@@ -1589,7 +1692,11 @@ def _convert_content_to_responses_format(content):
     out = []
     for part in content:
         if part.get("type") == "image_url":
-            url = part["image_url"] if isinstance(part["image_url"], str) else part["image_url"]["url"]
+            url = (
+                part["image_url"]
+                if isinstance(part["image_url"], str)
+                else part["image_url"]["url"]
+            )
             out.append({"type": "input_image", "image_url": url})
         elif part.get("type") == "text":
             out.append({"type": "input_text", "text": part["text"]})
@@ -1604,7 +1711,12 @@ def _messages_to_responses_input(messages: list) -> list:
     for msg in messages:
         role = msg.get("role")
         if role in ("system", "user"):
-            result.append({"role": role, "content": _convert_content_to_responses_format(msg["content"])})
+            result.append(
+                {
+                    "role": role,
+                    "content": _convert_content_to_responses_format(msg["content"]),
+                }
+            )
         elif role == "assistant":
             content = msg.get("content")
             if content:
@@ -1613,19 +1725,23 @@ def _messages_to_responses_input(messages: list) -> list:
                 tc_id = tc["id"]
                 # Responses API requires item "id" to start with "fc_"; "call_id" stays as-is
                 item_id = "fc_" + tc_id[5:] if tc_id.startswith("call_") else tc_id
-                result.append({
-                    "type": "function_call",
-                    "id": item_id,
-                    "call_id": tc_id,
-                    "name": tc["function"]["name"],
-                    "arguments": tc["function"]["arguments"],
-                })
+                result.append(
+                    {
+                        "type": "function_call",
+                        "id": item_id,
+                        "call_id": tc_id,
+                        "name": tc["function"]["name"],
+                        "arguments": tc["function"]["arguments"],
+                    }
+                )
         elif role == "tool":
-            result.append({
-                "type": "function_call_output",
-                "call_id": msg["tool_call_id"],
-                "output": msg["content"],
-            })
+            result.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": msg["tool_call_id"],
+                    "output": msg["content"],
+                }
+            )
     return result
 
 
@@ -1634,12 +1750,14 @@ def _tools_to_responses_format(tools: list) -> list:
     result = []
     for t in tools:
         fn = t.get("function", t)
-        result.append({
-            "type": "function",
-            "name": fn["name"],
-            "description": fn.get("description", ""),
-            "parameters": fn.get("parameters", {}),
-        })
+        result.append(
+            {
+                "type": "function",
+                "name": fn["name"],
+                "description": fn.get("description", ""),
+                "parameters": fn.get("parameters", {}),
+            }
+        )
     return result
 
 
@@ -1656,14 +1774,16 @@ def _parse_responses_api_output(payload: dict) -> tuple[str, list]:
                 if isinstance(part, dict) and part.get("type") == "output_text":
                     text_parts.append(part.get("text", ""))
         elif item.get("type") == "function_call":
-            tool_calls.append({
-                "id": item.get("call_id") or item.get("id", ""),
-                "type": "function",
-                "function": {
-                    "name": item.get("name", ""),
-                    "arguments": item.get("arguments", "{}"),
-                },
-            })
+            tool_calls.append(
+                {
+                    "id": item.get("call_id") or item.get("id", ""),
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name", ""),
+                        "arguments": item.get("arguments", "{}"),
+                    },
+                }
+            )
     if not text_parts and isinstance(payload.get("output_text"), str):
         text_parts.append(payload["output_text"])
     return "".join(text_parts), tool_calls
@@ -1688,7 +1808,10 @@ def _pageindex_call_responses(
         req_body["tool_choice"] = "auto"
     response = requests.post(
         "https://api.openai.com/v1/responses",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json=req_body,
         timeout=_TIMEOUT,
     )
@@ -1920,7 +2043,10 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
                             "type": "string",
                             "enum": ["quiz", "flashcards", "report"],
                         },
-                        "title": {"type": "string", "description": "Short human title."},
+                        "title": {
+                            "type": "string",
+                            "description": "Short human title.",
+                        },
                         "discussion_summary": {
                             "type": "string",
                             "description": (
@@ -1937,13 +2063,13 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
                             "type": "object",
                             "description": (
                                 "Type-specific generation parameters. "
-                                "Quiz: {\"tf_count\":3,\"sa_count\":2,\"la_count\":1,\"mcq_count\":5}. "
-                                "Flashcards: {\"card_count\":20}. "
-                                "Report: {\"template_id\":\"<id>\"} where id is one of "
-                                "\"study-guide\" (structured outline with key concepts), "
-                                "\"briefing\" (executive summary for quick understanding), "
-                                "\"summary\" (condensed overview of main points), "
-                                "\"custom\" (anything else — also include \"custom_prompt\":\"<specific instruction>\"). "
+                                'Quiz: {"tf_count":3,"sa_count":2,"la_count":1,"mcq_count":5}. '
+                                'Flashcards: {"card_count":20}. '
+                                'Report: {"template_id":"<id>"} where id is one of '
+                                '"study-guide" (structured outline with key concepts), '
+                                '"briefing" (executive summary for quick understanding), '
+                                '"summary" (condensed overview of main points), '
+                                '"custom" (anything else — also include "custom_prompt":"<specific instruction>"). '
                                 "Choose the most fitting template; use custom only when none of the others fit."
                             ),
                         },
@@ -1953,28 +2079,39 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
             },
         },
     ]
-    if web_search_enabled and os.environ.get("AGENTIC_WEB_SEARCH_ENABLED", "").lower() == "true":
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": "web_search",
-                "description": "Search the web for current information to supplement course materials. Use when page content is insufficient.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"query": {"type": "string", "description": "Search query"}},
-                    "required": ["query"],
+    if (
+        web_search_enabled
+        and os.environ.get("AGENTIC_WEB_SEARCH_ENABLED", "").lower() == "true"
+    ):
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "Search the web for current information to supplement course materials. Use when page content is insufficient.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Search query"}
+                        },
+                        "required": ["query"],
+                    },
                 },
-            },
-        })
+            }
+        )
     return tools
 
 
-def _dispatch_candidate_frontier(conn, args: dict, budget: dict, grounding_refs: list) -> tuple[str, dict]:
+def _dispatch_candidate_frontier(
+    conn, args: dict, budget: dict, grounding_refs: list
+) -> tuple[str, dict]:
     candidates, dropped = _normalize_page_candidates(args.get("candidates") or [])
     raw_evidence, summary_evidence, materialization_meta = _materialize_page_candidates(
         conn, candidates, budget
     )
-    for material_id in _dedupe_preserve_order(materialization_meta.get("raw_material_ids") or []):
+    for material_id in _dedupe_preserve_order(
+        materialization_meta.get("raw_material_ids") or []
+    ):
         grounding_refs.append(f"material:{material_id}")
     meta = {
         "raw_evidence": raw_evidence,
@@ -1992,16 +2129,16 @@ def _dispatch_candidate_frontier(conn, args: dict, budget: dict, grounding_refs:
     return result, meta
 
 
-def _dispatch_pageindex_tool(conn, name, args, course_id, grounding_refs, on_event) -> tuple[str, dict]:
+def _dispatch_pageindex_tool(
+    conn, name, args, course_id, grounding_refs, on_event
+) -> tuple[str, dict]:
     """Dispatch a single PageIndex tool call. Returns (tool-result text, extra trace metadata).
     Appends to grounding_refs and emits events as a side effect."""
     from pageindex_retrieval import get_material_structure, get_page_content
 
     if name == "get_material_structure":
         material_id = args.get("material_id")
-        tool_result = json.dumps(
-            get_material_structure(conn, material_id), indent=2
-        )
+        tool_result = json.dumps(get_material_structure(conn, material_id), indent=2)
     elif name == "get_page_content":
         material_id = args.get("material_id")
         pages_spec = args.get("pages", "")
@@ -2054,6 +2191,7 @@ def _dispatch_pageindex_tool(conn, name, args, course_id, grounding_refs, on_eve
             )
     elif name == "web_search":
         from tools import execute_web_search
+
         if on_event:
             on_event({"type": "web_search_start", "query": args.get("query", "")})
         result = execute_web_search(conn, args.get("query", ""))
@@ -2079,11 +2217,15 @@ def _pageindex_tools_anthropic(tools: list) -> list:
     result = []
     for t in tools:
         fn = t.get("function", t)
-        result.append({
-            "name": fn["name"],
-            "description": fn.get("description", ""),
-            "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
-        })
+        result.append(
+            {
+                "name": fn["name"],
+                "description": fn.get("description", ""),
+                "input_schema": fn.get(
+                    "parameters", {"type": "object", "properties": {}}
+                ),
+            }
+        )
     return result
 
 
@@ -2154,11 +2296,15 @@ def _pageindex_tools_gemini(tools: list) -> list:
     declarations = []
     for t in tools:
         fn = t.get("function", t)
-        declarations.append({
-            "name": fn["name"],
-            "description": fn.get("description", ""),
-            "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
-        })
+        declarations.append(
+            {
+                "name": fn["name"],
+                "description": fn.get("description", ""),
+                "parameters": fn.get(
+                    "parameters", {"type": "object", "properties": {}}
+                ),
+            }
+        )
     return [{"functionDeclarations": declarations}]
 
 
@@ -2303,21 +2449,27 @@ def run_agent_pageindex(
 
     def _retrieval_call(msgs, tls):
         """Tool-calling loop: always gpt-4o-mini, non-text events pass through."""
+
         def _non_text_evt(evt):
             if on_event and evt.get("type") != "text":
                 on_event(evt)
-        return _pageindex_stream_call(api_key, retrieval_model, msgs, tls, _non_text_evt if on_event else None)
+
+        return _pageindex_stream_call(
+            api_key, retrieval_model, msgs, tls, _non_text_evt if on_event else None
+        )
 
     def _synthesis_call(msgs):
         """Final answer: user-selected model with full text streaming."""
         if on_event is None:
             return _pageindex_stream_call(api_key, model, msgs, None, None)
         filt = _ReplyStreamFilter(lambda t: on_event({"type": "text", "chunk": t}))
+
         def _evt(evt):
             if evt.get("type") == "text":
                 filt.feed(evt["chunk"])
             else:
                 on_event(evt)
+
         result = _pageindex_stream_call(api_key, model, msgs, None, _evt)
         filt.flush()
         return result
@@ -2329,7 +2481,10 @@ def run_agent_pageindex(
     if provider == "claude":
         if request_images:
             claude_user_content = [
-                {"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}}
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": mime, "data": data},
+                }
                 for mime, data in request_images
             ] + [{"type": "text", "text": user_message}]
         else:
@@ -2339,7 +2494,12 @@ def run_agent_pageindex(
         ]
         for iteration in range(MAX_TOOL_ITERATIONS):
             blocks, stop_reason = _pageindex_stream_call_claude(
-                api_key, model, system_content, claude_messages, tools, _non_text_event if on_event else None
+                api_key,
+                model,
+                system_content,
+                claude_messages,
+                tools,
+                _non_text_event if on_event else None,
             )
             tool_use_blocks = [b for b in blocks if b["type"] == "tool_use"]
             if not tool_use_blocks or stop_reason != "tool_use":
@@ -2348,12 +2508,16 @@ def run_agent_pageindex(
             assistant_content = []
             for b in blocks:
                 if b["type"] == "tool_use":
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": b["id"],
-                        "name": b["name"],
-                        "input": json.loads(b["input_json"]) if b["input_json"] else {},
-                    })
+                    assistant_content.append(
+                        {
+                            "type": "tool_use",
+                            "id": b["id"],
+                            "name": b["name"],
+                            "input": json.loads(b["input_json"])
+                            if b["input_json"]
+                            else {},
+                        }
+                    )
                 elif b["type"] == "text" and b["text"]:
                     assistant_content.append({"type": "text", "text": b["text"]})
             claude_messages.append({"role": "assistant", "content": assistant_content})
@@ -2368,7 +2532,8 @@ def run_agent_pageindex(
                         "generation_type": args.get("generation_type") or "",
                         "title": args.get("title") or "",
                         "discussion_summary": args.get("discussion_summary") or "",
-                        "material_ids": args.get("material_ids") or list(context_material_ids or []),
+                        "material_ids": args.get("material_ids")
+                        or list(context_material_ids or []),
                         "params": args.get("params") or {},
                     }
                     if on_event:
@@ -2398,11 +2563,13 @@ def run_agent_pageindex(
                 if _tmeta.get("urls"):
                     _te["urls"] = _tmeta["urls"]
                 tool_trace.append(_te)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": b["id"],
-                    "content": result_text,
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": b["id"],
+                        "content": result_text,
+                    }
+                )
             if proposal_emitted:
                 final_text = GENERATION_PROPOSAL_READY_MESSAGE
                 break
@@ -2411,7 +2578,7 @@ def run_agent_pageindex(
         if not proposal_emitted:
             evt_cb, flush = _filtered_on_event(on_event)
             synthesis_system_content = _build_pageindex_synthesis_system_context(
-                _format_pageindex_evidence(course_evidence, web_evidence),
+                _format_pageindex_evidence(course_evidence, web_evidence, summary_evidence),
                 clarification_depth=clarification_depth,
             )
             synthesis_messages = _shape_history_claude(_history_turns) + [
@@ -2422,7 +2589,10 @@ def run_agent_pageindex(
             )
             flush()
             full_text = "".join(b["text"] for b in blocks if b["type"] == "text")
-            raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+            raw_final = (
+                full_text.strip()
+                or "I could not find relevant content in the course materials."
+            )
             (
                 reply_body,
                 assistant_reply_summary,
@@ -2433,16 +2603,24 @@ def run_agent_pageindex(
             if _looks_like_retrieval_preamble(final_text):
                 repair_invoked = True
                 strict_system_content = _build_pageindex_synthesis_system_context(
-                    _format_pageindex_evidence(course_evidence, web_evidence),
+                    _format_pageindex_evidence(course_evidence, web_evidence, summary_evidence),
                     clarification_depth=clarification_depth,
                     strict=True,
                 )
                 blocks, _ = _pageindex_stream_call_claude(
-                    api_key, model, strict_system_content, synthesis_messages, [], evt_cb
+                    api_key,
+                    model,
+                    strict_system_content,
+                    synthesis_messages,
+                    [],
+                    evt_cb,
                 )
                 flush()
                 full_text = "".join(b["text"] for b in blocks if b["type"] == "text")
-                raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+                raw_final = (
+                    full_text.strip()
+                    or "I could not find relevant content in the course materials."
+                )
                 (
                     reply_body,
                     assistant_reply_summary,
@@ -2463,7 +2641,9 @@ def run_agent_pageindex(
                 "intent_type": "pageindex",
                 "verifier_passed": True,
                 "repair_invoked": repair_invoked,
-                "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+                "history_token_estimate": sum(
+                    _estimate_tokens(t["content"]) for t in _history_turns
+                ),
                 "history_turn_count": len(_history_turns),
             },
             assistant_reply_summary,
@@ -2479,10 +2659,17 @@ def run_agent_pageindex(
             ] + [{"text": user_message}]
         else:
             gemini_user_parts = [{"text": user_message}]
-        contents = _shape_history_gemini(_history_turns) + [{"role": "user", "parts": gemini_user_parts}]
+        contents = _shape_history_gemini(_history_turns) + [
+            {"role": "user", "parts": gemini_user_parts}
+        ]
         for iteration in range(MAX_TOOL_ITERATIONS):
             parts, has_fc = _pageindex_stream_call_gemini(
-                api_key, model, system_content, contents, tools, _non_text_event if on_event else None
+                api_key,
+                model,
+                system_content,
+                contents,
+                tools,
+                _non_text_event if on_event else None,
             )
             if not has_fc:
                 break
@@ -2501,7 +2688,8 @@ def run_agent_pageindex(
                             "generation_type": args.get("generation_type") or "",
                             "title": args.get("title") or "",
                             "discussion_summary": args.get("discussion_summary") or "",
-                            "material_ids": args.get("material_ids") or list(context_material_ids or []),
+                            "material_ids": args.get("material_ids")
+                            or list(context_material_ids or []),
                             "params": args.get("params") or {},
                         }
                         if on_event:
@@ -2546,7 +2734,7 @@ def run_agent_pageindex(
         if not proposal_emitted:
             evt_cb, flush = _filtered_on_event(on_event)
             synthesis_system_content = _build_pageindex_synthesis_system_context(
-                _format_pageindex_evidence(course_evidence, web_evidence),
+                _format_pageindex_evidence(course_evidence, web_evidence, summary_evidence),
                 clarification_depth=clarification_depth,
             )
             synthesis_contents = _shape_history_gemini(_history_turns) + [
@@ -2557,7 +2745,10 @@ def run_agent_pageindex(
             )
             flush()
             full_text = "".join(p.get("text", "") for p in parts if "text" in p)
-            raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+            raw_final = (
+                full_text.strip()
+                or "I could not find relevant content in the course materials."
+            )
             (
                 reply_body,
                 assistant_reply_summary,
@@ -2568,16 +2759,24 @@ def run_agent_pageindex(
             if _looks_like_retrieval_preamble(final_text):
                 repair_invoked = True
                 strict_system_content = _build_pageindex_synthesis_system_context(
-                    _format_pageindex_evidence(course_evidence, web_evidence),
+                    _format_pageindex_evidence(course_evidence, web_evidence, summary_evidence),
                     clarification_depth=clarification_depth,
                     strict=True,
                 )
                 parts, _ = _pageindex_stream_call_gemini(
-                    api_key, model, strict_system_content, synthesis_contents, [], evt_cb
+                    api_key,
+                    model,
+                    strict_system_content,
+                    synthesis_contents,
+                    [],
+                    evt_cb,
                 )
                 flush()
                 full_text = "".join(p.get("text", "") for p in parts if "text" in p)
-                raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+                raw_final = (
+                    full_text.strip()
+                    or "I could not find relevant content in the course materials."
+                )
                 (
                     reply_body,
                     assistant_reply_summary,
@@ -2598,7 +2797,9 @@ def run_agent_pageindex(
                 "intent_type": "pageindex",
                 "verifier_passed": True,
                 "repair_invoked": repair_invoked,
-                "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+                "history_token_estimate": sum(
+                    _estimate_tokens(t["content"]) for t in _history_turns
+                ),
                 "history_turn_count": len(_history_turns),
             },
             assistant_reply_summary,
@@ -2645,7 +2846,8 @@ def run_agent_pageindex(
                     "generation_type": args.get("generation_type") or "",
                     "title": args.get("title") or "",
                     "discussion_summary": args.get("discussion_summary") or "",
-                    "material_ids": args.get("material_ids") or list(context_material_ids or []),
+                    "material_ids": args.get("material_ids")
+                    or list(context_material_ids or []),
                     "params": args.get("params") or {},
                 }
                 if on_event:
@@ -2698,7 +2900,9 @@ def run_agent_pageindex(
                 "intent_type": "pageindex",
                 "verifier_passed": True,
                 "repair_invoked": repair_invoked,
-                "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+                "history_token_estimate": sum(
+                    _estimate_tokens(t["content"]) for t in _history_turns
+                ),
                 "history_turn_count": len(_history_turns),
             },
             None,
@@ -2706,14 +2910,18 @@ def run_agent_pageindex(
             None,
         )
     started = time.time()
-    evidence_text = _format_pageindex_evidence(course_evidence, web_evidence)
+    evidence_text = _format_pageindex_evidence(course_evidence, web_evidence, summary_evidence)
     synthesis_system_content = _build_pageindex_synthesis_system_context(
         evidence_text,
         clarification_depth=clarification_depth,
     )
-    synthesis_msgs = [
-        {"role": "system", "content": synthesis_system_content},
-    ] + openai_history_messages + [current_user_message]
+    synthesis_msgs = (
+        [
+            {"role": "system", "content": synthesis_system_content},
+        ]
+        + openai_history_messages
+        + [current_user_message]
+    )
     synthesis_message, _ = _synthesis_call(synthesis_msgs)
     raw_final = (
         _message_text(synthesis_message).strip()
@@ -2733,9 +2941,13 @@ def run_agent_pageindex(
             clarification_depth=clarification_depth,
             strict=True,
         )
-        strict_msgs = [
-            {"role": "system", "content": strict_system_content},
-        ] + openai_history_messages + [current_user_message]
+        strict_msgs = (
+            [
+                {"role": "system", "content": strict_system_content},
+            ]
+            + openai_history_messages
+            + [current_user_message]
+        )
         synthesis_message, _ = _synthesis_call(strict_msgs)
         raw_final = (
             _message_text(synthesis_message).strip()
@@ -2749,13 +2961,14 @@ def run_agent_pageindex(
         ) = _parse_synthesis_json(raw_final)
         final_text = reply_body if (reply_body or "").strip() else raw_final
     import re as _re
+
     # Always strip [WN] markers; also strip plain [N] markers when web search was used
     # (model may renumber web results as [1], [2] without page chunks to back them up)
     has_web_refs = any(r.startswith("web:") for r in grounding_refs)
     has_page_refs = any(r.startswith("material:") for r in grounding_refs)
     if has_web_refs and not has_page_refs:
-        final_text = _re.sub(r'\s*\[\d+\]', '', final_text or "").strip()
-    final_text = _re.sub(r'\s*\[W\d+\]', '', final_text or "").strip()
+        final_text = _re.sub(r"\s*\[\d+\]", "", final_text or "").strip()
+    final_text = _re.sub(r"\s*\[W\d+\]", "", final_text or "").strip()
     tool_trace.append(
         {"phase": "synthesis", "latency_ms": int((time.time() - started) * 1000)}
     )
@@ -2768,7 +2981,9 @@ def run_agent_pageindex(
             "intent_type": "pageindex",
             "verifier_passed": True,
             "repair_invoked": repair_invoked,
-            "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+            "history_token_estimate": sum(
+                _estimate_tokens(t["content"]) for t in _history_turns
+            ),
             "history_turn_count": len(_history_turns),
         },
         assistant_reply_summary,
@@ -2826,7 +3041,7 @@ def suggest_chat_title(
         "You suggest short chat titles. Given the current title and recent conversation turns, "
         "return a refined title that better reflects the conversation topic. "
         "Rules: max 80 characters, no quotes, no markdown, minimal alteration from the current "
-        "title unless the topic has clearly shifted. Return strict JSON: {\"title\": \"...\"}."
+        'title unless the topic has clearly shifted. Return strict JSON: {"title": "..."}.'
     )
     payload = {
         "current_title": current_title or "New Chat",
@@ -2836,7 +3051,10 @@ def suggest_chat_title(
     try:
         resp = requests.post(
             _TITLE_URL,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
             json={
                 "model": _TITLE_MODEL,
                 "response_format": {"type": "json_object"},
@@ -2898,7 +3116,9 @@ def synthesize(
 
     # PageIndex is the only retrieval path. `chunks` and `force_context_only`
     # remain in the signature for caller compatibility but are no longer used.
-    material_scope = context_material_ids if isinstance(context_material_ids, list) else []
+    material_scope = (
+        context_material_ids if isinstance(context_material_ids, list) else []
+    )
     agentic_api_key = _get_api_key(conn, user_id, ai_provider)
     pageindex_course_id = None
     if context_material_ids:
