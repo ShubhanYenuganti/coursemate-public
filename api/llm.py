@@ -1969,6 +1969,29 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
     return tools
 
 
+def _dispatch_candidate_frontier(conn, args: dict, budget: dict, grounding_refs: list) -> tuple[str, dict]:
+    candidates, dropped = _normalize_page_candidates(args.get("candidates") or [])
+    raw_evidence, summary_evidence, materialization_meta = _materialize_page_candidates(
+        conn, candidates, budget
+    )
+    for material_id in _dedupe_preserve_order(materialization_meta.get("raw_material_ids") or []):
+        grounding_refs.append(f"material:{material_id}")
+    meta = {
+        "raw_evidence": raw_evidence,
+        "summary_evidence": summary_evidence,
+        "candidate_count": len(candidates),
+        "dropped_candidates": dropped,
+        **materialization_meta,
+    }
+    result = (
+        f"Candidate frontier accepted: "
+        f"{meta['raw_pages']} raw pages, "
+        f"{meta['summary_pages']} summary pages, "
+        f"{meta['omitted_summary_pages']} summary pages omitted."
+    )
+    return result, meta
+
+
 def _dispatch_pageindex_tool(conn, name, args, course_id, grounding_refs, on_event) -> tuple[str, dict]:
     """Dispatch a single PageIndex tool call. Returns (tool-result text, extra trace metadata).
     Appends to grounding_refs and emits events as a side effect."""
@@ -2267,6 +2290,7 @@ def run_agent_pageindex(
     repair_invoked = False
     course_evidence: list[str] = []
     web_evidence: list[str] = []
+    summary_evidence: list[str] = []
 
     def _record_evidence(tool_name: str, tool_result: str) -> None:
         if tool_name == "get_page_content":
@@ -2351,6 +2375,15 @@ def run_agent_pageindex(
                         on_event(proposal)
                     proposal_emitted = True
                     result_text = ""
+                elif b["name"] == "select_page_candidates":
+                    result_text, _tmeta = _dispatch_candidate_frontier(
+                        conn=conn,
+                        args=args,
+                        budget=retrieval_budget,
+                        grounding_refs=grounding_refs,
+                    )
+                    course_evidence.extend(_tmeta.get("raw_evidence") or [])
+                    summary_evidence.extend(_tmeta.get("summary_evidence") or [])
                 else:
                     result_text, _tmeta = _dispatch_pageindex_tool(
                         conn=conn,
@@ -2475,6 +2508,15 @@ def run_agent_pageindex(
                             on_event(proposal)
                         proposal_emitted = True
                         result_text = ""
+                    elif fc["name"] == "select_page_candidates":
+                        result_text, _tmeta = _dispatch_candidate_frontier(
+                            conn=conn,
+                            args=args,
+                            budget=retrieval_budget,
+                            grounding_refs=grounding_refs,
+                        )
+                        course_evidence.extend(_tmeta.get("raw_evidence") or [])
+                        summary_evidence.extend(_tmeta.get("summary_evidence") or [])
                     else:
                         result_text, _tmeta = _dispatch_pageindex_tool(
                             conn=conn,
@@ -2610,6 +2652,15 @@ def run_agent_pageindex(
                     on_event(proposal)
                 proposal_emitted = True
                 tool_result = ""
+            elif name == "select_page_candidates":
+                tool_result, _tmeta = _dispatch_candidate_frontier(
+                    conn=conn,
+                    args=args,
+                    budget=retrieval_budget,
+                    grounding_refs=grounding_refs,
+                )
+                course_evidence.extend(_tmeta.get("raw_evidence") or [])
+                summary_evidence.extend(_tmeta.get("summary_evidence") or [])
             else:
                 tool_result, _tmeta = _dispatch_pageindex_tool(
                     conn=conn,

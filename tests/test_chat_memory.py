@@ -976,3 +976,35 @@ def test_retrieval_prompt_describes_budgeted_candidate_frontier():
     assert "broad" in prompt.lower()
     assert "raw text" in prompt.lower()
     assert "summary" in prompt.lower()
+
+
+def test_dispatch_select_page_candidates_materializes_evidence(monkeypatch):
+    monkeypatch.setattr(
+        llm,
+        "_materialize_page_candidates",
+        lambda conn, candidates, budget: (
+            ["raw evidence"],
+            ["summary evidence"],
+            {
+                "raw_pages": 1,
+                "raw_tokens": 50,
+                "raw_material_ids": [742],
+                "summary_pages": 1,
+                "summary_tokens": 20,
+                "omitted_summary_pages": 0,
+            },
+        ),
+    )
+    grounding_refs = []
+
+    result, meta = llm._dispatch_candidate_frontier(
+        conn=object(),
+        args={"candidates": [{"material_id": 742, "pages": "1"}]},
+        budget={"raw_tokens": 100, "summary_tokens": 100},
+        grounding_refs=grounding_refs,
+    )
+
+    assert result == "Candidate frontier accepted: 1 raw pages, 1 summary pages, 0 summary pages omitted."
+    assert meta["raw_evidence"] == ["raw evidence"]
+    assert meta["summary_evidence"] == ["summary evidence"]
+    assert grounding_refs == ["material:742"]
