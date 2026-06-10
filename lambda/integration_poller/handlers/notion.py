@@ -472,13 +472,22 @@ def _update_material_after_upload(material_id, s3_key, last_edited_time):
 def _enqueue_embed_job(material_id):
     with get_db() as db:
         cur = db.execute(
-            "INSERT INTO material_embed_jobs (material_id) VALUES (%s) ON CONFLICT DO NOTHING",
+            """
+            INSERT INTO material_embed_jobs (material_id, status)
+            VALUES (%s, 'pending')
+            ON CONFLICT (material_id) DO UPDATE
+            SET status = 'pending',
+                started_at = NULL,
+                completed_at = NULL,
+                error_message = NULL,
+                chunks_created = NULL
+            """,
             (material_id,),
         )
-    inserted = cur.rowcount == 1
+    queued = cur.rowcount == 1
     print(
-        f"[notion_handler] material_embed_jobs upsert material_id={material_id} "
-        f"inserted={inserted}"
+        f"[notion_handler] material_embed_jobs queued material_id={material_id} "
+        f"queued={queued}"
     )
 
 
