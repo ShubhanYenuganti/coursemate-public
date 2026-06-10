@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildBulkSyncDocTypes,
   buildBulkSyncToggles,
+  buildCancelledEmbedStatusMap,
+  removeSyncJob,
   buildSyncFilesPayload,
 } from "./syncWorkflow";
 
@@ -32,6 +34,20 @@ describe("sync workflow helpers", () => {
     expect(buildBulkSyncDocTypes(rows, "lecture_note")).toEqual({
       a: "lecture_note",
       b: "lecture_note",
+    });
+  });
+
+  it("removes cancelled sync jobs and marks their items skipped locally", () => {
+    const jobs = [
+      { jobId: "keep", items: [{ external_id: "a" }] },
+      { jobId: "cancel", items: [{ external_id: "b" }, { external_id: "c" }] },
+    ];
+
+    expect(removeSyncJob(jobs, "cancel")).toEqual([jobs[0]]);
+    expect(buildCancelledEmbedStatusMap({ a: "processing" }, jobs[1])).toEqual({
+      a: "processing",
+      b: "skipped",
+      c: "skipped",
     });
   });
 });

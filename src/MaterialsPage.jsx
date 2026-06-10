@@ -4,7 +4,9 @@ import { formatDateTime } from "./utils/dateUtils";
 import {
   buildBulkSyncDocTypes,
   buildBulkSyncToggles,
+  buildCancelledEmbedStatusMap,
   buildSyncFilesPayload,
+  removeSyncJob,
 } from "./utils/syncWorkflow";
 
 // ─── constants ───────────────────────────────────────────────────────────────
@@ -741,7 +743,13 @@ function EmbedStatusBadge({ status, sourceType }) {
 
 // ─── progress panel ───────────────────────────────────────────────────────────
 
-function ProgressPanel({ syncJobs, uploadItems, embedStatusMap, onClearDone }) {
+function ProgressPanel({
+  syncJobs,
+  uploadItems,
+  embedStatusMap,
+  onClearDone,
+  onCancelSyncJob,
+}) {
   function deriveSyncStatus(item) {
     const status = embedStatusMap[item.external_id];
     if (!status) return { label: "Syncing…", spinner: true, color: "indigo" };
@@ -798,9 +806,18 @@ function ProgressPanel({ syncJobs, uploadItems, embedStatusMap, onClearDone }) {
 
       {syncJobs.map((job) => (
         <div key={job.jobId} className="space-y-1.5">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide truncate">
-            {job.provider === "notion" ? "Notion" : "Google Drive"} · {job.label}
-          </p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide truncate">
+              {job.provider === "notion" ? "Notion" : "Google Drive"} · {job.label}
+            </p>
+            <button
+              type="button"
+              onClick={() => onCancelSyncJob(job)}
+              className="text-xs text-red-500 hover:text-red-700 font-medium shrink-0"
+            >
+              Give up
+            </button>
+          </div>
           {job.items.map((item) => {
             const st = deriveSyncStatus(item);
             return (
@@ -1896,6 +1913,36 @@ export default function MaterialsPage({
       setPanelDismissed(true);
     }
   }, [syncJobs, uploadItems, embedStatusMap]);
+
+  const handleCancelSyncJob = useCallback(
+    async (job) => {
+      const externalIds = (job?.items || [])
+        .map((item) => item.external_id)
+        .filter(Boolean);
+      if (!job?.jobId || externalIds.length === 0) return;
+
+      setEmbedStatusMap((prev) => buildCancelledEmbedStatusMap(prev, job));
+      setSyncJobs((prev) => removeSyncJob(prev, job.jobId));
+
+      try {
+        await fetch("/api/material", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            action: "cancel_sync_jobs",
+            course_id: courseId,
+            source_type: job.provider,
+            external_ids: externalIds,
+          }),
+        });
+      } catch {
+        // Local cancellation is still useful if the backend request cannot finish.
+      }
+    },
+    [courseId, setSyncJobs],
+  );
+
   const providerSourcePoints = sourcePoints[syncProvider] || [];
 
   const TERMINAL_EMBED_STATUSES = new Set(["done", "failed", "skipped"]);
@@ -2161,6 +2208,7 @@ export default function MaterialsPage({
           uploadItems={uploadItems}
           embedStatusMap={embedStatusMap}
           onClearDone={handleClearDone}
+          onCancelSyncJob={handleCancelSyncJob}
         />
       )}
 

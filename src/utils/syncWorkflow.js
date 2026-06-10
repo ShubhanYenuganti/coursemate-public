@@ -23,3 +23,15 @@ export function buildBulkSyncDocTypes(rows, docType) {
       .map((row) => [row.external_id, docType]),
   );
 }
+
+export function removeSyncJob(jobs, jobId) {
+  return (Array.isArray(jobs) ? jobs : []).filter((job) => job?.jobId !== jobId);
+}
+
+export function buildCancelledEmbedStatusMap(currentMap = {}, job) {
+  const next = { ...currentMap };
+  for (const item of job?.items || []) {
+    if (item?.external_id) next[item.external_id] = "skipped";
+  }
+  return next;
+}
