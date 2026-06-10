@@ -357,3 +357,154 @@ def test_run_agent_gpt5_synthesis_preserves_history_and_current_turn(monkeypatch
     assert "Retrieval is complete" in synthesis_msgs[0]["content"]
     assert "Use the material IDs above when calling" not in synthesis_msgs[0]["content"]
     assert "get_page_content" not in synthesis_msgs[0]["content"]
+
+
+def test_run_agent_openai_chat_synthesis_uses_clean_prompt(monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.setattr(llm, "_fetch_images_as_base64", lambda keys: [])
+    monkeypatch.setattr(llm, "_recall_prior_chat_images", lambda *a, **k: [])
+    monkeypatch.setattr(llm, "_load_chat_history", lambda c, cid, bi: [
+        {"role": "user", "content": "earlier question"},
+        {"role": "assistant", "content": "earlier answer"},
+    ])
+    monkeypatch.setattr(llm, "_dispatch_pageindex_tool", lambda **kwargs: ("retrieved page content", {}))
+
+    calls = []
+
+    def fake_stream(api_key, model, msgs, tools, on_event):
+        import copy
+        calls.append({"model": model, "msgs": copy.deepcopy(msgs), "tools": tools})
+        if tools:
+            return ({
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "get_page_content", "arguments": '{"material_id": 10, "pages": "1"}'},
+                }],
+            }, "tool_calls")
+        return ({"content": "Final answer.", "tool_calls": None}, "stop")
+
+    monkeypatch.setattr(llm, "_pageindex_stream_call", fake_stream)
+    pageindex_mock = MagicMock()
+    pageindex_mock.get_course_routing_index.return_value = []
+    with patch.dict(sys.modules, {"pageindex_retrieval": pageindex_mock}):
+        llm.run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="current follow-up",
+            model="gpt-4o-mini",
+            api_key="sk-test",
+            chat_id=1,
+            course_id=2,
+            context_material_ids=[],
+            provider="openai",
+            history_before_index=9,
+        )
+
+    synthesis_msgs = calls[-1]["msgs"]
+    assert synthesis_msgs[0]["role"] == "system"
+    assert "Retrieval is complete" in synthesis_msgs[0]["content"]
+    assert "retrieved page content" in synthesis_msgs[0]["content"]
+    assert "get_page_content" not in synthesis_msgs[0]["content"]
+    assert [m["content"] for m in synthesis_msgs[1:]] == [
+        "earlier question",
+        "earlier answer",
+        "current follow-up",
+    ]
+
+
+def test_run_agent_claude_synthesis_uses_clean_prompt(monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.setattr(llm, "_fetch_images_as_base64", lambda keys: [])
+    monkeypatch.setattr(llm, "_recall_prior_chat_images", lambda *a, **k: [])
+    monkeypatch.setattr(llm, "_load_chat_history", lambda c, cid, bi: [
+        {"role": "user", "content": "earlier question"},
+        {"role": "assistant", "content": "earlier answer"},
+    ])
+    monkeypatch.setattr(llm, "_dispatch_pageindex_tool", lambda **kwargs: ("retrieved page content", {}))
+
+    calls = []
+
+    def fake_claude(api_key, model, system, messages, tools, on_event):
+        import copy
+        calls.append({"system": system, "messages": copy.deepcopy(messages), "tools": tools})
+        if tools:
+            return ([{"type": "tool_use", "id": "tool_1", "name": "get_page_content", "input_json": '{"material_id": 10, "pages": "1"}', "text": ""}], "tool_use")
+        return ([{"type": "text", "text": "Final answer."}], "end_turn")
+
+    monkeypatch.setattr(llm, "_pageindex_stream_call_claude", fake_claude)
+    pageindex_mock = MagicMock()
+    pageindex_mock.get_course_routing_index.return_value = []
+    with patch.dict(sys.modules, {"pageindex_retrieval": pageindex_mock}):
+        llm.run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="current follow-up",
+            model="claude-sonnet-4-6",
+            api_key="sk-test",
+            chat_id=1,
+            course_id=2,
+            context_material_ids=[],
+            provider="claude",
+            history_before_index=9,
+        )
+
+    final_call = calls[-1]
+    assert final_call["tools"] == []
+    assert "Retrieval is complete" in final_call["system"]
+    assert "retrieved page content" in final_call["system"]
+    assert "get_page_content" not in final_call["system"]
+    assert [m["content"] for m in final_call["messages"]] == [
+        "earlier question",
+        "earlier answer",
+        "current follow-up",
+    ]
+
+
+def test_run_agent_gemini_synthesis_uses_clean_prompt(monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.setattr(llm, "_fetch_images_as_base64", lambda keys: [])
+    monkeypatch.setattr(llm, "_recall_prior_chat_images", lambda *a, **k: [])
+    monkeypatch.setattr(llm, "_load_chat_history", lambda c, cid, bi: [
+        {"role": "user", "content": "earlier question"},
+        {"role": "assistant", "content": "earlier answer"},
+    ])
+    monkeypatch.setattr(llm, "_dispatch_pageindex_tool", lambda **kwargs: ("retrieved page content", {}))
+
+    calls = []
+
+    def fake_gemini(api_key, model, system, contents, tools, on_event):
+        import copy
+        calls.append({"system": system, "contents": copy.deepcopy(contents), "tools": tools})
+        if tools:
+            return ([{"functionCall": {"name": "get_page_content", "args": {"material_id": 10, "pages": "1"}, "id": "fc1"}}], True)
+        return ([{"text": "Final answer."}], False)
+
+    monkeypatch.setattr(llm, "_pageindex_stream_call_gemini", fake_gemini)
+    pageindex_mock = MagicMock()
+    pageindex_mock.get_course_routing_index.return_value = []
+    with patch.dict(sys.modules, {"pageindex_retrieval": pageindex_mock}):
+        llm.run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="current follow-up",
+            model="gemini-2.5-flash",
+            api_key="gm-test",
+            chat_id=1,
+            course_id=2,
+            context_material_ids=[],
+            provider="gemini",
+            history_before_index=9,
+        )
+
+    final_call = calls[-1]
+    assert final_call["tools"] == []
+    assert "Retrieval is complete" in final_call["system"]
+    assert "retrieved page content" in final_call["system"]
+    assert "get_page_content" not in final_call["system"]
+    assert [
+        item["parts"][0]["text"]
+        for item in final_call["contents"]
+        if item["role"] in ("user", "model")
+    ] == ["earlier question", "earlier answer", "current follow-up"]

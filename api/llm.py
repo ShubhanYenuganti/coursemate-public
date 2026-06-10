@@ -1944,6 +1944,14 @@ def run_agent_pageindex(
     assistant_follow_ups: list = []
     assistant_clarifying_question = None
     assistant_reply_summary = None
+    course_evidence: list[str] = []
+    web_evidence: list[str] = []
+
+    def _record_evidence(tool_name: str, tool_result: str) -> None:
+        if tool_name == "get_page_content":
+            course_evidence.append(str(tool_result))
+        elif tool_name == "web_search":
+            web_evidence.append(str(tool_result))
 
     # Retrieval always uses gpt-4o-mini; synthesis always uses the user-selected model.
     retrieval_model = DEFAULT_AGENTIC_MODEL
@@ -1988,15 +1996,6 @@ def run_agent_pageindex(
             flush()
             tool_use_blocks = [b for b in blocks if b["type"] == "tool_use"]
             if not tool_use_blocks or stop_reason != "tool_use":
-                full_text = "".join(b["text"] for b in blocks if b["type"] == "text")
-                raw_final = full_text.strip() or "I could not find relevant content in the course materials."
-                (
-                    reply_body,
-                    assistant_reply_summary,
-                    assistant_follow_ups,
-                    assistant_clarifying_question,
-                ) = _parse_synthesis_json(raw_final)
-                final_text = reply_body if (reply_body or "").strip() else raw_final
                 break
             # Append assistant turn
             assistant_content = []
@@ -2038,6 +2037,7 @@ def run_agent_pageindex(
                         grounding_refs=grounding_refs,
                         on_event=on_event,
                     )
+                    _record_evidence(b["name"], result_text)
                 _te = {"tool": b["name"], "args": args, "iteration": iteration}
                 if _tmeta.get("urls"):
                     _te["urls"] = _tmeta["urls"]
@@ -2052,13 +2052,17 @@ def run_agent_pageindex(
                 break
             claude_messages.append({"role": "user", "content": tool_results})
 
-        # If MAX_TOOL_ITERATIONS was exhausted without a final answer but pages were
-        # fetched, make one more call without tools so the model synthesizes from the
-        # accumulated context instead of returning an error (mirrors the OpenAI loop).
-        if not final_text and not proposal_emitted and grounding_refs:
+        if not proposal_emitted:
             evt_cb, flush = _filtered_on_event(on_event)
+            synthesis_system_content = _build_pageindex_synthesis_system_context(
+                _format_pageindex_evidence(course_evidence, web_evidence),
+                clarification_depth=clarification_depth,
+            )
+            synthesis_messages = _shape_history_claude(_history_turns) + [
+                {"role": "user", "content": claude_user_content}
+            ]
             blocks, _ = _pageindex_stream_call_claude(
-                api_key, model, system_content, claude_messages, [], evt_cb
+                api_key, model, synthesis_system_content, synthesis_messages, [], evt_cb
             )
             flush()
             full_text = "".join(b["text"] for b in blocks if b["type"] == "text")
@@ -2070,7 +2074,7 @@ def run_agent_pageindex(
                 assistant_clarifying_question,
             ) = _parse_synthesis_json(raw_final)
             final_text = reply_body if (reply_body or "").strip() else raw_final
-            tool_trace.append({"phase": "forced_synthesis"})
+            tool_trace.append({"phase": "synthesis"})
 
         if not final_text and not proposal_emitted:
             final_text = "I could not find relevant content in the course materials."
@@ -2107,15 +2111,6 @@ def run_agent_pageindex(
             )
             flush()
             if not has_fc:
-                full_text = "".join(p.get("text", "") for p in parts if "text" in p)
-                raw_final = full_text.strip() or "I could not find relevant content in the course materials."
-                (
-                    reply_body,
-                    assistant_reply_summary,
-                    assistant_follow_ups,
-                    assistant_clarifying_question,
-                ) = _parse_synthesis_json(raw_final)
-                final_text = reply_body if (reply_body or "").strip() else raw_final
                 break
             # Append model turn
             contents.append({"role": "model", "parts": parts})
@@ -2148,6 +2143,7 @@ def run_agent_pageindex(
                             grounding_refs=grounding_refs,
                             on_event=on_event,
                         )
+                        _record_evidence(fc["name"], result_text)
                     _te = {"tool": fc["name"], "args": args, "iteration": iteration}
                     if _tmeta.get("urls"):
                         _te["urls"] = _tmeta["urls"]
@@ -2164,13 +2160,17 @@ def run_agent_pageindex(
                 break
             contents.append({"role": "user", "parts": fn_responses})
 
-        # Forced synthesis on iteration exhaustion (mirrors the OpenAI loop): if pages
-        # were fetched but no final answer was produced, make one tool-less call so the
-        # model answers from the accumulated context instead of returning an error.
-        if not final_text and not proposal_emitted and grounding_refs:
+        if not proposal_emitted:
             evt_cb, flush = _filtered_on_event(on_event)
+            synthesis_system_content = _build_pageindex_synthesis_system_context(
+                _format_pageindex_evidence(course_evidence, web_evidence),
+                clarification_depth=clarification_depth,
+            )
+            synthesis_contents = _shape_history_gemini(_history_turns) + [
+                {"role": "user", "parts": gemini_user_parts}
+            ]
             parts, _ = _pageindex_stream_call_gemini(
-                api_key, model, system_content, contents, [], evt_cb
+                api_key, model, synthesis_system_content, synthesis_contents, [], evt_cb
             )
             flush()
             full_text = "".join(p.get("text", "") for p in parts if "text" in p)
@@ -2182,7 +2182,7 @@ def run_agent_pageindex(
                 assistant_clarifying_question,
             ) = _parse_synthesis_json(raw_final)
             final_text = reply_body if (reply_body or "").strip() else raw_final
-            tool_trace.append({"phase": "forced_synthesis"})
+            tool_trace.append({"phase": "synthesis"})
 
         if not final_text and not proposal_emitted:
             final_text = "I could not find relevant content in the course materials."
@@ -2258,6 +2258,7 @@ def run_agent_pageindex(
                     grounding_refs=grounding_refs,
                     on_event=on_event,
                 )
+                _record_evidence(name, tool_result)
 
             _te = {"tool": name, "args": args, "iteration": iteration}
             if _tmeta.get("urls"):
@@ -2293,23 +2294,15 @@ def run_agent_pageindex(
             None,
         )
     started = time.time()
-    if _openai_should_use_responses_api(model):
-        # Responses API models see the Chat Completions tool-call history and re-generate
-        # retrieval reasoning instead of synthesizing.  Build a clean two-message prompt:
-        # retrieved page text goes into the system message as plain context.
-        course_contents = [m["content"] for m in messages if m.get("role") == "tool" and m.get("name") != "web_search"]
-        web_contents = [m["content"] for m in messages if m.get("role") == "tool" and m.get("name") == "web_search"]
-        evidence_text = _format_pageindex_evidence(course_contents, web_contents)
-        synthesis_system_content = _build_pageindex_synthesis_system_context(
-            evidence_text,
-            clarification_depth=clarification_depth,
-        )
-        synthesis_msgs = [
-            {"role": "system", "content": synthesis_system_content},
-        ] + openai_history_messages + [current_user_message]
-        synthesis_message, _ = _synthesis_call(synthesis_msgs)
-    else:
-        synthesis_message, _ = _synthesis_call(messages)
+    evidence_text = _format_pageindex_evidence(course_evidence, web_evidence)
+    synthesis_system_content = _build_pageindex_synthesis_system_context(
+        evidence_text,
+        clarification_depth=clarification_depth,
+    )
+    synthesis_msgs = [
+        {"role": "system", "content": synthesis_system_content},
+    ] + openai_history_messages + [current_user_message]
+    synthesis_message, _ = _synthesis_call(synthesis_msgs)
     raw_final = (
         _message_text(synthesis_message).strip()
         or "I could not find relevant content in the course materials."
