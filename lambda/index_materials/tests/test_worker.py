@@ -10,7 +10,8 @@ sys.modules.setdefault("fitz", types.SimpleNamespace(Page=object))
 sys.modules.setdefault("pymupdf4llm", types.SimpleNamespace())
 
 from builders.base import IndexNode, MaterialIndex
-from worker import _assign_keywords_all_nodes, _resolve_section_names
+from token_counter import TokenCounter
+from worker import _annotate_index_token_counts, _assign_keywords_all_nodes, _extract_pages, _resolve_section_names
 
 
 def test_resolve_section_names_adds_leaf_and_path():
@@ -116,3 +117,40 @@ def test_assign_keywords_all_nodes_falls_back_to_title_words(monkeypatch):
     asyncio.run(_assign_keywords_all_nodes([node], page_rows, "reading", "sk-test"))
 
     assert node.keywords == ["gradient", "descent"]
+
+
+def test_extract_pages_sets_token_count(monkeypatch):
+    class FakePage:
+        def get_images(self, full=False):
+            return []
+
+    class FakeDoc:
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, index):
+            return FakePage()
+
+        def close(self):
+            pass
+
+    import types as _types
+    monkeypatch.setattr("worker.fitz", _types.SimpleNamespace(open=lambda path: FakeDoc()))
+    monkeypatch.setattr("worker.pymupdf4llm", _types.SimpleNamespace(to_markdown=lambda doc, pages: "a" * 400))
+
+    rows = _extract_pages("/tmp/fake.pdf")
+
+    assert rows[0]["token_count"] == TokenCounter().estimate_text("a" * 400)
+
+
+def test_annotate_index_token_counts_sets_node_span_tokens():
+    node = IndexNode(node_id="node_intro", title="Intro", start_page=1, end_page=2)
+    material_index = MaterialIndex(title="Lecture", doc_type="lecture_slide", page_count=2, nodes=[node])
+    page_rows = {
+        1: {"page_number": 1, "text_content": "a" * 400, "token_count": 100},
+        2: {"page_number": 2, "text_content": "b" * 200, "token_count": 50},
+    }
+
+    _annotate_index_token_counts(material_index, page_rows)
+
+    assert material_index.nodes[0].token_count == 150

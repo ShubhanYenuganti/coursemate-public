@@ -9,6 +9,7 @@ import fitz
 import pymupdf4llm
 
 from builders import route_builder
+from token_counter import TokenCounter
 from db import (
     store_course_index,
     store_metadata_tags,
@@ -87,11 +88,16 @@ def _extract_pages(pdf_path: str) -> list[dict]:
                     "page_number": i + 1,
                     "text_content": md or None,
                     "has_images": _has_images(page),
+                    "token_count": TokenCounter().estimate_text(md),
                 }
             )
         return pages
     finally:
         doc.close()
+
+
+def _annotate_index_token_counts(material_index, page_rows: dict[int, dict]) -> None:
+    TokenCounter().annotate_material_index(material_index, page_rows)
 
 
 def _node_page_text(node, page_rows: dict) -> str:
@@ -205,6 +211,7 @@ async def index_document(
         api_key = get_api_key()
         await _summarize_all_nodes(material_index.nodes, page_rows, doc_type, api_key)
         await _assign_keywords_all_nodes(material_index.nodes, page_rows, doc_type, api_key)
+        _annotate_index_token_counts(material_index, page_rows)
 
         node_titles = [node.title for node in material_index.nodes]
         doc_summary_prompt = build_doc_summary_prompt(material_title, doc_type, node_titles)
