@@ -546,18 +546,22 @@ def _estimate_tokens(text: str) -> int:
 
 RESPONSE_RESERVE_TOKENS = 4096
 SAFETY_MARGIN_RATIO = 0.15
+HISTORY_CONTEXT_RATIO = 0.35
 
 
 def _history_budget(window: int, system_text: str, current_user_text: str) -> int:
     """Tokens left for replayed history after system prompt, response reserve,
-    current user message, and a safety margin. Never negative."""
+    current user message, and a safety margin, capped to a fixed share of the
+    model context window. Never negative."""
     used = (
         _estimate_tokens(system_text)
         + RESPONSE_RESERVE_TOKENS
         + _estimate_tokens(current_user_text)
         + int(window * SAFETY_MARGIN_RATIO)
     )
-    return max(0, window - used)
+    available = max(0, window - used)
+    history_cap = max(0, int(window * HISTORY_CONTEXT_RATIO))
+    return min(history_cap, available)
 
 
 def _compose_history(prior_turns: list, budget_tokens: int) -> list:

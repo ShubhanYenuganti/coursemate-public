@@ -32,14 +32,25 @@ def test_context_window_unknown_model_falls_back():
 
 def test_history_budget_subtracts_reserves_and_margin():
     # window=10000, system=40 tokens (160 chars), current user=10 tokens (40 chars).
-    # reserve=RESPONSE_RESERVE_TOKENS, margin=SAFETY_MARGIN_RATIO of window.
+    # reserve=RESPONSE_RESERVE_TOKENS, margin=SAFETY_MARGIN_RATIO of window,
+    # capped by HISTORY_CONTEXT_RATIO of the window.
     budget = llm._history_budget(
         window=10000,
         system_text="s" * 160,
         current_user_text="u" * 40,
     )
-    expected = 10000 - 40 - llm.RESPONSE_RESERVE_TOKENS - 10 - int(10000 * llm.SAFETY_MARGIN_RATIO)
+    available = 10000 - 40 - llm.RESPONSE_RESERVE_TOKENS - 10 - int(10000 * llm.SAFETY_MARGIN_RATIO)
+    expected = min(int(10000 * llm.HISTORY_CONTEXT_RATIO), available)
     assert budget == expected
+
+
+def test_history_budget_uses_percentage_cap_for_large_windows():
+    budget = llm._history_budget(
+        window=128000,
+        system_text="s",
+        current_user_text="u",
+    )
+    assert budget == int(128000 * llm.HISTORY_CONTEXT_RATIO)
 
 
 def test_history_budget_never_negative():
