@@ -88,23 +88,19 @@ history_budget = window
 
 The existing `HISTORY_CONTEXT_RATIO` cap still applies after this subtraction. This means retrieval expansion borrows from replayed history first. Output remains protected by `_output_token_cap` and is not reduced by retrieval expansion.
 
-The broad-query expansion decision should be deterministic and cheap. Use a conservative lexical classifier for obvious broad questions, including phrases such as:
+Before composing history, make a small agent classification call that labels the current query as `broad` or `specific`.
 
-- `overview`
-- `summarize`
-- `compare`
-- `contrast`
-- `all`
-- `across`
-- `survey`
-- `how does`
-- `what are`
-- `explain`
-- `relationship`
-- `limitations`
-- `tradeoffs`
+- `broad`: questions that likely need coverage across many sections, many concepts, comparisons, surveys, overviews, or cross-material synthesis.
+- `specific`: narrow lookups, single-definition requests, page-specific questions, or questions likely answerable from a small number of pages.
 
-This classifier only decides whether the retrieval budget uses the base or max slice. The model still chooses the candidate frontier.
+The classification result only decides whether the retrieval budget uses the max or base slice:
+
+```text
+scope == "broad"    -> active_retrieval_budget = retrieval_max_budget
+scope == "specific" -> active_retrieval_budget = retrieval_base_budget
+```
+
+If the classifier output is malformed or unavailable, default to `specific` so the system keeps the cheaper base slice. The model still chooses the candidate frontier after the budget is selected.
 
 ## Candidate Frontier Flow
 

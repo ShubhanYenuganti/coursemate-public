@@ -128,7 +128,7 @@ git add api/llm.py tests/test_chat_memory.py
 git commit -m "Add PageIndex retrieval budget helpers"
 ```
 
-## Task 2: Reserve Retrieval Budget Before History Composition
+## Task 2: Add Agent Scope Classification And Reserve Retrieval Budget
 
 **Files:**
 - Modify: `api/llm.py`
@@ -139,14 +139,18 @@ git commit -m "Add PageIndex retrieval budget helpers"
 Append to `tests/test_chat_memory.py`:
 
 ```python
-def test_broad_retrieval_query_detector_matches_obvious_broad_questions():
-    assert llm._is_broad_retrieval_query("Give me an overview of MDPs")
-    assert llm._is_broad_retrieval_query("Compare policy iteration and value iteration")
-    assert llm._is_broad_retrieval_query("What are the limitations across these lectures?")
+def test_parse_retrieval_scope_accepts_agent_outputs():
+    assert llm._parse_retrieval_scope("broad") == "broad"
+    assert llm._parse_retrieval_scope('{"scope":"broad"}') == "broad"
+    assert llm._parse_retrieval_scope("This is specific.") == "specific"
 
 
-def test_broad_retrieval_query_detector_rejects_narrow_lookup():
-    assert not llm._is_broad_retrieval_query("What is the equation on page 7?")
+def test_retrieval_budget_uses_scope_to_choose_base_or_max_slice():
+    specific = llm._retrieval_budget_for_scope("gpt-4o-mini", "specific")
+    broad = llm._retrieval_budget_for_scope("gpt-4o-mini", "broad")
+
+    assert specific["active_tokens"] == specific["base_tokens"]
+    assert broad["active_tokens"] == broad["max_tokens"]
 
 
 def test_history_budget_subtracts_reserved_retrieval_tokens():
@@ -170,11 +174,11 @@ def test_history_budget_subtracts_reserved_retrieval_tokens():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pytest tests/test_chat_memory.py::test_history_budget_subtracts_reserved_retrieval_tokens -q`
+Run: `pytest tests/test_chat_memory.py::test_retrieval_budget_uses_scope_to_choose_base_or_max_slice -q`
 
-Expected: fails because `_history_budget` does not accept `reserved_retrieval_tokens`.
+Expected: fails because `_retrieval_budget_for_scope` does not exist.
 
-- [ ] **Step 3: Implement broad detection and retrieval reservation**
+- [ ] **Step 3: Implement scope parsing, scope budget selection, and retrieval reservation**
 
 Modify `_history_budget` in `api/llm.py`:
 
@@ -200,33 +204,50 @@ def _history_budget(
     return min(history_cap, available)
 ```
 
-Add broad-query detection near the retrieval budget helpers:
+Add scope parsing and scope-based budget selection near the retrieval budget helpers:
 
 ```python
-_BROAD_RETRIEVAL_TERMS = (
-    "overview",
-    "summarize",
-    "summary",
-    "compare",
-    "contrast",
-    "all",
-    "across",
-    "survey",
-    "how does",
-    "what are",
-    "explain",
-    "relationship",
-    "limitations",
-    "tradeoffs",
-    "trade-offs",
+def _parse_retrieval_scope(text: str) -> str:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return "specific"
+    parsed = _extract_json_object(normalized)
+    if isinstance(parsed, dict):
+        normalized = str(parsed.get("scope") or "").strip().lower()
+    if "broad" in normalized:
+        return "broad"
+    return "specific"
+
+
+def _retrieval_budget_for_scope(model: str, scope: str) -> dict:
+    return _retrieval_budget_for(model, expanded=_parse_retrieval_scope(scope) == "broad")
+```
+
+Add a small agent classifier helper. It should make a no-tool call with `temperature=0` where the provider supports temperature. It must return only `broad` or `specific`; malformed output falls back to `specific`.
+
+```python
+_RETRIEVAL_SCOPE_PROMPT = (
+    "Classify the user's course-material retrieval need as exactly one word: broad or specific.\n"
+    "Use broad for questions that likely need coverage across many sections, comparisons, surveys, "
+    "overviews, or cross-material synthesis.\n"
+    "Use specific for narrow lookups, single definitions, page-specific questions, or questions likely "
+    "answerable from a small number of pages.\n"
+    "Return JSON only: {\"scope\":\"broad\"} or {\"scope\":\"specific\"}."
 )
 
 
-def _is_broad_retrieval_query(user_message: str) -> bool:
-    text = (user_message or "").strip().lower()
-    if not text:
-        return False
-    return any(term in text for term in _BROAD_RETRIEVAL_TERMS)
+def _classify_retrieval_scope(provider: str, model: str, api_key: str, user_message: str) -> str:
+    prompt = f"{_RETRIEVAL_SCOPE_PROMPT}\n\nUser message:\n{user_message}"
+    try:
+        if provider == "claude":
+            raw = _synthesize_claude("", prompt, model, api_key)
+        elif provider == "gemini":
+            raw = _synthesize_gemini("", prompt, model, api_key)
+        else:
+            raw = _synthesize_openai("", prompt, model, api_key)
+    except Exception:
+        return "specific"
+    return _parse_retrieval_scope(raw)
 ```
 
 Update `_build_history_turns` signature and call into `_history_budget`:
@@ -256,13 +277,11 @@ def _build_history_turns(
     return _compose_history(prior, budget)
 ```
 
-In `run_agent_pageindex`, compute the retrieval budget before `_build_history_turns`:
+In `run_agent_pageindex`, classify scope and compute the retrieval budget before `_build_history_turns`:
 
 ```python
-retrieval_budget = _retrieval_budget_for(
-    model,
-    expanded=_is_broad_retrieval_query(user_message),
-)
+retrieval_scope = _classify_retrieval_scope(provider, model, api_key, user_message)
+retrieval_budget = _retrieval_budget_for_scope(model, retrieval_scope)
 ```
 
 Pass it into history composition:
@@ -289,7 +308,7 @@ Expected: all tests pass.
 
 ```bash
 git add api/llm.py tests/test_chat_memory.py
-git commit -m "Reserve PageIndex retrieval budget before history"
+git commit -m "Classify PageIndex retrieval scope before budgeting"
 ```
 
 ## Task 3: Normalize Model-Selected Candidate Frontiers
@@ -868,14 +887,7 @@ def _dispatch_candidate_frontier(conn, args: dict, budget: dict, grounding_refs:
     return result, meta
 ```
 
-Use the `retrieval_budget` computed before history composition:
-
-```python
-retrieval_budget = _retrieval_budget_for(
-    model,
-    expanded=_is_broad_retrieval_query(user_message),
-)
-```
+Use the existing `retrieval_budget` computed from the agent scope classification before history composition. Do not classify the query again inside provider-specific tool loops.
 
 For each provider branch, when a tool call name is `select_page_candidates`, call `_dispatch_candidate_frontier`, then append `raw_evidence` to `course_evidence` and `summary_evidence` to a new `summary_evidence` list.
 
