@@ -23,7 +23,7 @@ Support broad questions by letting the model select a larger candidate frontier 
 2. **Model-selected candidates:** the model chooses the candidate frontier and ranks it. The system does not rerank candidates by route score.
 3. **Budget-enforced materialization:** the system decides how much raw text and summary evidence can be admitted.
 4. **Mixed representation:** the top model-selected subset gets raw page text; the remaining selected candidates become compact summary evidence.
-5. **Token-based caps:** raw subset size is derived from retrieval budget and estimated page cost, not a fixed page count.
+5. **Index-time token accounting:** raw and summary admission use token counts computed by the document indexer, not an average page-cost estimate.
 6. **Output remains protected:** retrieval must not borrow from the output cap. If expansion needs room, it should first reduce replayed chat history within its existing cap.
 
 ## Existing Budget Slices
@@ -55,20 +55,13 @@ Clamp retrieval budgets to avoid extreme behavior:
 ```text
 MIN_RETRIEVAL_TOKENS = 4096
 MAX_RETRIEVAL_TOKENS = 48000
-MIN_RAW_PAGES = 2
-MAX_RAW_PAGES = 24
-ESTIMATED_PAGE_TOKENS = 900
-SUMMARY_TOKENS_PER_CANDIDATE = 180
 ```
 
-The raw top-N limit is:
+The raw/summary split is enforced with stored token counts:
 
 ```text
-top_n_raw_pages = clamp(
-  floor(raw_budget / ESTIMATED_PAGE_TOKENS),
-  MIN_RAW_PAGES,
-  MAX_RAW_PAGES
-)
+raw_candidates use material_page_text.token_count
+summary_candidates use IndexNode.token_count for the selected section span
 ```
 
 For broad questions, the active retrieval budget can expand from base to max. For narrow questions, use the base budget only.
@@ -101,6 +94,25 @@ scope == "specific" -> active_retrieval_budget = retrieval_base_budget
 ```
 
 If the classifier output is malformed or unavailable, default to `specific` so the system keeps the cheaper base slice. The model still chooses the candidate frontier after the budget is selected.
+
+## Index-Time Token Accounting
+
+Add a shared `TokenCounter` class in `lambda/index_materials` and call it from the index-building pipeline after each builder returns a `MaterialIndex`.
+
+The counter should provide one canonical heuristic for now:
+
+```text
+token_count = max(1, len(text) // 4)
+```
+
+This mirrors the backend estimator used in `api/llm.py` and avoids adding tokenizer dependencies. If a real tokenizer is added later, the `TokenCounter` class becomes the single indexer-side implementation to upgrade.
+
+Persist token counts in two places:
+
+- `material_page_text.token_count`: the estimated token count of each extracted raw page.
+- `material_page_index.index_json.nodes[*].token_count`: the estimated token count of each section/node span. Child nodes carry their own counts.
+
+The section token count is stored in `index_json` because sections are nested tree nodes, not table rows. The raw page token count belongs in `material_page_text` because materialization fetches raw pages from that table.
 
 ## Candidate Frontier Flow
 
@@ -139,8 +151,11 @@ The backend parses and normalizes the candidate list:
 
 Materialize selected candidates under the active retrieval budget:
 
-- First `top_n_raw_pages` selected pages get raw text via `get_page_content`.
-- Remaining selected pages become summary evidence from the routing tree section summaries.
+- Iterate normalized candidates in priority order: `core`, then `supporting`, then `background`, preserving model order within each priority.
+- Add raw page text while `running_raw_tokens + page.token_count <= raw_budget`.
+- If a candidate does not fit in the raw budget, leave it for summary evidence.
+- Continue scanning later candidates so shorter later pages can still use remaining raw budget.
+- Every normalized selected page that is not admitted as raw evidence becomes summary evidence unless doing so would exceed `summary_budget`, the page has no available section summary, or the candidate was dropped during validation.
 - If summary evidence exceeds `summary_budget`, keep candidates in model order until budget is exhausted and report the drop count in metadata.
 
 ### 4. Synthesis
