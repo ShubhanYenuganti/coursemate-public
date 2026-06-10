@@ -560,6 +560,42 @@ OUTPUT_CONTEXT_RATIO = 0.05
 MIN_OUTPUT_TOKENS = 2048
 MAX_OUTPUT_TOKENS = 8192
 
+RETRIEVAL_BASE_CONTEXT_RATIO = 0.12
+RETRIEVAL_MAX_CONTEXT_RATIO = 0.25
+RETRIEVAL_RAW_RATIO = 0.65
+MIN_RETRIEVAL_TOKENS = 4096
+MAX_RETRIEVAL_TOKENS = 48000
+SUMMARY_TOKENS_PER_CANDIDATE = 180
+
+
+def _clamp_int(value: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(maximum, value))
+
+
+def _retrieval_budget_for(model: str, expanded: bool = False) -> dict:
+    window = _context_window_for(model)
+    base_tokens = _clamp_int(
+        int(window * RETRIEVAL_BASE_CONTEXT_RATIO),
+        MIN_RETRIEVAL_TOKENS,
+        MAX_RETRIEVAL_TOKENS,
+    )
+    max_tokens = _clamp_int(
+        int(window * RETRIEVAL_MAX_CONTEXT_RATIO),
+        MIN_RETRIEVAL_TOKENS,
+        MAX_RETRIEVAL_TOKENS,
+    )
+    active_tokens = max_tokens if expanded else base_tokens
+    raw_tokens = int(active_tokens * RETRIEVAL_RAW_RATIO)
+    summary_tokens = max(0, active_tokens - raw_tokens)
+    return {
+        "window": window,
+        "base_tokens": base_tokens,
+        "max_tokens": max_tokens,
+        "active_tokens": active_tokens,
+        "raw_tokens": raw_tokens,
+        "summary_tokens": summary_tokens,
+    }
+
 
 def _history_budget(window: int, system_text: str, current_user_text: str) -> int:
     """Tokens left for replayed history after system prompt, response reserve,

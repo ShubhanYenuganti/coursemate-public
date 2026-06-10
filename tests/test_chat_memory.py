@@ -746,3 +746,28 @@ def test_openai_synthesis_retries_retrieval_preamble(monkeypatch):
 
     assert result[0] == "MDPs are decision models."
     assert result[3]["repair_invoked"] is True
+
+
+def test_retrieval_budget_for_128k_model_window():
+    budget = llm._retrieval_budget_for("gpt-4o-mini")
+
+    assert budget["window"] == 128000
+    assert budget["base_tokens"] == 15360
+    assert budget["max_tokens"] == 32000
+    assert budget["raw_tokens"] == 9984
+    assert budget["summary_tokens"] == 5376
+
+
+def test_retrieval_budget_clamps_large_model_window():
+    budget = llm._retrieval_budget_for("gpt-4.1")
+
+    assert budget["window"] == 1000000
+    assert budget["base_tokens"] == 48000
+    assert budget["max_tokens"] == 48000
+
+
+def test_retrieval_budget_can_expand_for_broad_questions():
+    budget = llm._retrieval_budget_for("gpt-4o-mini", expanded=True)
+
+    assert budget["base_tokens"] == 15360
+    assert budget["active_tokens"] == 32000
