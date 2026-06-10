@@ -689,6 +689,96 @@ def _normalize_page_candidates(candidates: list) -> tuple[list[dict], int]:
     return normalized, dropped
 
 
+def _get_page_content_for_materialization(conn, material_id: int, pages: str) -> list[dict]:
+    from pageindex_retrieval import get_page_content
+    return get_page_content(conn, material_id, pages)
+
+
+def _get_page_section_summaries_for_materialization(conn, material_ids: list[int]) -> dict:
+    from pageindex_retrieval import get_page_section_summaries
+    return get_page_section_summaries(conn, material_ids)
+
+
+def _format_raw_page_result(material_id: int, rows: list[dict]) -> str:
+    parts = []
+    for row in rows:
+        parts.append(
+            f"Material {material_id}, page {row['page_number']}\n"
+            f"{row.get('text_content') or '[No text extracted]'}"
+        )
+    return "\n\n".join(parts)
+
+
+def _candidate_priority_key(candidate: dict) -> tuple[int, int]:
+    priority_rank = {"core": 0, "supporting": 1, "background": 2}
+    return (priority_rank.get(candidate.get("priority"), 1), candidate.get("_order", 0))
+
+
+def _materialize_page_candidates(
+    conn, candidates: list[dict], budget: dict
+) -> tuple[list[str], list[str], dict]:
+    raw_evidence: list[str] = []
+    summary_evidence: list[str] = []
+    meta = {
+        "raw_pages": 0,
+        "raw_tokens": 0,
+        "raw_material_ids": [],
+        "summary_pages": 0,
+        "summary_tokens": 0,
+        "omitted_summary_pages": 0,
+    }
+    candidates_with_order = [
+        {**c, "_order": i} for i, c in enumerate(candidates or [])
+    ]
+    raw_budget = max(0, int(budget.get("raw_tokens") or 0))
+    summary_candidates: list[dict] = []
+    first = True
+
+    for candidate in sorted(candidates_with_order, key=_candidate_priority_key):
+        rows = _get_page_content_for_materialization(
+            conn, candidate["material_id"], str(candidate["page"])
+        )
+        row_tokens = sum(
+            int(row.get("token_count") or _estimate_tokens(row.get("text_content") or ""))
+            for row in rows
+        )
+        if rows and (first or meta["raw_tokens"] + row_tokens <= raw_budget):
+            raw_evidence.append(_format_raw_page_result(candidate["material_id"], rows))
+            meta["raw_pages"] += len(rows)
+            meta["raw_tokens"] += row_tokens
+            meta["raw_material_ids"].append(candidate["material_id"])
+        else:
+            summary_candidates.append(candidate)
+        first = False
+
+    material_ids = _dedupe_preserve_order([c["material_id"] for c in summary_candidates])
+    summaries_by_page = _get_page_section_summaries_for_materialization(conn, material_ids)
+    summary_budget = max(0, int(budget.get("summary_tokens") or 0))
+    running_tokens = 0
+
+    for candidate in summary_candidates:
+        section = summaries_by_page.get((candidate["material_id"], candidate["page"]))
+        if not section:
+            meta["omitted_summary_pages"] += 1
+            continue
+        line = (
+            f"Material {candidate['material_id']} ({section['title']}), "
+            f"page {candidate['page']}: {section['summary']}"
+        )
+        if candidate.get("reason"):
+            line += f"\nReason selected: {candidate['reason']}"
+        line_tokens = _estimate_tokens(line)
+        if running_tokens + line_tokens > summary_budget:
+            meta["omitted_summary_pages"] += 1
+            continue
+        summary_evidence.append(line)
+        running_tokens += line_tokens
+        meta["summary_pages"] += 1
+        meta["summary_tokens"] += line_tokens
+
+    return raw_evidence, summary_evidence, meta
+
+
 def _history_budget(
     window: int,
     system_text: str,

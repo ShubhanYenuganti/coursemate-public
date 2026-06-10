@@ -883,3 +883,77 @@ def test_get_page_section_summaries_returns_matching_sections():
     assert summaries[(742, 4)]["summary"] == "MDP setup"
     assert summaries[(742, 4)]["token_count"] == 600
     assert summaries[(742, 6)]["title"] == "Lecture 4"
+
+
+def test_materialize_page_candidates_splits_raw_and_summary(monkeypatch):
+    candidates = [
+        {"material_id": 742, "page": 1, "reason": "definition", "priority": "core"},
+        {"material_id": 742, "page": 2, "reason": "setup", "priority": "supporting"},
+        {"material_id": 742, "page": 3, "reason": "example", "priority": "supporting"},
+    ]
+    budget = {
+        "raw_tokens": 160,
+        "summary_tokens": 500,
+    }
+
+    def fake_get_page_content(conn, material_id, pages):
+        token_counts = {1: 100, 2: 80, 3: 40}
+        page = int(pages)
+        return [{"page_number": page, "text_content": f"raw page {pages}", "has_images": False, "token_count": token_counts[page]}]
+
+    def fake_get_page_section_summaries(conn, material_ids):
+        return {
+            (742, 2): {
+                "material_id": 742,
+                "title": "Lecture",
+                "page": 2,
+                "start_page": 2,
+                "end_page": 2,
+                "summary": "summary page 2",
+                "token_count": 80,
+            }
+        }
+
+    monkeypatch.setattr(llm, "_get_page_content_for_materialization", fake_get_page_content)
+    monkeypatch.setattr(llm, "_get_page_section_summaries_for_materialization", fake_get_page_section_summaries)
+
+    raw, summaries, meta = llm._materialize_page_candidates(object(), candidates, budget)
+
+    assert len(raw) == 2
+    assert "raw page 1" in raw[0]
+    assert "raw page 3" in raw[1]
+    assert summaries == [
+        "Material 742 (Lecture), page 2: summary page 2\nReason selected: setup"
+    ]
+    assert meta["raw_pages"] == 2
+    assert meta["raw_tokens"] == 140
+    assert meta["summary_pages"] == 1
+
+
+def test_materialize_page_candidates_tracks_summary_omissions(monkeypatch):
+    candidates = [
+        {"material_id": 742, "page": 1, "reason": "", "priority": "core"},
+        {"material_id": 742, "page": 2, "reason": "", "priority": "supporting"},
+        {"material_id": 742, "page": 3, "reason": "", "priority": "supporting"},
+    ]
+    budget = {"raw_tokens": 1, "summary_tokens": 1}
+
+    monkeypatch.setattr(
+        llm,
+        "_get_page_content_for_materialization",
+        lambda conn, material_id, pages: [{"page_number": int(pages), "text_content": "raw", "has_images": False, "token_count": 50}],
+    )
+    monkeypatch.setattr(
+        llm,
+        "_get_page_section_summaries_for_materialization",
+        lambda conn, material_ids: {
+            (742, 2): {"material_id": 742, "title": "Lecture", "page": 2, "start_page": 2, "end_page": 2, "summary": "summary two"},
+            (742, 3): {"material_id": 742, "title": "Lecture", "page": 3, "start_page": 3, "end_page": 3, "summary": "summary three"},
+        },
+    )
+
+    raw, summaries, meta = llm._materialize_page_candidates(object(), candidates, budget)
+
+    assert len(raw) == 1
+    assert summaries == []
+    assert meta["omitted_summary_pages"] == 2
