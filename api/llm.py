@@ -243,6 +243,12 @@ _PAGEINDEX_SYNTHESIS_INSTRUCTION = (
     "the future. If the provided evidence is insufficient, say what is missing clearly."
 )
 
+_CONVERSATION_HISTORY_NOTICE = (
+    "\n\n**Conversation history**: Prior turns, if any, are included as messages before "
+    "the current user message. Use them for follow-ups, references, corrections, and "
+    "pronouns. Respond only to the most recent user message."
+)
+
 
 _SUMMARY_MAX_LEN = 200
 
@@ -1171,7 +1177,12 @@ def _build_pageindex_synthesis_system_context(
     *,
     clarification_depth: int,
 ) -> str:
-    system_content = _SYSTEM_PROMPT_BASE + _JSON_SYNTHESIS_INSTRUCTION + _PAGEINDEX_SYNTHESIS_INSTRUCTION
+    system_content = (
+        _SYSTEM_PROMPT_BASE
+        + _JSON_SYNTHESIS_INSTRUCTION
+        + _PAGEINDEX_SYNTHESIS_INSTRUCTION
+        + _CONVERSATION_HISTORY_NOTICE
+    )
     if evidence_text.strip():
         system_content += "\n\nEvidence:\n" + evidence_text.strip()
     else:
@@ -1859,12 +1870,7 @@ def run_agent_pageindex(
         clarification_depth=clarification_depth,
     )
 
-    history_notice = (
-        "\n\n**Conversation history**: The messages that follow (before the current user "
-        "message) are prior turns from this conversation, provided for context. "
-        "Respond only to the most recent user message."
-    )
-    history_system_content = system_content + history_notice
+    history_system_content = system_content + _CONVERSATION_HISTORY_NOTICE
 
     _history_turns = _build_history_turns(
         conn=conn,
@@ -1875,8 +1881,7 @@ def run_agent_pageindex(
         current_user_text=user_message,
     )
 
-    if _history_turns:
-        system_content = history_system_content
+    system_content = history_system_content
 
     # Attached images travel with the first user turn. Each provider has its own
     # multimodal content shape (mirrors _synthesize_claude/openai/gemini). Prior

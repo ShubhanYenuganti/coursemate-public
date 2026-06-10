@@ -195,7 +195,8 @@ def test_run_agent_gpt5_synthesis_preserves_history_and_current_turn(monkeypatch
     calls = []
 
     def fake_stream(api_key, model, msgs, tools, on_event):
-        calls.append({"model": model, "msgs": msgs, "tools": tools})
+        import copy
+        calls.append({"model": model, "msgs": copy.deepcopy(msgs), "tools": tools})
         if tools:
             return (
                 {
@@ -232,6 +233,15 @@ def test_run_agent_gpt5_synthesis_preserves_history_and_current_turn(monkeypatch
             history_before_index=9,
         )
 
+    retrieval_msgs = calls[0]["msgs"]
+    retrieval_contents = [
+        m.get("content")
+        for m in retrieval_msgs
+        if m.get("role") in ("user", "assistant")
+    ]
+    assert retrieval_contents == ["earlier question", "earlier answer", "current follow-up"]
+    assert "Conversation history" in retrieval_msgs[0]["content"]
+
     synthesis_msgs = calls[-1]["msgs"]
     contents = [
         m.get("content")
@@ -239,6 +249,7 @@ def test_run_agent_gpt5_synthesis_preserves_history_and_current_turn(monkeypatch
         if m.get("role") in ("user", "assistant")
     ]
     assert contents == ["earlier question", "earlier answer", "current follow-up"]
+    assert "Conversation history" in synthesis_msgs[0]["content"]
     assert "retrieved page content" in synthesis_msgs[0]["content"]
     assert "Retrieval is complete" in synthesis_msgs[0]["content"]
     assert "Use the material IDs above when calling" not in synthesis_msgs[0]["content"]
