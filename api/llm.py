@@ -235,6 +235,14 @@ _PAGEINDEX_TOOL_USE = (
 # JSON final-answer schema.
 PAGEINDEX_SYSTEM_PROMPT = _SYSTEM_PROMPT_BASE + _PAGEINDEX_TOOL_USE + _AGENTIC_JSON_FINAL_INSTRUCTION
 
+_PAGEINDEX_SYNTHESIS_INSTRUCTION = (
+    "\n\n**Final synthesis mode**: Retrieval is complete. The retrieved course material "
+    "and web results, if any, are provided below as evidence. Answer the current user "
+    "message directly from that evidence and the conversation history. Do not say you "
+    "will fetch, search, inspect, retrieve, call tools, or look at course materials in "
+    "the future. If the provided evidence is insufficient, say what is missing clearly."
+)
+
 
 _SUMMARY_MAX_LEN = 200
 
@@ -1132,6 +1140,50 @@ def _format_routing_index_block(materials: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _build_pageindex_retrieval_system_context(
+    routing_block: str,
+    *,
+    web_search_enabled: bool,
+    clarification_depth: int,
+) -> str:
+    system_content = (
+        PAGEINDEX_SYSTEM_PROMPT
+        + "\n\n"
+        + routing_block
+        + "\n\nUse the material IDs above when calling get_material_structure or get_page_content."
+    )
+    if web_search_enabled:
+        system_content += (
+            "\n\n**Web search**: `web_search` is also available. Use it when the question "
+            "asks about something not covered in the course materials — such as current software "
+            "versions, external libraries, or real-world information. Call it with a specific query."
+        )
+    if clarification_depth >= 2:
+        system_content += (
+            "\n\n**Do not ask any further clarifying questions.** Answer the user's question "
+            "directly and completely using the available materials."
+        )
+    return system_content
+
+
+def _build_pageindex_synthesis_system_context(
+    evidence_text: str,
+    *,
+    clarification_depth: int,
+) -> str:
+    system_content = _SYSTEM_PROMPT_BASE + _JSON_SYNTHESIS_INSTRUCTION + _PAGEINDEX_SYNTHESIS_INSTRUCTION
+    if evidence_text.strip():
+        system_content += "\n\nEvidence:\n" + evidence_text.strip()
+    else:
+        system_content += "\n\nEvidence:\nNo retrieved course material or web results were provided."
+    if clarification_depth >= 2:
+        system_content += (
+            "\n\n**Do not ask any further clarifying questions.** Answer the user's question "
+            "directly and completely using the available materials."
+        )
+    return system_content
+
+
 
 class _ReplyStreamFilter:
     """Strip <REPLY>…</REPLY><META>…</META> wrapper from a streamed response.
@@ -1801,24 +1853,11 @@ def run_agent_pageindex(
         conn, course_id, context_material_ids or None
     )
     routing_block = _format_routing_index_block(routing_materials)
-    system_content = (
-        PAGEINDEX_SYSTEM_PROMPT
-        + "\n\n"
-        + routing_block
-        + "\n\nUse the material IDs above when calling get_material_structure or get_page_content."
+    system_content = _build_pageindex_retrieval_system_context(
+        routing_block,
+        web_search_enabled=web_search_enabled,
+        clarification_depth=clarification_depth,
     )
-    if web_search_enabled:
-        system_content += (
-            "\n\n**Web search**: `web_search` is also available. Use it when the question "
-            "asks about something not covered in the course materials — such as current software "
-            "versions, external libraries, or real-world information. Call it with a specific query."
-        )
-
-    if clarification_depth >= 2:
-        system_content += (
-            "\n\n**Do not ask any further clarifying questions.** Answer the user's question "
-            "directly and completely using the available materials."
-        )
 
     history_notice = (
         "\n\n**Conversation history**: The messages that follow (before the current user "
@@ -2234,14 +2273,13 @@ def run_agent_pageindex(
                 "\n\nWeb search results — use these to answer questions not covered by course materials:\n"
                 + "\n\n---\n\n".join(str(c) for c in web_contents)
             )
-        if extra:
-            synthesis_msgs = [
-                {"role": "system", "content": system_content + extra},
-            ] + openai_history_messages + [current_user_message]
-        else:
-            synthesis_msgs = [
-                {"role": "system", "content": system_content},
-            ] + openai_history_messages + [current_user_message]
+        synthesis_system_content = _build_pageindex_synthesis_system_context(
+            extra,
+            clarification_depth=clarification_depth,
+        )
+        synthesis_msgs = [
+            {"role": "system", "content": synthesis_system_content},
+        ] + openai_history_messages + [current_user_message]
         synthesis_message, _ = _synthesis_call(synthesis_msgs)
     else:
         synthesis_message, _ = _synthesis_call(messages)

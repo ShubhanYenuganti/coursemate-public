@@ -240,3 +240,6 @@ def test_run_agent_gpt5_synthesis_preserves_history_and_current_turn(monkeypatch
     ]
     assert contents == ["earlier question", "earlier answer", "current follow-up"]
     assert "retrieved page content" in synthesis_msgs[0]["content"]
+    assert "Retrieval is complete" in synthesis_msgs[0]["content"]
+    assert "Use the material IDs above when calling" not in synthesis_msgs[0]["content"]
+    assert "get_page_content" not in synthesis_msgs[0]["content"]
