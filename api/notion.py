@@ -440,6 +440,9 @@ def _canonical_notion_id(item: dict) -> str:
     always the 32-hex-char suffix of the item's `url` field.
     Falls back to `item["id"]` if the URL is absent or unparseable.
     """
+    if item.get("object") == "data_source":
+        return item.get("id")
+
     url = item.get("url", "")
     m = re.search(r"([0-9a-f]{32})(?:[?#]|$)", url)
     if m:
@@ -697,60 +700,59 @@ def _dispatch_export(
         }
 
 
-def _create_page_in_database(database_id: str, name: str, token: str, user_id: int):
-    """Create a new page in a Notion database. Returns (page_id, page_url, error)."""
-    db_data, db_err, _ = _notion_api(
-        "GET", f"/databases/{database_id}", token, user_id=user_id
+def _title_property_from_data_source(data_source: dict | None) -> str | None:
+    if not data_source:
+        return None
+    return next(
+        (
+            k
+            for k, v in (data_source.get("properties") or {}).items()
+            if isinstance(v, dict) and v.get("type") == "title"
+        ),
+        None,
     )
-    if db_err == "notion_token_revoked":
+
+
+def _create_page_in_database(database_id: str, name: str, token: str, user_id: int):
+    """Create a new page in a Notion data source or database target."""
+    target_id = database_id
+    ds_data, ds_err, _ = _notion_api(
+        "GET", f"/data_sources/{target_id}", token, user_id=user_id
+    )
+    if ds_err == "notion_token_revoked":
         return None, None, "notion_token_revoked"
-    if db_err or not db_data:
-        return None, None, db_err or "Failed to fetch database"
 
-    ds_id = None
-    ds_items = db_data.get("data_sources") or []
-    if ds_items:
-        ds_id = (ds_items[0] or {}).get("id")
+    ds_id = target_id if not ds_err and ds_data else None
+    title_prop = _title_property_from_data_source(ds_data)
 
-    title_prop = None
-    if ds_id:
+    if not ds_id:
+        db_data, db_err, _ = _notion_api(
+            "GET", f"/databases/{target_id}", token, user_id=user_id
+        )
+        if db_err == "notion_token_revoked":
+            return None, None, "notion_token_revoked"
+        if db_err or not db_data:
+            return None, None, db_err or "Failed to fetch data source or database"
+
+        ds_items = db_data.get("data_sources") or []
+        ds_id = (ds_items[0] or {}).get("id") if ds_items else None
+        if not ds_id:
+            return None, None, "Database has no data sources"
+
         ds_data, ds_err, _ = _notion_api(
             "GET", f"/data_sources/{ds_id}", token, user_id=user_id
         )
         if ds_err == "notion_token_revoked":
             return None, None, "notion_token_revoked"
-        if not ds_err and ds_data:
-            title_prop = next(
-                (
-                    k
-                    for k, v in (ds_data.get("properties") or {}).items()
-                    if v.get("type") == "title"
-                ),
-                None,
-            )
-
-    # Legacy fallback for workspaces/databases without data_sources
-    if not title_prop:
-        title_prop = next(
-            (
-                k
-                for k, v in (db_data.get("properties") or {}).items()
-                if v.get("type") == "title"
-            ),
-            None,
-        )
+        if ds_err or not ds_data:
+            return None, None, ds_err or "Failed to fetch data source"
+        title_prop = _title_property_from_data_source(ds_data)
 
     if not title_prop:
-        return None, None, "Database has no title property"
-
-    parent = (
-        {"type": "data_source_id", "data_source_id": ds_id}
-        if ds_id
-        else {"database_id": database_id}
-    )
+        return None, None, "Data source has no title property"
 
     payload = {
-        "parent": parent,
+        "parent": {"type": "data_source_id", "data_source_id": ds_id},
         "properties": {
             title_prop: {
                 "title": [{"type": "text", "text": {"content": name or "Untitled"}}]
@@ -1038,10 +1040,12 @@ def _handle_create_target(handler_self, user_id: int, body: dict):
         payload = {
             "parent": {"page_id": parent_id},
             "title": [{"type": "text", "text": {"content": title}}],
-            "properties": {
-                "Front": {"title": {}},
-                "Back": {"rich_text": {}},
-                "Hint": {"rich_text": {}},
+            "initial_data_source": {
+                "properties": {
+                    "Front": {"title": {}},
+                    "Back": {"rich_text": {}},
+                    "Hint": {"rich_text": {}},
+                }
             },
         }
         data, err, err_detail = _notion_api(
