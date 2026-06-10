@@ -1820,21 +1820,24 @@ def run_agent_pageindex(
             "directly and completely using the available materials."
         )
 
+    history_notice = (
+        "\n\n**Conversation history**: The messages that follow (before the current user "
+        "message) are prior turns from this conversation, provided for context. "
+        "Respond only to the most recent user message."
+    )
+    history_system_content = system_content + history_notice
+
     _history_turns = _build_history_turns(
         conn=conn,
         chat_id=chat_id,
         before_index=history_before_index,
         model=model,
-        system_text=system_content,
+        system_text=history_system_content,
         current_user_text=user_message,
     )
 
     if _history_turns:
-        system_content += (
-            "\n\n**Conversation history**: The messages that follow (before the current user "
-            "message) are prior turns from this conversation, provided for context. "
-            "Respond only to the most recent user message."
-        )
+        system_content = history_system_content
 
     # Attached images travel with the first user turn. Each provider has its own
     # multimodal content shape (mirrors _synthesize_claude/openai/gemini). Prior
@@ -1854,10 +1857,12 @@ def run_agent_pageindex(
     else:
         openai_user_content = user_message
 
+    current_user_message = {"role": "user", "content": openai_user_content}
+    openai_history_messages = _shape_history_openai(_history_turns)
     messages = (
         [{"role": "system", "content": system_content}]
-        + _shape_history_openai(_history_turns)
-        + [{"role": "user", "content": openai_user_content}]
+        + openai_history_messages
+        + [current_user_message]
     )
     grounding_refs: list = []
     tool_trace: list = []
@@ -2232,10 +2237,11 @@ def run_agent_pageindex(
         if extra:
             synthesis_msgs = [
                 {"role": "system", "content": system_content + extra},
-                messages[1],  # original user message (preserves image content if any)
-            ]
+            ] + openai_history_messages + [current_user_message]
         else:
-            synthesis_msgs = messages[:2]
+            synthesis_msgs = [
+                {"role": "system", "content": system_content},
+            ] + openai_history_messages + [current_user_message]
         synthesis_message, _ = _synthesis_call(synthesis_msgs)
     else:
         synthesis_message, _ = _synthesis_call(messages)

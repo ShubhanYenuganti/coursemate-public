@@ -175,3 +175,68 @@ def test_run_agent_seeds_openai_history(monkeypatch):
     assert "earlier answer" in contents
     # Current user turn is last.
     assert captured["msgs"][-1]["content"] == "current question"
+
+
+def test_run_agent_gpt5_synthesis_preserves_history_and_current_turn(monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.setattr(llm, "_fetch_images_as_base64", lambda keys: [])
+    monkeypatch.setattr(llm, "_recall_prior_chat_images", lambda *a, **k: [])
+    monkeypatch.setattr(llm, "_load_chat_history", lambda c, cid, bi: [
+        {"role": "user", "content": "earlier question"},
+        {"role": "assistant", "content": "earlier answer"},
+    ])
+    monkeypatch.setattr(
+        llm,
+        "_dispatch_pageindex_tool",
+        lambda **kwargs: ("retrieved page content", {}),
+    )
+
+    calls = []
+
+    def fake_stream(api_key, model, msgs, tools, on_event):
+        calls.append({"model": model, "msgs": msgs, "tools": tools})
+        if tools:
+            return (
+                {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "get_page_content",
+                                "arguments": '{"material_id": 10, "pages": "1"}',
+                            },
+                        }
+                    ],
+                },
+                "tool_calls",
+            )
+        return ({"content": "Final answer.", "tool_calls": None}, "stop")
+
+    monkeypatch.setattr(llm, "_pageindex_stream_call", fake_stream)
+
+    pageindex_mock = MagicMock()
+    pageindex_mock.get_course_routing_index.return_value = []
+    with patch.dict(sys.modules, {"pageindex_retrieval": pageindex_mock}):
+        llm.run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="current follow-up",
+            model="gpt-5-mini",
+            api_key="sk-test",
+            chat_id=1,
+            course_id=2,
+            context_material_ids=[],
+            provider="openai",
+            history_before_index=9,
+        )
+
+    synthesis_msgs = calls[-1]["msgs"]
+    contents = [
+        m.get("content")
+        for m in synthesis_msgs
+        if m.get("role") in ("user", "assistant")
+    ]
+    assert contents == ["earlier question", "earlier answer", "current follow-up"]
+    assert "retrieved page content" in synthesis_msgs[0]["content"]

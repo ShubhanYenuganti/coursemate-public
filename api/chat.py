@@ -1465,6 +1465,7 @@ class handler(BaseHTTPRequestHandler):
                     on_event=on_event,
                     image_s3_keys=list(final_keys),
                     web_search_enabled=web_search_enabled,
+                    history_before_index=msg['message_index'],
                 )
                 logger.info(
                     "chat_synthesize_done",
@@ -2150,6 +2151,7 @@ class handler(BaseHTTPRequestHandler):
                     chat_id=msg['chat_id'],
                     context_material_ids=context_material_ids,
                     on_event=on_event,
+                    history_before_index=user_msg['message_index'],
                 )
                 logger.info(
                     "chat_synthesize_done",
