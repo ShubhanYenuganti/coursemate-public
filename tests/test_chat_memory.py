@@ -838,3 +838,48 @@ def test_normalize_page_candidates_drops_malformed_candidates():
     assert normalized == [
         {"material_id": 742, "page": 3, "reason": "", "priority": "supporting"},
     ]
+
+
+class _FakeCursor:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def execute(self, query, params):
+        pass
+
+    def fetchall(self):
+        return self.rows
+
+    def close(self):
+        pass
+
+
+class _FakeConn:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def cursor(self):
+        return _FakeCursor(self._rows)
+
+
+def test_get_page_section_summaries_returns_matching_sections():
+    from pageindex_retrieval import get_page_section_summaries
+
+    conn = _FakeConn(
+        [
+            {
+                "material_id": 742,
+                "material_title": "Lecture 4",
+                "nodes": [
+                    {"start_page": 1, "end_page": 3, "summary": "Intro", "token_count": 300},
+                    {"start_page": 4, "end_page": 6, "summary": "MDP setup", "token_count": 600},
+                ],
+            }
+        ]
+    )
+
+    summaries = get_page_section_summaries(conn, [742])
+
+    assert summaries[(742, 4)]["summary"] == "MDP setup"
+    assert summaries[(742, 4)]["token_count"] == 600
+    assert summaries[(742, 6)]["title"] == "Lecture 4"

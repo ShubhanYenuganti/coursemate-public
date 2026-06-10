@@ -58,7 +58,10 @@ def test_get_course_routing_index_formats_output():
     assert len(results) == 1
     assert results[0]["title"] == "Lecture 5"
     assert results[0]["doc_type"] == "lecture_slide"
-    assert results[0]["sections"] == [{"start_page": 1, "end_page": 2, "summary": "Chain rule"}]
+    section = results[0]["sections"][0]
+    assert section["start_page"] == 1
+    assert section["end_page"] == 2
+    assert section["summary"] == "Chain rule"
 
 
 def test_get_material_relations_returns_formatted_list():
