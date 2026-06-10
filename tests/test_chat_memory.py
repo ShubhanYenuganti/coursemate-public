@@ -63,6 +63,13 @@ def test_output_token_cap_uses_bounded_context_ratio():
     assert llm._output_token_cap("gemini-2.5-pro") == llm.MAX_OUTPUT_TOKENS
 
 
+def test_openai_reasoning_models_use_responses_api():
+    for model in ("gpt-5-mini", "o1", "o1-pro", "o3", "o3-mini", "o4-mini", "gpt-oss-120b"):
+        assert llm._openai_should_use_responses_api(model) is True
+    for model in ("gpt-4o", "gpt-4o-mini", "gpt-4.1"):
+        assert llm._openai_should_use_responses_api(model) is False
+
+
 def test_responses_api_sets_model_output_cap(monkeypatch):
     captured = {}
     response = MagicMock()

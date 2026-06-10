@@ -1012,7 +1012,7 @@ def _synthesize_claude(context: str, user_message: str, model: str, api_key: str
 
 def _openai_should_use_responses_api(model: str | None) -> bool:
     model_id = (model or "").strip().lower()
-    return model_id.startswith("gpt-5")
+    return model_id.startswith(("gpt-5", "o1", "o3", "o4", "gpt-oss"))
 
 
 def _openai_chat_supports_temperature(model: str | None) -> bool:
