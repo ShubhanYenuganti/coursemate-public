@@ -637,6 +637,58 @@ def _classify_retrieval_scope(provider: str, model: str, api_key: str, user_mess
     return _parse_retrieval_scope(raw)
 
 
+def _parse_page_spec(pages: str) -> list[int]:
+    page_numbers: list[int] = []
+    for part in str(pages or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        range_match = re.match(r"^(\d+)-(\d+)$", part)
+        if range_match:
+            start = int(range_match.group(1))
+            end = int(range_match.group(2))
+            if start > end:
+                continue
+            page_numbers.extend(range(start, end + 1))
+        elif re.match(r"^\d+$", part):
+            page_numbers.append(int(part))
+    return [p for p in page_numbers if p > 0]
+
+
+def _normalize_page_candidates(candidates: list) -> tuple[list[dict], int]:
+    normalized: list[dict] = []
+    seen: set[tuple[int, int]] = set()
+    dropped = 0
+    for candidate in candidates or []:
+        try:
+            material_id = int(candidate.get("material_id"))
+        except (TypeError, ValueError):
+            dropped += 1
+            continue
+        pages = _parse_page_spec(candidate.get("pages", ""))
+        if not pages:
+            dropped += 1
+            continue
+        reason = str(candidate.get("reason") or "").strip()
+        priority = str(candidate.get("priority") or "supporting").strip().lower()
+        if priority not in {"core", "supporting", "background"}:
+            priority = "supporting"
+        for page in pages:
+            key = (material_id, page)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(
+                {
+                    "material_id": material_id,
+                    "page": page,
+                    "reason": reason,
+                    "priority": priority,
+                }
+            )
+    return normalized, dropped
+
+
 def _history_budget(
     window: int,
     system_text: str,

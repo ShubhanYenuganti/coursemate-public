@@ -804,3 +804,37 @@ def test_history_budget_subtracts_reserved_retrieval_tokens():
         - 1000
     )
     assert budget == min(int(10000 * llm.HISTORY_CONTEXT_RATIO), expected_without_history_cap)
+
+
+def test_normalize_page_candidates_expands_and_dedupes_pages():
+    candidates = [
+        {"material_id": 742, "pages": "6-8", "reason": "definition", "priority": "core"},
+        {"material_id": 742, "pages": "8,9", "reason": "continuation", "priority": "supporting"},
+        {"material_id": 743, "pages": "2", "reason": "example", "priority": "background"},
+    ]
+
+    normalized, dropped = llm._normalize_page_candidates(candidates)
+
+    assert dropped == 0
+    assert normalized == [
+        {"material_id": 742, "page": 6, "reason": "definition", "priority": "core"},
+        {"material_id": 742, "page": 7, "reason": "definition", "priority": "core"},
+        {"material_id": 742, "page": 8, "reason": "definition", "priority": "core"},
+        {"material_id": 742, "page": 9, "reason": "continuation", "priority": "supporting"},
+        {"material_id": 743, "page": 2, "reason": "example", "priority": "background"},
+    ]
+
+
+def test_normalize_page_candidates_drops_malformed_candidates():
+    candidates = [
+        {"material_id": "bad", "pages": "1"},
+        {"material_id": 742, "pages": "x-y"},
+        {"material_id": 742, "pages": "3"},
+    ]
+
+    normalized, dropped = llm._normalize_page_candidates(candidates)
+
+    assert dropped == 2
+    assert normalized == [
+        {"material_id": 742, "page": 3, "reason": "", "priority": "supporting"},
+    ]
