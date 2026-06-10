@@ -703,3 +703,46 @@ def test_gemini_propose_generation_returns_non_empty_message(monkeypatch):
         )
 
     assert result[0] == llm.GENERATION_PROPOSAL_READY_MESSAGE
+
+
+def test_openai_synthesis_retries_retrieval_preamble(monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.setattr(llm, "_fetch_images_as_base64", lambda keys: [])
+    monkeypatch.setattr(llm, "_recall_prior_chat_images", lambda *a, **k: [])
+    monkeypatch.setattr(llm, "_dispatch_pageindex_tool", lambda **kwargs: ("retrieved page content", {}))
+    final_calls = 0
+
+    def fake_stream(api_key, model, msgs, tools, on_event):
+        nonlocal final_calls
+        if tools:
+            return ({
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "get_page_content", "arguments": '{"material_id": 10, "pages": "1"}'},
+                }],
+            }, "tool_calls")
+        final_calls += 1
+        if final_calls == 1:
+            return ({"content": "I'll fetch the relevant pages and summarize them.", "tool_calls": None}, "stop")
+        return ({"content": "MDPs are decision models.", "tool_calls": None}, "stop")
+
+    monkeypatch.setattr(llm, "_pageindex_stream_call", fake_stream)
+    pageindex_mock = MagicMock()
+    pageindex_mock.get_course_routing_index.return_value = []
+    with patch.dict(sys.modules, {"pageindex_retrieval": pageindex_mock}):
+        result = llm.run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="What are MDPs?",
+            model="gpt-4o-mini",
+            api_key="sk-test",
+            chat_id=1,
+            course_id=2,
+            context_material_ids=[],
+            provider="openai",
+        )
+
+    assert result[0] == "MDPs are decision models."
+    assert result[3]["repair_invoked"] is True

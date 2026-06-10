@@ -1197,6 +1197,7 @@ def _build_pageindex_synthesis_system_context(
     evidence_text: str,
     *,
     clarification_depth: int,
+    strict: bool = False,
 ) -> str:
     system_content = (
         _SYSTEM_PROMPT_BASE
@@ -1212,6 +1213,12 @@ def _build_pageindex_synthesis_system_context(
         system_content += (
             "\n\n**Do not ask any further clarifying questions.** Answer the user's question "
             "directly and completely using the available materials."
+        )
+    if strict:
+        system_content += (
+            "\n\n**Strict final answer retry**: Your previous response described future "
+            "retrieval instead of answering. Do not mention fetching, searching, inspecting, "
+            "retrieving, or calling tools. Answer immediately from the evidence already provided."
         )
     return system_content
 
@@ -1229,6 +1236,27 @@ def _format_pageindex_evidence(course_contents: list, web_contents: list) -> str
             + "\n\n---\n\n".join(str(c) for c in web_contents)
         )
     return "\n\n".join(parts)
+
+
+def _looks_like_retrieval_preamble(text: str) -> bool:
+    prefix = (text or "").strip().lower()
+    patterns = (
+        "i'll fetch",
+        "i will fetch",
+        "i'm going to fetch",
+        "i am going to fetch",
+        "let me fetch",
+        "i'll retrieve",
+        "i will retrieve",
+        "let me retrieve",
+        "i'll inspect",
+        "i will inspect",
+        "let me inspect",
+        "i'll search",
+        "i will search",
+        "let me search",
+    )
+    return any(prefix.startswith(p) for p in patterns)
 
 
 
@@ -1955,6 +1983,7 @@ def run_agent_pageindex(
     assistant_follow_ups: list = []
     assistant_clarifying_question = None
     assistant_reply_summary = None
+    repair_invoked = False
     course_evidence: list[str] = []
     web_evidence: list[str] = []
 
@@ -2087,6 +2116,26 @@ def run_agent_pageindex(
                 assistant_clarifying_question,
             ) = _parse_synthesis_json(raw_final)
             final_text = reply_body if (reply_body or "").strip() else raw_final
+            if _looks_like_retrieval_preamble(final_text):
+                repair_invoked = True
+                strict_system_content = _build_pageindex_synthesis_system_context(
+                    _format_pageindex_evidence(course_evidence, web_evidence),
+                    clarification_depth=clarification_depth,
+                    strict=True,
+                )
+                blocks, _ = _pageindex_stream_call_claude(
+                    api_key, model, strict_system_content, synthesis_messages, [], evt_cb
+                )
+                flush()
+                full_text = "".join(b["text"] for b in blocks if b["type"] == "text")
+                raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+                (
+                    reply_body,
+                    assistant_reply_summary,
+                    assistant_follow_ups,
+                    assistant_clarifying_question,
+                ) = _parse_synthesis_json(raw_final)
+                final_text = reply_body if (reply_body or "").strip() else raw_final
             tool_trace.append({"phase": "synthesis"})
 
         if not final_text and not proposal_emitted:
@@ -2099,7 +2148,7 @@ def run_agent_pageindex(
             {
                 "intent_type": "pageindex",
                 "verifier_passed": True,
-                "repair_invoked": False,
+                "repair_invoked": repair_invoked,
                 "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
                 "history_turn_count": len(_history_turns),
             },
@@ -2193,6 +2242,26 @@ def run_agent_pageindex(
                 assistant_clarifying_question,
             ) = _parse_synthesis_json(raw_final)
             final_text = reply_body if (reply_body or "").strip() else raw_final
+            if _looks_like_retrieval_preamble(final_text):
+                repair_invoked = True
+                strict_system_content = _build_pageindex_synthesis_system_context(
+                    _format_pageindex_evidence(course_evidence, web_evidence),
+                    clarification_depth=clarification_depth,
+                    strict=True,
+                )
+                parts, _ = _pageindex_stream_call_gemini(
+                    api_key, model, strict_system_content, synthesis_contents, [], evt_cb
+                )
+                flush()
+                full_text = "".join(p.get("text", "") for p in parts if "text" in p)
+                raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+                (
+                    reply_body,
+                    assistant_reply_summary,
+                    assistant_follow_ups,
+                    assistant_clarifying_question,
+                ) = _parse_synthesis_json(raw_final)
+                final_text = reply_body if (reply_body or "").strip() else raw_final
             tool_trace.append({"phase": "synthesis"})
 
         if not final_text and not proposal_emitted:
@@ -2205,7 +2274,7 @@ def run_agent_pageindex(
             {
                 "intent_type": "pageindex",
                 "verifier_passed": True,
-                "repair_invoked": False,
+                "repair_invoked": repair_invoked,
                 "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
                 "history_turn_count": len(_history_turns),
             },
@@ -2296,7 +2365,7 @@ def run_agent_pageindex(
             {
                 "intent_type": "pageindex",
                 "verifier_passed": True,
-                "repair_invoked": False,
+                "repair_invoked": repair_invoked,
                 "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
                 "history_turn_count": len(_history_turns),
             },
@@ -2325,6 +2394,28 @@ def run_agent_pageindex(
         assistant_clarifying_question,
     ) = _parse_synthesis_json(raw_final)
     final_text = reply_body if (reply_body or "").strip() else raw_final
+    if _looks_like_retrieval_preamble(final_text):
+        repair_invoked = True
+        strict_system_content = _build_pageindex_synthesis_system_context(
+            evidence_text,
+            clarification_depth=clarification_depth,
+            strict=True,
+        )
+        strict_msgs = [
+            {"role": "system", "content": strict_system_content},
+        ] + openai_history_messages + [current_user_message]
+        synthesis_message, _ = _synthesis_call(strict_msgs)
+        raw_final = (
+            _message_text(synthesis_message).strip()
+            or "I could not find relevant content in the course materials."
+        )
+        (
+            reply_body,
+            assistant_reply_summary,
+            assistant_follow_ups,
+            assistant_clarifying_question,
+        ) = _parse_synthesis_json(raw_final)
+        final_text = reply_body if (reply_body or "").strip() else raw_final
     import re as _re
     # Always strip [WN] markers; also strip plain [N] markers when web search was used
     # (model may renumber web results as [1], [2] without page chunks to back them up)
@@ -2344,7 +2435,7 @@ def run_agent_pageindex(
         {
             "intent_type": "pageindex",
             "verifier_passed": True,
-            "repair_invoked": False,
+            "repair_invoked": repair_invoked,
             "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
             "history_turn_count": len(_history_turns),
         },
