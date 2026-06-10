@@ -547,6 +547,9 @@ def _estimate_tokens(text: str) -> int:
 RESPONSE_RESERVE_TOKENS = 4096
 SAFETY_MARGIN_RATIO = 0.15
 HISTORY_CONTEXT_RATIO = 0.35
+OUTPUT_CONTEXT_RATIO = 0.05
+MIN_OUTPUT_TOKENS = 2048
+MAX_OUTPUT_TOKENS = 8192
 
 
 def _history_budget(window: int, system_text: str, current_user_text: str) -> int:
@@ -562,6 +565,11 @@ def _history_budget(window: int, system_text: str, current_user_text: str) -> in
     available = max(0, window - used)
     history_cap = max(0, int(window * HISTORY_CONTEXT_RATIO))
     return min(history_cap, available)
+
+
+def _output_token_cap(model: str) -> int:
+    window = _context_window_for(model)
+    return max(MIN_OUTPUT_TOKENS, min(MAX_OUTPUT_TOKENS, int(window * OUTPUT_CONTEXT_RATIO)))
 
 
 def _compose_history(prior_turns: list, budget_tokens: int) -> list:
@@ -1379,6 +1387,7 @@ def _pageindex_call_responses(
     req_body: dict = {
         "model": model,
         "input": _messages_to_responses_input(messages),
+        "max_output_tokens": _output_token_cap(model),
     }
     if tools:
         req_body["tools"] = _tools_to_responses_format(tools)
@@ -1731,7 +1740,7 @@ def _pageindex_stream_call_claude(api_key, model, system, messages, tools, on_ev
     Emits {"type":"text","chunk":...} for text delta events."""
     body = {
         "model": model,
-        "max_tokens": 2048,
+        "max_tokens": _output_token_cap(model),
         "system": system,
         "messages": messages,
         "stream": True,
@@ -1811,6 +1820,7 @@ def _pageindex_stream_call_gemini(api_key, model, system, contents, tools, on_ev
     body = {
         "system_instruction": {"parts": [{"text": system}]},
         "contents": contents,
+        "generationConfig": {"maxOutputTokens": _output_token_cap(model)},
     }
     if tools:
         body["tools"] = _pageindex_tools_gemini(tools)

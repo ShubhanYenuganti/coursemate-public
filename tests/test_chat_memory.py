@@ -58,6 +58,82 @@ def test_history_budget_never_negative():
     assert budget == 0
 
 
+def test_output_token_cap_uses_bounded_context_ratio():
+    assert llm._output_token_cap("gpt-4o-mini") == 6400
+    assert llm._output_token_cap("gemini-2.5-pro") == llm.MAX_OUTPUT_TOKENS
+
+
+def test_responses_api_sets_model_output_cap(monkeypatch):
+    captured = {}
+    response = MagicMock()
+    response.json.return_value = {"output_text": "answer"}
+    response.raise_for_status.return_value = None
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["json"] = json
+        return response
+
+    monkeypatch.setattr(llm.requests, "post", fake_post)
+
+    llm._pageindex_call_responses(
+        api_key="sk-test",
+        model="gpt-5-mini",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        on_event=None,
+    )
+
+    assert captured["json"]["max_output_tokens"] == llm._output_token_cap("gpt-5-mini")
+
+
+def test_claude_pageindex_call_sets_model_output_cap(monkeypatch):
+    captured = {}
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.iter_lines.return_value = iter([])
+
+    def fake_post(url, headers=None, json=None, stream=None, timeout=None):
+        captured["json"] = json
+        return response
+
+    monkeypatch.setattr(llm.requests, "post", fake_post)
+
+    llm._pageindex_stream_call_claude(
+        api_key="sk-test",
+        model="claude-sonnet-4-6",
+        system="system",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[],
+        on_event=None,
+    )
+
+    assert captured["json"]["max_tokens"] == llm._output_token_cap("claude-sonnet-4-6")
+
+
+def test_gemini_pageindex_call_sets_model_output_cap(monkeypatch):
+    captured = {}
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.iter_lines.return_value = iter([])
+
+    def fake_post(url, json=None, stream=None, timeout=None):
+        captured["json"] = json
+        return response
+
+    monkeypatch.setattr(llm.requests, "post", fake_post)
+
+    llm._pageindex_stream_call_gemini(
+        api_key="gm-test",
+        model="gemini-2.5-flash",
+        system="system",
+        contents=[{"role": "user", "parts": [{"text": "hi"}]}],
+        tools=[],
+        on_event=None,
+    )
+
+    assert captured["json"]["generationConfig"]["maxOutputTokens"] == llm._output_token_cap("gemini-2.5-flash")
+
+
 def test_compose_history_keeps_all_when_under_budget():
     turns = [
         {"role": "user", "content": "aaaa"},       # 1 token
