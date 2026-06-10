@@ -6,7 +6,7 @@
 
 **Architecture:** Add index-time token accounting in `lambda/index_materials`, expose those token counts through PageIndex retrieval helpers, add pure budget/candidate helpers in `api/llm.py`, expose a `select_page_candidates` PageIndex tool across OpenAI, Claude, and Gemini schemas, and materialize submitted candidates into raw and summary evidence before final synthesis. Retrieval budget is derived from the selected synthesis model's context window and does not borrow from output capacity.
 
-**Tech Stack:** Python 3 stdlib, existing PageIndex helpers, `pytest`. No new runtime dependencies or database tables.
+**Tech Stack:** Python 3, `tiktoken`, existing PageIndex helpers, `pytest`. Adds one Lambda dependency and one database column.
 
 ---
 
@@ -15,7 +15,8 @@
 | File | Action | Purpose |
 |------|--------|---------|
 | `api/llm.py` | Modify | Add retrieval budget helpers, candidate parsing/materialization, tool schema, prompt text, evidence formatting, and loop wiring. |
-| `lambda/index_materials/token_counter.py` | Create | Shared `TokenCounter` class used by every builder/indexing path. |
+| `lambda/index_materials/requirements.txt` | Modify | Add `tiktoken` for real token counting in the indexer Lambda. |
+| `lambda/index_materials/token_counter.py` | Create | Shared `TokenCounter` class backed by `tiktoken` and used by every builder/indexing path. |
 | `lambda/index_materials/builders/base.py` | Modify | Add `token_count` to `IndexNode` serialization and helpers to annotate node spans. |
 | `lambda/index_materials/worker.py` | Modify | Add `token_count` to extracted page rows and annotate generated material indexes before storage. |
 | `lambda/index_materials/db.py` | Modify | Store `material_page_text.token_count` with fallback for databases not migrated yet. |
@@ -39,17 +40,7 @@ ALTER TABLE material_page_text
 ADD COLUMN IF NOT EXISTS token_count INTEGER;
 ```
 
-- [ ] **Step 2: Backfill existing rows**
-
-Run:
-
-```sql
-UPDATE material_page_text
-SET token_count = GREATEST(1, LENGTH(COALESCE(text_content, '')) / 4)
-WHERE token_count IS NULL;
-```
-
-- [ ] **Step 3: Verify the column exists**
+- [ ] **Step 2: Verify the column exists**
 
 Run:
 
@@ -62,7 +53,7 @@ WHERE table_name = 'material_page_text'
 
 Expected: one row with `token_count`.
 
-- [ ] **Step 4: Commit migration artifact if this repo has a migration location**
+- [ ] **Step 3: Commit migration artifact if this repo has a migration location**
 
 If this repo has no migration directory for PageIndex schema changes, record the SQL in the implementation commit message and deployment notes instead of creating an ad-hoc migration file.
 
@@ -75,6 +66,7 @@ git commit -m "Add material page token count migration"
 
 **Files:**
 - Create: `lambda/index_materials/token_counter.py`
+- Modify: `lambda/index_materials/requirements.txt`
 - Modify: `lambda/index_materials/builders/base.py`
 - Test: `lambda/index_materials/tests/test_base.py`
 
@@ -86,12 +78,12 @@ Append to `lambda/index_materials/tests/test_base.py`:
 from token_counter import TokenCounter
 
 
-def test_token_counter_matches_backend_heuristic():
+def test_token_counter_uses_o200k_base_encoding():
     counter = TokenCounter()
 
     assert counter.estimate_text("") == 1
-    assert counter.estimate_text("abcd") == 1
-    assert counter.estimate_text("a" * 400) == 100
+    assert counter.estimate_text("hello world") == len(counter.encoding.encode("hello world"))
+    assert counter.encoding_name == "o200k_base"
 
 
 def test_index_node_serializes_token_count():
@@ -110,18 +102,33 @@ def test_index_node_serializes_token_count():
 
 Run: `pytest lambda/index_materials/tests/test_base.py -q`
 
-Expected: fails because `token_counter.py` and `IndexNode.token_count` do not exist.
+Expected: fails because `token_counter.py`, the `tiktoken` dependency, and `IndexNode.token_count` do not exist.
 
-- [ ] **Step 3: Create the shared token counter**
+- [ ] **Step 3: Add tiktoken dependency**
+
+Add to `lambda/index_materials/requirements.txt`:
+
+```text
+tiktoken>=0.7.0,<1.0.0
+```
+
+- [ ] **Step 4: Create the shared token counter**
 
 Create `lambda/index_materials/token_counter.py`:
 
 ```python
+import tiktoken
+
+
 class TokenCounter:
+    def __init__(self, encoding_name: str = "o200k_base") -> None:
+        self.encoding_name = encoding_name
+        self.encoding = tiktoken.get_encoding(encoding_name)
+
     def estimate_text(self, text: str | None) -> int:
         if not text:
             return 1
-        return max(1, len(text) // 4)
+        return max(1, len(self.encoding.encode(text)))
 
     def annotate_material_index(self, material_index, page_rows: dict[int, dict]) -> None:
         def _node_tokens(node) -> int:
@@ -138,7 +145,7 @@ class TokenCounter:
             _node_tokens(node)
 ```
 
-- [ ] **Step 4: Add token_count to IndexNode**
+- [ ] **Step 5: Add token_count to IndexNode**
 
 Modify `IndexNode` in `lambda/index_materials/builders/base.py`:
 
@@ -154,16 +161,16 @@ Add it to `to_dict()`:
             "token_count": self.token_count,
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 6: Run tests to verify they pass**
 
 Run: `pytest lambda/index_materials/tests/test_base.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add lambda/index_materials/token_counter.py lambda/index_materials/builders/base.py lambda/index_materials/tests/test_base.py
+git add lambda/index_materials/requirements.txt lambda/index_materials/token_counter.py lambda/index_materials/builders/base.py lambda/index_materials/tests/test_base.py
 git commit -m "Add indexer token counting primitive"
 ```
 
@@ -179,6 +186,9 @@ git commit -m "Add indexer token counting primitive"
 Append to `lambda/index_materials/tests/test_worker.py`:
 
 ```python
+from token_counter import TokenCounter
+
+
 def test_extract_pages_sets_token_count(monkeypatch):
     class FakePage:
         def get_images(self, full=True):
@@ -199,7 +209,7 @@ def test_extract_pages_sets_token_count(monkeypatch):
 
     rows = worker._extract_pages("/tmp/fake.pdf")
 
-    assert rows[0]["token_count"] == 100
+    assert rows[0]["token_count"] == TokenCounter().estimate_text("a" * 400)
 
 
 def test_annotate_index_token_counts_sets_node_span_tokens():
@@ -375,7 +385,75 @@ git add lambda/index_materials/db.py api/pageindex_retrieval.py api/services/que
 git commit -m "Store and expose PageIndex token counts"
 ```
 
-## Task 4: Add Retrieval Budget Math
+## Task 4: Backfill Existing Token Counts With Tiktoken
+
+**Files:**
+- Runtime/deployment task
+
+- [ ] **Step 1: Backfill page token counts**
+
+Run a one-off script from an environment that can connect to the database and import `lambda/index_materials/token_counter.py`:
+
+```python
+from token_counter import TokenCounter
+
+counter = TokenCounter()
+cursor = conn.cursor()
+cursor.execute(
+    "SELECT material_id, page_number, text_content FROM material_page_text WHERE token_count IS NULL"
+)
+rows = cursor.fetchall()
+for row in rows:
+    cursor.execute(
+        """UPDATE material_page_text
+           SET token_count = %s
+           WHERE material_id = %s AND page_number = %s""",
+        (
+            counter.estimate_text(row.get("text_content")),
+            row["material_id"],
+            row["page_number"],
+        ),
+    )
+conn.commit()
+```
+
+- [ ] **Step 2: Re-index existing materials for section token counts**
+
+Re-run `index_materials` for existing materials so `material_page_index.index_json.nodes[*].token_count` is populated from the built tree and tokenized page spans.
+
+- [ ] **Step 3: Verify token count coverage**
+
+Run:
+
+```sql
+SELECT COUNT(*) AS missing_page_token_counts
+FROM material_page_text
+WHERE token_count IS NULL;
+```
+
+Expected: `missing_page_token_counts = 0`.
+
+Sample one indexed material:
+
+```sql
+SELECT index_json->'nodes'->0->>'token_count' AS first_node_token_count
+FROM material_page_index
+WHERE index_json->'nodes' IS NOT NULL
+LIMIT 1;
+```
+
+Expected: a non-null integer string.
+
+- [ ] **Step 4: Commit deployment notes if this repo has an operational notes location**
+
+If there is no operational notes location, record the backfill command and verification in the implementation summary instead of creating a new docs file.
+
+```bash
+git status --short
+git commit -m "Backfill PageIndex token counts"
+```
+
+## Task 5: Add Retrieval Budget Math
 
 **Files:**
 - Modify: `api/llm.py`
@@ -472,7 +550,7 @@ git add api/llm.py tests/test_chat_memory.py
 git commit -m "Add PageIndex retrieval budget helpers"
 ```
 
-## Task 5: Add Agent Scope Classification And Reserve Retrieval Budget
+## Task 6: Add Agent Scope Classification And Reserve Retrieval Budget
 
 **Files:**
 - Modify: `api/llm.py`
@@ -655,7 +733,7 @@ git add api/llm.py tests/test_chat_memory.py
 git commit -m "Classify PageIndex retrieval scope before budgeting"
 ```
 
-## Task 6: Normalize Model-Selected Candidate Frontiers
+## Task 7: Normalize Model-Selected Candidate Frontiers
 
 **Files:**
 - Modify: `api/llm.py`
@@ -776,7 +854,7 @@ git add api/llm.py tests/test_chat_memory.py
 git commit -m "Normalize PageIndex candidate frontiers"
 ```
 
-## Task 7: Add Section Summary Lookup Helpers
+## Task 8: Add Section Summary Lookup Helpers
 
 **Files:**
 - Modify: `api/pageindex_retrieval.py`
@@ -892,7 +970,7 @@ git add api/pageindex_retrieval.py api/services/query/pageindex_retrieval.py tes
 git commit -m "Add PageIndex section summary lookup"
 ```
 
-## Task 8: Materialize Candidates Into Raw And Summary Evidence
+## Task 9: Materialize Candidates Into Raw And Summary Evidence
 
 **Files:**
 - Modify: `api/llm.py`
@@ -1093,7 +1171,7 @@ git add api/llm.py tests/test_chat_memory.py
 git commit -m "Materialize PageIndex candidate evidence under budget"
 ```
 
-## Task 9: Add Candidate Tool Schema And Prompt Instructions
+## Task 10: Add Candidate Tool Schema And Prompt Instructions
 
 **Files:**
 - Modify: `api/llm.py`
@@ -1188,7 +1266,7 @@ git add api/llm.py tests/test_chat_memory.py
 git commit -m "Add PageIndex candidate frontier tool"
 ```
 
-## Task 10: Wire Candidate Tool Dispatch Into All Provider Loops
+## Task 11: Wire Candidate Tool Dispatch Into All Provider Loops
 
 **Files:**
 - Modify: `api/llm.py`
@@ -1284,7 +1362,7 @@ git add api/llm.py tests/test_chat_memory.py
 git commit -m "Wire PageIndex candidate frontier dispatch"
 ```
 
-## Task 11: Include Summary Evidence In Synthesis
+## Task 12: Include Summary Evidence In Synthesis
 
 **Files:**
 - Modify: `api/llm.py`
@@ -1372,7 +1450,7 @@ git add api/llm.py tests/test_chat_memory.py
 git commit -m "Include PageIndex summary evidence in synthesis"
 ```
 
-## Task 12: Add Budget Trace Metadata And Regression Coverage
+## Task 13: Add Budget Trace Metadata And Regression Coverage
 
 **Files:**
 - Modify: `api/llm.py`

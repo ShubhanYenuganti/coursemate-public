@@ -99,18 +99,19 @@ If the classifier output is malformed or unavailable, default to `specific` so t
 
 Add a shared `TokenCounter` class in `lambda/index_materials` and call it from the index-building pipeline after each builder returns a `MaterialIndex`.
 
-The counter should provide one canonical heuristic for now:
+The counter should use a real tokenizer:
 
 ```text
-token_count = max(1, len(text) // 4)
+encoding = tiktoken.get_encoding("o200k_base")
+token_count = max(1, len(encoding.encode(text or "")))
 ```
 
-This mirrors the backend estimator used in `api/llm.py` and avoids adding tokenizer dependencies. If a real tokenizer is added later, the `TokenCounter` class becomes the single indexer-side implementation to upgrade.
+`o200k_base` is the canonical index-time encoding for retrieval budgeting. It will not exactly match Claude or Gemini tokenization, but it is a real tokenizer and is stable enough for stored document-size accounting. API-side fallback estimation remains only for legacy rows or local environments where `token_count` is missing.
 
 Persist token counts in two places:
 
-- `material_page_text.token_count`: the estimated token count of each extracted raw page.
-- `material_page_index.index_json.nodes[*].token_count`: the estimated token count of each section/node span. Child nodes carry their own counts.
+- `material_page_text.token_count`: the tokenizer count of each extracted raw page.
+- `material_page_index.index_json.nodes[*].token_count`: the tokenizer count of each section/node span. Child nodes carry their own counts.
 
 The section token count is stored in `index_json` because sections are nested tree nodes, not table rows. The raw page token count belongs in `material_page_text` because materialization fetches raw pages from that table.
 
