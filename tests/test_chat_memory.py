@@ -957,3 +957,22 @@ def test_materialize_page_candidates_tracks_summary_omissions(monkeypatch):
     assert len(raw) == 1
     assert summaries == []
     assert meta["omitted_summary_pages"] == 2
+
+
+def test_pageindex_tool_list_includes_candidate_frontier_tool():
+    tool_names = [tool["function"]["name"] for tool in llm._pageindex_tool_list(web_search_enabled=False)]
+
+    assert "select_page_candidates" in tool_names
+
+
+def test_retrieval_prompt_describes_budgeted_candidate_frontier():
+    prompt = llm._build_pageindex_retrieval_system_context(
+        "<course_materials></course_materials>",
+        web_search_enabled=False,
+        clarification_depth=0,
+    )
+
+    assert "select_page_candidates" in prompt
+    assert "broad" in prompt.lower()
+    assert "raw text" in prompt.lower()
+    assert "summary" in prompt.lower()

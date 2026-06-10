@@ -221,6 +221,11 @@ _PAGEINDEX_TOOL_USE = (
     "limitation questions, you must call `get_material_structure(material_id)` before any final answer, "
     "then call `get_page_content` for the most plausible pages from that structure. Skip this only for "
     "narrow fact lookup questions where one routing summary directly identifies the exact page."
+    "\n\n**Broad candidate frontier**: For broad, survey, comparative, cross-topic, or multi-section "
+    "questions, call `select_page_candidates(candidates)` after inspecting the routing tree. Include "
+    "every plausible candidate range in ranked order. The backend will admit raw text for the top "
+    "budgeted subset and compact the rest into summaries. Use direct `get_page_content` for narrow "
+    "lookups where only one small range is needed."
     "\n\n**Citation numbering**: Each `get_page_content` call you make becomes one numbered citation, "
     "in the order you called it. The first `get_page_content` call is citation [1], the second is [2], "
     "and so on. When you write the final answer, cite each fact using the bracket that matches the call "
@@ -1859,6 +1864,41 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
                         },
                     },
                     "required": ["material_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "select_page_candidates",
+                "description": (
+                    "Submit a ranked frontier of candidate page ranges for broad questions. "
+                    "The backend will fetch raw text for the top budgeted subset and use summaries for the rest."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "candidates": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "material_id": {"type": "integer"},
+                                    "pages": {
+                                        "type": "string",
+                                        "description": "Page spec such as '5-7', '3,8', or '12'.",
+                                    },
+                                    "reason": {"type": "string"},
+                                    "priority": {
+                                        "type": "string",
+                                        "enum": ["core", "supporting", "background"],
+                                    },
+                                },
+                                "required": ["material_id", "pages"],
+                            },
+                        }
+                    },
+                    "required": ["candidates"],
                 },
             },
         },
