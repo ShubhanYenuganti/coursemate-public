@@ -87,6 +87,7 @@ class IndexNode:
     evidence_pages: list[int] = field(default_factory=list)
     char_start: int | None = None
     char_end: int | None = None
+    token_count: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -105,6 +106,7 @@ class IndexNode:
             or list(range(self.start_page, self.end_page + 1)),
             "char_start": self.char_start,
             "char_end": self.char_end,
+            "token_count": self.token_count,
         }
 
 
