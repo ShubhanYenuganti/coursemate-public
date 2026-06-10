@@ -134,6 +134,22 @@ def test_gemini_pageindex_call_sets_model_output_cap(monkeypatch):
     assert captured["json"]["generationConfig"]["maxOutputTokens"] == llm._output_token_cap("gemini-2.5-flash")
 
 
+def test_format_pageindex_evidence_blocks_course_and_web_results():
+    evidence = llm._format_pageindex_evidence(
+        course_contents=["page one", "page two"],
+        web_contents=["web result"],
+    )
+
+    assert "Retrieved course material:" in evidence
+    assert "page one\n\n---\n\npage two" in evidence
+    assert "Web search results" in evidence
+    assert "web result" in evidence
+
+
+def test_format_pageindex_evidence_empty_returns_empty_string():
+    assert llm._format_pageindex_evidence([], []) == ""
+
+
 def test_compose_history_keeps_all_when_under_budget():
     turns = [
         {"role": "user", "content": "aaaa"},       # 1 token

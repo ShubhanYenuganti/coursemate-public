@@ -1207,6 +1207,21 @@ def _build_pageindex_synthesis_system_context(
     return system_content
 
 
+def _format_pageindex_evidence(course_contents: list, web_contents: list) -> str:
+    parts = []
+    if course_contents:
+        parts.append(
+            "Retrieved course material:\n"
+            + "\n\n---\n\n".join(str(c) for c in course_contents)
+        )
+    if web_contents:
+        parts.append(
+            "Web search results — use these to answer questions not covered by course materials:\n"
+            + "\n\n---\n\n".join(str(c) for c in web_contents)
+        )
+    return "\n\n".join(parts)
+
+
 
 class _ReplyStreamFilter:
     """Strip <REPLY>…</REPLY><META>…</META> wrapper from a streamed response.
@@ -2284,16 +2299,9 @@ def run_agent_pageindex(
         # retrieved page text goes into the system message as plain context.
         course_contents = [m["content"] for m in messages if m.get("role") == "tool" and m.get("name") != "web_search"]
         web_contents = [m["content"] for m in messages if m.get("role") == "tool" and m.get("name") == "web_search"]
-        extra = ""
-        if course_contents:
-            extra += "\n\nRetrieved course material:\n" + "\n\n---\n\n".join(str(c) for c in course_contents)
-        if web_contents:
-            extra += (
-                "\n\nWeb search results — use these to answer questions not covered by course materials:\n"
-                + "\n\n---\n\n".join(str(c) for c in web_contents)
-            )
+        evidence_text = _format_pageindex_evidence(course_contents, web_contents)
         synthesis_system_content = _build_pageindex_synthesis_system_context(
-            extra,
+            evidence_text,
             clarification_depth=clarification_depth,
         )
         synthesis_msgs = [
