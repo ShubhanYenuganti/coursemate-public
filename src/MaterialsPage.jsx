@@ -1401,6 +1401,10 @@ export default function MaterialsPage({
     );
   }, []);
 
+  const handleSetAllDocTypes = useCallback((docType) => {
+    setStagingItems((prev) => prev.map((i) => ({ ...i, docType })));
+  }, []);
+
   // ── upload a single staged item ───────────────────────────────────────────
   const handleStagingUpload = useCallback(
     async (stagingItem) => {
@@ -1428,6 +1432,11 @@ export default function MaterialsPage({
   const removeStagingItem = useCallback((id) => {
     setStagingItems((prev) => prev.filter((i) => i.id !== id));
   }, []);
+
+  const handleUploadAll = useCallback(() => {
+    const items = [...stagingItems];
+    items.forEach((item) => handleStagingUpload(item));
+  }, [stagingItems, handleStagingUpload]);
 
   // ── visibility toggle for upload items ───────────────────────────────────
   const handleUploadItemVisibility = useCallback(
@@ -2035,6 +2044,29 @@ export default function MaterialsPage({
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
               Ready to upload
             </p>
+            {stagingItems.length > 1 && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-indigo-100 bg-indigo-50/50">
+                <span className="text-xs text-gray-500 shrink-0">Set all to:</span>
+                <select
+                  defaultValue=""
+                  onChange={(e) => { if (e.target.value) handleSetAllDocTypes(e.target.value); }}
+                  className="text-xs rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                >
+                  <option value="" disabled>— pick type —</option>
+                  {DOCUMENT_TYPES.map((dt) => (
+                    <option key={dt.value} value={dt.value}>{dt.label}</option>
+                  ))}
+                </select>
+                <div className="flex-1" />
+                <button
+                  type="button"
+                  onClick={handleUploadAll}
+                  className="shrink-0 px-3 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                >
+                  Upload all
+                </button>
+              </div>
+            )}
             {stagingItems.map((item) => (
               <StagingItemRow
                 key={item.id}

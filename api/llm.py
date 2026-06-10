@@ -11,15 +11,16 @@ Phase 2 (agentic loop): Each provider's tool-calling format will extend this mod
   - OpenAI:  tools + tool_calls function-calling format
   - Gemini:  tools with function_declarations + FunctionCall/FunctionResponse
 """
+
 import json
 import logging
 import mimetypes
 import os
 import re
 import time
+from uuid import UUID
 
 import requests
-from uuid import UUID
 
 
 def _raise_for_status_verbose(response) -> None:
@@ -44,6 +45,7 @@ def _raise_for_status_verbose(response) -> None:
             pass
         raise
 
+
 try:
     from .crypto_utils import decrypt_api_key
 except ImportError:
@@ -53,23 +55,24 @@ except ImportError:
 def _fetch_images_as_base64(s3_keys: list) -> list:
     """Fetch S3 images and return list of (mime_type, base64_data) tuples."""
     import base64
+
     import boto3
 
-    region = os.environ.get('AWS_REGION', 'us-east-1')
+    region = os.environ.get("AWS_REGION", "us-east-1")
     client = boto3.client(
-        's3',
+        "s3",
         region_name=region,
-        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
     )
-    bucket = os.environ.get('AWS_S3_BUCKET_NAME')
+    bucket = os.environ.get("AWS_S3_BUCKET_NAME")
     result = []
-    for key in (s3_keys or []):
+    for key in s3_keys or []:
         try:
             obj = client.get_object(Bucket=bucket, Key=key)
-            data = obj['Body'].read()
+            data = obj["Body"].read()
             mime = mimetypes.guess_type(key)[0] or "image/jpeg"
-            result.append((mime, base64.standard_b64encode(data).decode('utf-8')))
+            result.append((mime, base64.standard_b64encode(data).decode("utf-8")))
         except Exception:
             logging.getLogger(__name__).warning("Failed to fetch S3 image %s", key)
     return result
@@ -172,7 +175,7 @@ _JSON_SYNTHESIS_INSTRUCTION = (
     "your full markdown answer here (plain markdown, never JSON-encoded)\n"
     "</REPLY>\n"
     "<META>\n"
-    '{\"summary\": \"5-6 word phrase\", \"follow_ups\": [\"q1\", \"q2\", \"q3\"], \"clarifying_question\": null}\n'
+    '{"summary": "5-6 word phrase", "follow_ups": ["q1", "q2", "q3"], "clarifying_question": null}\n'
     "</META>\n\n"
     "Rules: The REPLY block is plain markdown — write LaTeX exactly as-is (e.g. $\\frac{a}{b}$, $\\lambda$), "
     "never double backslashes. Use $...$ for inline math and $$...$$ for display equations — NEVER \\[ \\] or \\( \\). "
@@ -188,7 +191,7 @@ _AGENTIC_JSON_FINAL_INSTRUCTION = (
     "your full markdown answer here (plain markdown, never JSON-encoded)\n"
     "</REPLY>\n"
     "<META>\n"
-    '{\"summary\": \"5-6 word phrase\", \"follow_ups\": [\"q1\", \"q2\", \"q3\"], \"clarifying_question\": null}\n'
+    '{"summary": "5-6 word phrase", "follow_ups": ["q1", "q2", "q3"], "clarifying_question": null}\n'
     "</META>\n\n"
     "Rules: The REPLY block is plain markdown — write LaTeX exactly as-is (e.g. $\\frac{a}{b}$, $\\lambda$), "
     "never double backslashes. Use $...$ for inline math and $$...$$ for display equations — NEVER \\[ \\] or \\( \\). "
@@ -201,39 +204,45 @@ _AGENTIC_JSON_FINAL_INSTRUCTION = (
 AGENTIC_SYSTEM_PROMPT = SYSTEM_PROMPT + _AGENTIC_JSON_FINAL_INSTRUCTION
 
 _PAGEINDEX_TOOL_USE = (
-    "\n\n**Tool use**: A routing index of available course materials is provided below. "
-    "Each material includes per-page summaries — use them to identify the right pages and call "
-    "`get_page_content(material_id, pages)` directly with a page range (e.g. '3,4,5' or '3-5'). "
-    "Only call `get_material_structure(material_id)` if the routing index has no page summaries "
-    "for that material or you need sub-section detail not visible in the summaries. "
-    "If the fetched content does not fully answer the question, call `get_related_materials(material_id)` "
-    "to discover related materials and repeat. "
-    "Do NOT call any other tools — only these three are available."
-    "\n\n**High-recall retrieval policy**: Prefer recall over minimal context. Before answering, fetch "
+    "\n\n**Your role**: You are a retrieval planner. Your text output is never shown to the user — "
+    "a separate model writes the final answer from exactly the evidence you fetch with the tools "
+    "below. Do not write the answer yourself; spend your turns fetching the right pages, and stop "
+    "calling tools only once the evidence is sufficient. If in doubt, fetch more."
+    "\n\n**Tool use**: A routing index of available course materials is provided below. Each material "
+    "lists per-section page summaries — use them to locate likely pages, then call "
+    "`get_page_content(material_id, pages)` with a page range (e.g. '3,4,5' or '3-5'). Routing "
+    "summaries are heavily truncated: when they look only loosely related to the question, call "
+    "`get_material_structure(material_id)` to see the full section tree and summaries before "
+    "deciding which pages to fetch. If the fetched content does not fully answer the question, call "
+    "`get_related_materials(material_id)` to discover related materials and repeat. Call "
+    "`propose_generation` only when the user explicitly asks to create a quiz, flashcards, or a report."
+    "\n\n**High-recall retrieval policy**: Prefer recall over minimal context. Fetch "
     "2-4 candidate evidence locations when the question is conceptual, comparative, broad, multi-part, "
-    "or when multiple routing summaries look plausible. Use `get_material_structure(material_id)` for "
-    "conceptual or broad questions before final synthesis when page summaries alone may hide sub-section "
-    "detail. When you fetch a likely page, include neighboring pages when they are likely to contain setup, "
-    "definitions, results, or continuation text. Do not stop after one small fetch unless the fetched page "
-    "fully and directly answers the question. For evaluation-style questions, prefer Recall@5 behavior: "
-    "retrieve several plausible evidence pages first, then synthesize from the best evidence."
+    "or when multiple routing summaries look plausible. When you fetch a likely page, include "
+    "neighboring pages when they are likely to contain setup, definitions, results, or continuation "
+    "text. Do not stop after one small fetch unless the fetched page fully and directly answers the "
+    "question. For evaluation-style questions, prefer Recall@5 behavior: retrieve several plausible "
+    "evidence pages first."
     "\n\n**Structure-first rule**: For broad, conceptual, comparative, multi-part, method, result, or "
     "limitation questions, you must call `get_material_structure(material_id)` before any final answer, "
-    "then call `get_page_content` for the most plausible pages from that structure. Skip this only for "
-    "narrow fact lookup questions where one routing summary directly identifies the exact page."
-    "\n\n**Citation numbering**: Each `get_page_content` call you make becomes one numbered citation, "
-    "in the order you called it. The first `get_page_content` call is citation [1], the second is [2], "
-    "and so on. When you write the final answer, cite each fact using the bracket that matches the call "
-    "that fetched its evidence. Do not invent citation numbers that do not correspond to a "
-    "`get_page_content` call. If you fetched the same material on multiple calls, each call gets its own "
-    "citation number — do not collapse them."
+    "then select pages from that structure. Skip this only for narrow fact lookup questions where one "
+    "routing summary directly identifies the exact page."
+    "\n\n**Broad candidate frontier**: For broad, survey, comparative, cross-topic, or multi-section "
+    "questions, call `select_page_candidates(candidates)` after inspecting the routing tree or material "
+    "structure. Include every plausible candidate range in ranked order. The backend admits raw text "
+    "for the top budgeted subset and compacts each remaining page into a one-line summary; its result "
+    "tells you which pages were admitted as raw text, which got a summary, and which were omitted — "
+    "fetch any critical demoted pages directly with `get_page_content`. Use direct `get_page_content` "
+    "for narrow lookups where only one small range is needed."
 )
 
-# System prompt for the PageIndex agentic loop. Uses _SYSTEM_PROMPT_BASE for
-# citations/formatting, a pageindex-specific tool-use section (not _SYSTEM_PROMPT_TOOL_USE,
-# which references search_materials/web_search that don't exist here), and the
-# JSON final-answer schema.
-PAGEINDEX_SYSTEM_PROMPT = _SYSTEM_PROMPT_BASE + _PAGEINDEX_TOOL_USE + _AGENTIC_JSON_FINAL_INSTRUCTION
+# System prompt for the PageIndex retrieval loop. The planner's text output is
+# discarded (synthesis is a separate call), so this prompt deliberately omits
+# _SYSTEM_PROMPT_BASE's answer/citation/formatting rules and any final-answer
+# format — the planner's only job is tool-driven evidence gathering.
+PAGEINDEX_SYSTEM_PROMPT = (
+    "You are the retrieval planner for a course assistant." + _PAGEINDEX_TOOL_USE
+)
 
 _PAGEINDEX_SYNTHESIS_INSTRUCTION = (
     "\n\n**Final synthesis mode**: Retrieval is complete. The retrieved course material "
@@ -241,6 +250,14 @@ _PAGEINDEX_SYNTHESIS_INSTRUCTION = (
     "message directly from that evidence and the conversation history. Do not say you "
     "will fetch, search, inspect, retrieve, call tools, or look at course materials in "
     "the future. If the provided evidence is insufficient, say what is missing clearly."
+    "\n\nRaw material is direct evidence — cite it precisely. "
+    "Candidate coverage summaries are compact course-index evidence for breadth and "
+    "orientation; use them for coverage and caveats, but do not invent details that "
+    "require raw text if only a summary was provided."
+    "\n\n**Citation numbering**: The raw evidence blocks appear in retrieval order — "
+    "the first block is citation [1], the second is [2], and so on. Cite each fact with "
+    "the bracket of the block containing its evidence; never invent citation numbers "
+    "that do not correspond to an evidence block."
 )
 
 _CONVERSATION_HISTORY_NOTICE = (
@@ -255,16 +272,28 @@ _SUMMARY_MAX_LEN = 200
 _TIMEOUT = 60  # seconds
 DEFAULT_AGENTIC_PROVIDER = "openai"
 DEFAULT_AGENTIC_MODEL = "gpt-4o-mini"
-MAX_TOOL_ITERATIONS = 4
-NON_VISION_MODEL_IDS = {"gpt-oss-120b"}
-GENERATION_PROPOSAL_READY_MESSAGE = (
-    "I prepared a proposal for that. Review it and confirm when you're ready to generate it."
+MAX_TOOL_ITERATIONS = 6
+
+# Non-streaming Responses API calls block for the model's full reasoning time;
+# 60s is routinely exceeded by gpt-5.x planning/synthesis over large prompts.
+_RESPONSES_TIMEOUT = 300  # seconds
+
+# Injected once when the retrieval planner stops without fetching any evidence.
+_RETRIEVAL_NUDGE_MESSAGE = (
+    "You ended retrieval without fetching any course material. If any routing summaries "
+    "or sections could plausibly contain the answer, call `select_page_candidates` with "
+    "every plausible page range, or `get_page_content` for specific pages, now. Only stop "
+    "without fetching if the course materials clearly contain nothing relevant."
 )
+NON_VISION_MODEL_IDS = {"gpt-oss-120b"}
+GENERATION_PROPOSAL_READY_MESSAGE = "I prepared a proposal for that. Review it and confirm when you're ready to generate it."
 
 logger = logging.getLogger(__name__)
 
 
-def _validate_model_supports_images(model: str | None, image_s3_keys: list | None) -> None:
+def _validate_model_supports_images(
+    model: str | None, image_s3_keys: list | None
+) -> None:
     if image_s3_keys and (model or "").strip().lower() in NON_VISION_MODEL_IDS:
         raise ValueError(f"Model {model} does not support image input")
 
@@ -335,8 +364,8 @@ def _cap_summary(value: str | None) -> str | None:
 
 def _normalize_math_delimiters(text: str) -> str:
     """Convert \[...\] and \(...\) to $$...$$ and $...$ so remark-math renders them."""
-    text = re.sub(r'\\\[([\s\S]*?)\\\]', r'$$\1$$', text)
-    text = re.sub(r'\\\(([\s\S]*?)\\\)', r'$\1$', text)
+    text = re.sub(r"\\\[([\s\S]*?)\\\]", r"$$\1$$", text)
+    text = re.sub(r"\\\(([\s\S]*?)\\\)", r"$\1$", text)
     return text
 
 
@@ -350,11 +379,19 @@ def _parse_meta_block(meta_text: str) -> tuple[str | None, list, str | None]:
         return None, [], None
     summ = obj.get("summary")
     raw_follow_ups = obj.get("follow_ups")
-    follow_ups = [q for q in raw_follow_ups if isinstance(q, str)] if isinstance(raw_follow_ups, list) else []
+    follow_ups = (
+        [q for q in raw_follow_ups if isinstance(q, str)]
+        if isinstance(raw_follow_ups, list)
+        else []
+    )
     clarifying_question = obj.get("clarifying_question")
     if not isinstance(clarifying_question, str) or not clarifying_question.strip():
         clarifying_question = None
-    return (_cap_summary(summ) if isinstance(summ, str) else None), follow_ups, clarifying_question
+    return (
+        (_cap_summary(summ) if isinstance(summ, str) else None),
+        follow_ups,
+        clarifying_question,
+    )
 
 
 def _parse_synthesis_json(raw: str) -> tuple[str, str | None, list, str | None]:
@@ -370,38 +407,45 @@ def _parse_synthesis_json(raw: str) -> tuple[str, str | None, list, str | None]:
     if reply_match:
         reply = _normalize_math_delimiters(reply_match.group(1).strip())
         if meta_match:
-            summary, follow_ups, clarifying_question = _parse_meta_block(meta_match.group(1))
+            summary, follow_ups, clarifying_question = _parse_meta_block(
+                meta_match.group(1)
+            )
         else:
             summary, follow_ups, clarifying_question = None, [], None
         return reply, summary, follow_ups, clarifying_question
 
     # Stage 2: Brace-boundary — trailing JSON object appended without tags.
     # Walk backward from the last '}' to find a balanced '{...}' candidate.
-    end = original.rfind('}')
+    end = original.rfind("}")
     if end != -1:
         depth = 0
         start = -1
         for i in range(end, -1, -1):
-            if original[i] == '}':
+            if original[i] == "}":
                 depth += 1
-            elif original[i] == '{':
+            elif original[i] == "{":
                 depth -= 1
                 if depth == 0:
                     start = i
                     break
         if start != -1:
-            candidate = original[start:end + 1]
+            candidate = original[start : end + 1]
             try:
                 obj = json.loads(candidate)
                 if isinstance(obj, dict) and ("summary" in obj or "follow_ups" in obj):
                     reply = _normalize_math_delimiters(original[:start].strip())
-                    summary, follow_ups, clarifying_question = _parse_meta_block(candidate)
+                    summary, follow_ups, clarifying_question = _parse_meta_block(
+                        candidate
+                    )
                     return reply, summary, follow_ups, clarifying_question
             except json.JSONDecodeError:
                 pass
 
     # Stage 3: Whole-text — treat entire output as reply with empty metadata.
-    logger.debug("synthesis_parse_whole_text_fallback", extra={"excerpt": _truncate_text(original, 200)})
+    logger.debug(
+        "synthesis_parse_whole_text_fallback",
+        extra={"excerpt": _truncate_text(original, 200)},
+    )
     return _normalize_math_delimiters(original), None, [], None
 
 
@@ -413,9 +457,7 @@ _INLINE_TOKEN_PATTERN = re.compile(
     r")$"
 )
 
-_LIKELY_MATH_PATTERN = re.compile(
-    r"(\\[A-Za-z]+|\d|[=+\-*/^_])"
-)
+_LIKELY_MATH_PATTERN = re.compile(r"(\\[A-Za-z]+|\d|[=+\-*/^_])")
 
 
 def _looks_inline_token(value: str) -> bool:
@@ -483,7 +525,9 @@ def _normalize_llm_markdown(text: str) -> str:
     normalized = re.sub(r"`([^`\n]+)`\n([:;,.!?])", r"`\1`\2", normalized)
 
     # Collapse sentence fragments split around converted inline code.
-    normalized = re.sub(r"([A-Za-z0-9)\]])\n`([^`\n]+)`\n([A-Za-z(])", r"\1 `\2` \3", normalized)
+    normalized = re.sub(
+        r"([A-Za-z0-9)\]])\n`([^`\n]+)`\n([A-Za-z(])", r"\1 `\2` \3", normalized
+    )
 
     # Strip lines with unclosed LaTeX $ delimiters to prevent broken KaTeX rendering.
     normalized = _fix_unclosed_latex_delimiters(normalized)
@@ -560,16 +604,239 @@ OUTPUT_CONTEXT_RATIO = 0.05
 MIN_OUTPUT_TOKENS = 2048
 MAX_OUTPUT_TOKENS = 8192
 
+RETRIEVAL_BASE_CONTEXT_RATIO = 0.12
+RETRIEVAL_MAX_CONTEXT_RATIO = 0.25
+RETRIEVAL_RAW_RATIO = 0.65
+MIN_RETRIEVAL_TOKENS = 4096
+MAX_RETRIEVAL_TOKENS = 48000
+SUMMARY_TOKENS_PER_CANDIDATE = 180
 
-def _history_budget(window: int, system_text: str, current_user_text: str) -> int:
+
+def _clamp_int(value: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(maximum, value))
+
+
+def _retrieval_budget_for(model: str, expanded: bool = False) -> dict:
+    window = _context_window_for(model)
+    base_tokens = _clamp_int(
+        int(window * RETRIEVAL_BASE_CONTEXT_RATIO),
+        MIN_RETRIEVAL_TOKENS,
+        MAX_RETRIEVAL_TOKENS,
+    )
+    max_tokens = _clamp_int(
+        int(window * RETRIEVAL_MAX_CONTEXT_RATIO),
+        MIN_RETRIEVAL_TOKENS,
+        MAX_RETRIEVAL_TOKENS,
+    )
+    active_tokens = max_tokens if expanded else base_tokens
+    raw_tokens = int(active_tokens * RETRIEVAL_RAW_RATIO)
+    summary_tokens = max(0, active_tokens - raw_tokens)
+    return {
+        "window": window,
+        "base_tokens": base_tokens,
+        "max_tokens": max_tokens,
+        "active_tokens": active_tokens,
+        "raw_tokens": raw_tokens,
+        "summary_tokens": summary_tokens,
+    }
+
+
+# A frontier larger than this many candidate pages signals a broad question;
+# the budget expands from the base slice to the max slice.
+_FRONTIER_EXPAND_CANDIDATE_THRESHOLD = 5
+
+
+def _expand_retrieval_budget(budget: dict) -> dict:
+    max_tokens = int(budget.get("max_tokens") or 0)
+    if max_tokens <= 0:
+        return budget
+    raw_tokens = int(max_tokens * RETRIEVAL_RAW_RATIO)
+    return {
+        **budget,
+        "active_tokens": max_tokens,
+        "raw_tokens": raw_tokens,
+        "summary_tokens": max_tokens - raw_tokens,
+    }
+
+
+def _parse_page_spec(pages: str) -> list[int]:
+    page_numbers: list[int] = []
+    for part in str(pages or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        range_match = re.match(r"^(\d+)-(\d+)$", part)
+        if range_match:
+            start = int(range_match.group(1))
+            end = int(range_match.group(2))
+            if start > end:
+                continue
+            page_numbers.extend(range(start, end + 1))
+        elif re.match(r"^\d+$", part):
+            page_numbers.append(int(part))
+    return [p for p in page_numbers if p > 0]
+
+
+def _normalize_page_candidates(candidates: list) -> tuple[list[dict], int]:
+    normalized: list[dict] = []
+    seen: set[tuple[int, int]] = set()
+    dropped = 0
+    for candidate in candidates or []:
+        try:
+            material_id = int(candidate.get("material_id"))
+        except (TypeError, ValueError):
+            dropped += 1
+            continue
+        pages = _parse_page_spec(candidate.get("pages", ""))
+        if not pages:
+            dropped += 1
+            continue
+        reason = str(candidate.get("reason") or "").strip()
+        priority = str(candidate.get("priority") or "supporting").strip().lower()
+        if priority not in {"core", "supporting", "background"}:
+            priority = "supporting"
+        for page in pages:
+            key = (material_id, page)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(
+                {
+                    "material_id": material_id,
+                    "page": page,
+                    "reason": reason,
+                    "priority": priority,
+                }
+            )
+    return normalized, dropped
+
+
+def _get_page_content_for_materialization(
+    conn, material_id: int, pages: str
+) -> list[dict]:
+    from pageindex_retrieval import get_page_content
+
+    return get_page_content(conn, material_id, pages)
+
+
+def _get_page_section_summaries_for_materialization(
+    conn, material_ids: list[int]
+) -> dict:
+    from pageindex_retrieval import get_page_section_summaries
+
+    return get_page_section_summaries(conn, material_ids)
+
+
+def _format_raw_page_result(material_id: int, rows: list[dict]) -> str:
+    parts = []
+    for row in rows:
+        parts.append(
+            f"Material {material_id}, page {row['page_number']}\n"
+            f"{row.get('text_content') or '[No text extracted]'}"
+        )
+    return "\n\n".join(parts)
+
+
+def _candidate_priority_key(candidate: dict) -> tuple[int, int]:
+    priority_rank = {"core": 0, "supporting": 1, "background": 2}
+    return (priority_rank.get(candidate.get("priority"), 1), candidate.get("_order", 0))
+
+
+def _materialize_page_candidates(
+    conn, candidates: list[dict], budget: dict
+) -> tuple[list[str], list[str], dict]:
+    raw_evidence: list[str] = []
+    summary_evidence: list[str] = []
+    meta = {
+        "raw_pages": 0,
+        "raw_tokens": 0,
+        "raw_material_ids": [],
+        "raw_admitted": [],
+        "summary_pages": 0,
+        "summary_tokens": 0,
+        "summary_admitted": [],
+        "omitted_summary_pages": 0,
+        "omitted": [],
+    }
+    candidates_with_order = [{**c, "_order": i} for i, c in enumerate(candidates or [])]
+    raw_budget = max(0, int(budget.get("raw_tokens") or 0))
+    summary_candidates: list[dict] = []
+    first = True
+
+    for candidate in sorted(candidates_with_order, key=_candidate_priority_key):
+        rows = _get_page_content_for_materialization(
+            conn, candidate["material_id"], str(candidate["page"])
+        )
+        row_tokens = sum(
+            int(
+                row.get("token_count")
+                or _estimate_tokens(row.get("text_content") or "")
+            )
+            for row in rows
+        )
+        if rows and (first or meta["raw_tokens"] + row_tokens <= raw_budget):
+            raw_evidence.append(_format_raw_page_result(candidate["material_id"], rows))
+            meta["raw_pages"] += len(rows)
+            meta["raw_tokens"] += row_tokens
+            meta["raw_material_ids"].append(candidate["material_id"])
+            meta["raw_admitted"].append(
+                {"material_id": candidate["material_id"], "page": candidate["page"]}
+            )
+        else:
+            summary_candidates.append(candidate)
+        first = False
+
+    material_ids = _dedupe_preserve_order(
+        [c["material_id"] for c in summary_candidates]
+    )
+    summaries_by_page = _get_page_section_summaries_for_materialization(
+        conn, material_ids
+    )
+    summary_budget = max(0, int(budget.get("summary_tokens") or 0))
+    running_tokens = 0
+
+    for candidate in summary_candidates:
+        location = {"material_id": candidate["material_id"], "page": candidate["page"]}
+        section = summaries_by_page.get((candidate["material_id"], candidate["page"]))
+        if not section:
+            meta["omitted_summary_pages"] += 1
+            meta["omitted"].append(location)
+            continue
+        line = (
+            f"Material {candidate['material_id']} ({section['title']}), "
+            f"page {candidate['page']}: {section['summary']}"
+        )
+        if candidate.get("reason"):
+            line += f"\nReason selected: {candidate['reason']}"
+        line_tokens = _estimate_tokens(line)
+        if running_tokens + line_tokens > summary_budget:
+            meta["omitted_summary_pages"] += 1
+            meta["omitted"].append(location)
+            continue
+        summary_evidence.append(line)
+        running_tokens += line_tokens
+        meta["summary_pages"] += 1
+        meta["summary_tokens"] += line_tokens
+        meta["summary_admitted"].append(location)
+
+    return raw_evidence, summary_evidence, meta
+
+
+def _history_budget(
+    window: int,
+    system_text: str,
+    current_user_text: str,
+    reserved_retrieval_tokens: int = 0,
+) -> int:
     """Tokens left for replayed history after system prompt, response reserve,
-    current user message, and a safety margin, capped to a fixed share of the
-    model context window. Never negative."""
+    current user message, retrieval reserve, and a safety margin, capped to a fixed
+    share of the model context window. Never negative."""
     used = (
         _estimate_tokens(system_text)
         + RESPONSE_RESERVE_TOKENS
         + _estimate_tokens(current_user_text)
         + int(window * SAFETY_MARGIN_RATIO)
+        + max(0, int(reserved_retrieval_tokens or 0))
     )
     available = max(0, window - used)
     history_cap = max(0, int(window * HISTORY_CONTEXT_RATIO))
@@ -578,7 +845,9 @@ def _history_budget(window: int, system_text: str, current_user_text: str) -> in
 
 def _output_token_cap(model: str) -> int:
     window = _context_window_for(model)
-    return max(MIN_OUTPUT_TOKENS, min(MAX_OUTPUT_TOKENS, int(window * OUTPUT_CONTEXT_RATIO)))
+    return max(
+        MIN_OUTPUT_TOKENS, min(MAX_OUTPUT_TOKENS, int(window * OUTPUT_CONTEXT_RATIO))
+    )
 
 
 def _compose_history(prior_turns: list, budget_tokens: int) -> list:
@@ -619,14 +888,27 @@ def _load_chat_history(conn, chat_id, before_index) -> list:
     return [{"role": r["role"], "content": r["content"]} for r in rows]
 
 
-def _build_history_turns(conn, chat_id, before_index, model, system_text, current_user_text) -> list:
+def _build_history_turns(
+    conn,
+    chat_id,
+    before_index,
+    model,
+    system_text,
+    current_user_text,
+    reserved_retrieval_tokens: int = 0,
+) -> list:
     """Load active-branch history and trim it to the model's budget.
     Returns kept turns as [{"role", "content"}] in chronological order."""
     prior = _load_chat_history(conn, chat_id, before_index)
     if not prior:
         return []
     window = _context_window_for(model)
-    budget = _history_budget(window, system_text, current_user_text)
+    budget = _history_budget(
+        window,
+        system_text,
+        current_user_text,
+        reserved_retrieval_tokens=reserved_retrieval_tokens,
+    )
     return _compose_history(prior, budget)
 
 
@@ -678,7 +960,7 @@ def _get_api_key(conn, user_id: int, provider: str) -> str:
     cursor.close()
     if not row:
         raise ValueError(f"No {provider} API key found. Add your key in Settings.")
-    return decrypt_api_key(row['encrypted_key'])
+    return decrypt_api_key(row["encrypted_key"])
 
 
 def _format_context(chunks: list) -> str:
@@ -688,7 +970,7 @@ def _format_context(chunks: list) -> str:
     parts = []
     for i, c in enumerate(chunks, 1):
         header = f"[{i}] (type={c['chunk_type']}"
-        if c.get('page_number'):
+        if c.get("page_number"):
             header += f", page {c['page_number']}"
         header += f", similarity={c['similarity']:.3f})"
         parts.append(f"{header}\n{c['chunk_text']}")
@@ -741,7 +1023,9 @@ def _build_layered_system_context(
             "## WebSearchHandoff\n"
             f"{_truncate_text(json.dumps(model_web_handoff), 2000)}\n\n"
         )
-        recommendation = str(model_web_handoff.get("web_search_recommendation", "optional")).lower()
+        recommendation = str(
+            model_web_handoff.get("web_search_recommendation", "optional")
+        ).lower()
         if recommendation == "required":
             handoff_policy = (
                 "## WebSearchHandoffPolicy\n"
@@ -787,7 +1071,9 @@ def _build_layered_system_context(
     )
 
 
-def _verify_grounding(final_text: str, resolver_result: dict, grounding_refs: list) -> dict:
+def _verify_grounding(
+    final_text: str, resolver_result: dict, grounding_refs: list
+) -> dict:
     text = (final_text or "").strip()
     intent = str((resolver_result or {}).get("intent_type", "fresh")).lower()
     entities = (resolver_result or {}).get("resolved_entities") or []
@@ -859,7 +1145,10 @@ def _repair_response_openai(
     repair_messages = list(messages) + [{"role": "user", "content": prompt}]
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json={"model": model, "messages": repair_messages, "temperature": 0.1},
         timeout=_TIMEOUT,
     )
@@ -880,7 +1169,9 @@ def _message_text(message: dict) -> str:
     return ""
 
 
-def _resolve_provider_model(ai_provider: str | None, ai_model: str | None) -> tuple[str, str]:
+def _resolve_provider_model(
+    ai_provider: str | None, ai_model: str | None
+) -> tuple[str, str]:
     provider = ai_provider or DEFAULT_AGENTIC_PROVIDER
     model = ai_model
     if provider == "openai" and not model:
@@ -916,7 +1207,9 @@ def _extract_json_object(text: str) -> dict | None:
 
 def _normalize_web_search_handoff(handoff: dict | None) -> dict:
     data = handoff if isinstance(handoff, dict) else {}
-    recommendation = str(data.get("web_search_recommendation", "optional")).strip().lower()
+    recommendation = (
+        str(data.get("web_search_recommendation", "optional")).strip().lower()
+    )
     if recommendation not in ("required", "optional", "not_needed"):
         recommendation = "optional"
 
@@ -934,7 +1227,9 @@ def _normalize_web_search_handoff(handoff: dict | None) -> dict:
     suggested_queries = data.get("suggested_queries")
     if not isinstance(suggested_queries, list):
         suggested_queries = []
-    suggested_queries = [str(v).strip() for v in suggested_queries if str(v).strip()][:4]
+    suggested_queries = [str(v).strip() for v in suggested_queries if str(v).strip()][
+        :4
+    ]
 
     reasoning = str(data.get("reasoning", "") or "").strip()
     return {
@@ -956,9 +1251,13 @@ def _assess_web_search_handoff(
 ) -> dict:
     """Ask the selected model for web-search routing hints and normalize response."""
     if not (selected_model_draft or "").strip():
-        return _normalize_web_search_handoff({"web_search_recommendation": "optional", "confidence": 0.5})
+        return _normalize_web_search_handoff(
+            {"web_search_recommendation": "optional", "confidence": 0.5}
+        )
 
-    assessment_context = "Assessment-only context for tool routing. No citations required."
+    assessment_context = (
+        "Assessment-only context for tool routing. No citations required."
+    )
     assessment_prompt = (
         "You are creating a structured handoff for another model that orchestrates tools.\n"
         "Given USER_QUESTION and DRAFT_ANSWER, decide whether external web search is needed.\n"
@@ -986,16 +1285,27 @@ def _assess_web_search_handoff(
         normalized["raw_handoff_excerpt"] = _truncate_text(raw, 400)
         return normalized
     except Exception as exc:
-        fallback = _normalize_web_search_handoff({"web_search_recommendation": "optional", "confidence": 0.5})
+        fallback = _normalize_web_search_handoff(
+            {"web_search_recommendation": "optional", "confidence": 0.5}
+        )
         fallback["error"] = f"handoff_assessment_failed: {exc}"
         return fallback
 
 
-def _synthesize_claude(context: str, user_message: str, model: str, api_key: str, image_s3_keys: list | None = None) -> str:
+def _synthesize_claude(
+    context: str,
+    user_message: str,
+    model: str,
+    api_key: str,
+    image_s3_keys: list | None = None,
+) -> str:
     images = _fetch_images_as_base64(image_s3_keys) if image_s3_keys else []
     if images:
         content = [
-            {"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}}
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": mime, "data": data},
+            }
             for mime, data in images
         ] + [{"type": "text", "text": user_message}]
     else:
@@ -1043,7 +1353,13 @@ def _openai_response_text(payload: dict) -> str:
     return ""
 
 
-def _synthesize_openai(context: str, user_message: str, model: str, api_key: str, image_s3_keys: list | None = None) -> str:
+def _synthesize_openai(
+    context: str,
+    user_message: str,
+    model: str,
+    api_key: str,
+    image_s3_keys: list | None = None,
+) -> str:
     images = _fetch_images_as_base64(image_s3_keys) if image_s3_keys else []
     system_text = f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}"
 
@@ -1057,11 +1373,17 @@ def _synthesize_openai(context: str, user_message: str, model: str, api_key: str
             user_content = user_message
         response = requests.post(
             "https://api.openai.com/v1/responses",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": model, "input": [
-                {"role": "system", "content": system_text},
-                {"role": "user", "content": user_content},
-            ]},
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "input": [
+                    {"role": "system", "content": system_text},
+                    {"role": "user", "content": user_content},
+                ],
+            },
             timeout=_TIMEOUT,
         )
         _raise_for_status_verbose(response)
@@ -1085,7 +1407,10 @@ def _synthesize_openai(context: str, user_message: str, model: str, api_key: str
         req_body["temperature"] = 0.2
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json=req_body,
         timeout=_TIMEOUT,
     )
@@ -1093,12 +1418,17 @@ def _synthesize_openai(context: str, user_message: str, model: str, api_key: str
     return response.json()["choices"][0]["message"]["content"]
 
 
-def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str, image_s3_keys: list | None = None) -> str:
+def _synthesize_gemini(
+    context: str,
+    user_message: str,
+    model: str,
+    api_key: str,
+    image_s3_keys: list | None = None,
+) -> str:
     images = _fetch_images_as_base64(image_s3_keys) if image_s3_keys else []
     if images:
         parts = [
-            {"inline_data": {"mime_type": mime, "data": data}}
-            for mime, data in images
+            {"inline_data": {"mime_type": mime, "data": data}} for mime, data in images
         ] + [{"text": user_message}]
     else:
         parts = [{"text": user_message}]
@@ -1110,7 +1440,11 @@ def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str
         },
         json={
             "system_instruction": {
-                "parts": [{"text": f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}"}]
+                "parts": [
+                    {
+                        "text": f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}"
+                    }
+                ]
             },
             "contents": [{"parts": parts}],
         },
@@ -1122,16 +1456,16 @@ def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str
 
 def _emit_web_results(on_event, text: str, max_results: int = 3):
     """Parse web search result text and emit one web_result event per result (up to max_results)."""
-    blocks = re.split(r'\[W\d+\]', text)
+    blocks = re.split(r"\[W\d+\]", text)
     emitted = 0
     for block in blocks[1:]:  # skip header block
         if emitted >= max_results:
             break
-        url_match = re.search(r'url=(\S+)', block)
+        url_match = re.search(r"url=(\S+)", block)
         if not url_match:
             continue
         url = url_match.group(1)
-        content = block[url_match.end():].strip()[:200]
+        content = block[url_match.end() :].strip()[:200]
         on_event({"type": "web_result", "url": url, "excerpt": content})
         emitted += 1
 
@@ -1159,7 +1493,8 @@ def _format_routing_index_block(materials: list[dict]) -> str:
             for s in sections[:50]:
                 start, end = s["start_page"], s["end_page"]
                 page_ref = f"{start}-{end}" if end != start else str(start)
-                snip = s["summary"][:80].rstrip()
+                # The planner navigates by these snippets — keep them informative.
+                snip = s["summary"][:240].rstrip()
                 snippets.append(f"{page_ref}:{snip}")
             if snippets:
                 lines.append(f"  pages: {' · '.join(snippets)}")
@@ -1208,7 +1543,9 @@ def _build_pageindex_synthesis_system_context(
     if evidence_text.strip():
         system_content += "\n\nEvidence:\n" + evidence_text.strip()
     else:
-        system_content += "\n\nEvidence:\nNo retrieved course material or web results were provided."
+        system_content += (
+            "\n\nEvidence:\nNo retrieved course material or web results were provided."
+        )
     if clarification_depth >= 2:
         system_content += (
             "\n\n**Do not ask any further clarifying questions.** Answer the user's question "
@@ -1223,12 +1560,21 @@ def _build_pageindex_synthesis_system_context(
     return system_content
 
 
-def _format_pageindex_evidence(course_contents: list, web_contents: list) -> str:
+def _format_pageindex_evidence(
+    course_contents: list,
+    web_contents: list,
+    summary_contents: list | None = None,
+) -> str:
     parts = []
     if course_contents:
         parts.append(
-            "Retrieved course material:\n"
+            "Raw retrieved course material:\n"
             + "\n\n---\n\n".join(str(c) for c in course_contents)
+        )
+    if summary_contents:
+        parts.append(
+            "Candidate coverage summaries:\n"
+            + "\n\n---\n\n".join(str(c) for c in summary_contents)
         )
     if web_contents:
         parts.append(
@@ -1259,7 +1605,6 @@ def _looks_like_retrieval_preamble(text: str) -> bool:
     return any(prefix.startswith(p) for p in patterns)
 
 
-
 class _ReplyStreamFilter:
     """Strip <REPLY>…</REPLY><META>…</META> wrapper from a streamed response.
 
@@ -1285,7 +1630,7 @@ class _ReplyStreamFilter:
         if self._state == "probing":
             stripped = self._buf.lstrip()
             if stripped.startswith(self._OPEN):
-                self._buf = stripped[len(self._OPEN):]
+                self._buf = stripped[len(self._OPEN) :]
                 self._state = "in_reply"
                 self._drain()
             elif len(stripped) >= len(self._OPEN):
@@ -1347,7 +1692,11 @@ def _convert_content_to_responses_format(content):
     out = []
     for part in content:
         if part.get("type") == "image_url":
-            url = part["image_url"] if isinstance(part["image_url"], str) else part["image_url"]["url"]
+            url = (
+                part["image_url"]
+                if isinstance(part["image_url"], str)
+                else part["image_url"]["url"]
+            )
             out.append({"type": "input_image", "image_url": url})
         elif part.get("type") == "text":
             out.append({"type": "input_text", "text": part["text"]})
@@ -1362,7 +1711,12 @@ def _messages_to_responses_input(messages: list) -> list:
     for msg in messages:
         role = msg.get("role")
         if role in ("system", "user"):
-            result.append({"role": role, "content": _convert_content_to_responses_format(msg["content"])})
+            result.append(
+                {
+                    "role": role,
+                    "content": _convert_content_to_responses_format(msg["content"]),
+                }
+            )
         elif role == "assistant":
             content = msg.get("content")
             if content:
@@ -1371,19 +1725,23 @@ def _messages_to_responses_input(messages: list) -> list:
                 tc_id = tc["id"]
                 # Responses API requires item "id" to start with "fc_"; "call_id" stays as-is
                 item_id = "fc_" + tc_id[5:] if tc_id.startswith("call_") else tc_id
-                result.append({
-                    "type": "function_call",
-                    "id": item_id,
-                    "call_id": tc_id,
-                    "name": tc["function"]["name"],
-                    "arguments": tc["function"]["arguments"],
-                })
+                result.append(
+                    {
+                        "type": "function_call",
+                        "id": item_id,
+                        "call_id": tc_id,
+                        "name": tc["function"]["name"],
+                        "arguments": tc["function"]["arguments"],
+                    }
+                )
         elif role == "tool":
-            result.append({
-                "type": "function_call_output",
-                "call_id": msg["tool_call_id"],
-                "output": msg["content"],
-            })
+            result.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": msg["tool_call_id"],
+                    "output": msg["content"],
+                }
+            )
     return result
 
 
@@ -1392,12 +1750,14 @@ def _tools_to_responses_format(tools: list) -> list:
     result = []
     for t in tools:
         fn = t.get("function", t)
-        result.append({
-            "type": "function",
-            "name": fn["name"],
-            "description": fn.get("description", ""),
-            "parameters": fn.get("parameters", {}),
-        })
+        result.append(
+            {
+                "type": "function",
+                "name": fn["name"],
+                "description": fn.get("description", ""),
+                "parameters": fn.get("parameters", {}),
+            }
+        )
     return result
 
 
@@ -1414,14 +1774,16 @@ def _parse_responses_api_output(payload: dict) -> tuple[str, list]:
                 if isinstance(part, dict) and part.get("type") == "output_text":
                     text_parts.append(part.get("text", ""))
         elif item.get("type") == "function_call":
-            tool_calls.append({
-                "id": item.get("call_id") or item.get("id", ""),
-                "type": "function",
-                "function": {
-                    "name": item.get("name", ""),
-                    "arguments": item.get("arguments", "{}"),
-                },
-            })
+            tool_calls.append(
+                {
+                    "id": item.get("call_id") or item.get("id", ""),
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name", ""),
+                        "arguments": item.get("arguments", "{}"),
+                    },
+                }
+            )
     if not text_parts and isinstance(payload.get("output_text"), str):
         text_parts.append(payload["output_text"])
     return "".join(text_parts), tool_calls
@@ -1444,11 +1806,18 @@ def _pageindex_call_responses(
     if tools:
         req_body["tools"] = _tools_to_responses_format(tools)
         req_body["tool_choice"] = "auto"
+        # Planner calls run up to MAX_TOOL_ITERATIONS times before synthesis;
+        # cap reasoning effort so each iteration stays fast. Synthesis (no
+        # tools) keeps the model's default effort.
+        req_body["reasoning"] = {"effort": "low"}
     response = requests.post(
         "https://api.openai.com/v1/responses",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json=req_body,
-        timeout=_TIMEOUT,
+        timeout=_RESPONSES_TIMEOUT,
     )
     _raise_for_status_verbose(response)
     payload = response.json()
@@ -1628,6 +1997,41 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
         {
             "type": "function",
             "function": {
+                "name": "select_page_candidates",
+                "description": (
+                    "Submit a ranked frontier of candidate page ranges for broad questions. "
+                    "The backend will fetch raw text for the top budgeted subset and use summaries for the rest."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "candidates": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "material_id": {"type": "integer"},
+                                    "pages": {
+                                        "type": "string",
+                                        "description": "Page spec such as '5-7', '3,8', or '12'.",
+                                    },
+                                    "reason": {"type": "string"},
+                                    "priority": {
+                                        "type": "string",
+                                        "enum": ["core", "supporting", "background"],
+                                    },
+                                },
+                                "required": ["material_id", "pages"],
+                            },
+                        }
+                    },
+                    "required": ["candidates"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "propose_generation",
                 "description": (
                     "Propose a study artifact (quiz, flashcards, or report) for the user to "
@@ -1643,7 +2047,10 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
                             "type": "string",
                             "enum": ["quiz", "flashcards", "report"],
                         },
-                        "title": {"type": "string", "description": "Short human title."},
+                        "title": {
+                            "type": "string",
+                            "description": "Short human title.",
+                        },
                         "discussion_summary": {
                             "type": "string",
                             "description": (
@@ -1660,13 +2067,13 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
                             "type": "object",
                             "description": (
                                 "Type-specific generation parameters. "
-                                "Quiz: {\"tf_count\":3,\"sa_count\":2,\"la_count\":1,\"mcq_count\":5}. "
-                                "Flashcards: {\"card_count\":20}. "
-                                "Report: {\"template_id\":\"<id>\"} where id is one of "
-                                "\"study-guide\" (structured outline with key concepts), "
-                                "\"briefing\" (executive summary for quick understanding), "
-                                "\"summary\" (condensed overview of main points), "
-                                "\"custom\" (anything else — also include \"custom_prompt\":\"<specific instruction>\"). "
+                                'Quiz: {"tf_count":3,"sa_count":2,"la_count":1,"mcq_count":5}. '
+                                'Flashcards: {"card_count":20}. '
+                                'Report: {"template_id":"<id>"} where id is one of '
+                                '"study-guide" (structured outline with key concepts), '
+                                '"briefing" (executive summary for quick understanding), '
+                                '"summary" (condensed overview of main points), '
+                                '"custom" (anything else — also include "custom_prompt":"<specific instruction>"). '
                                 "Choose the most fitting template; use custom only when none of the others fit."
                             ),
                         },
@@ -1676,32 +2083,119 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
             },
         },
     ]
-    if web_search_enabled and os.environ.get("AGENTIC_WEB_SEARCH_ENABLED", "").lower() == "true":
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": "web_search",
-                "description": "Search the web for current information to supplement course materials. Use when page content is insufficient.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"query": {"type": "string", "description": "Search query"}},
-                    "required": ["query"],
+    if (
+        web_search_enabled
+        and os.environ.get("AGENTIC_WEB_SEARCH_ENABLED", "").lower() == "true"
+    ):
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "Search the web for current information to supplement course materials. Use when page content is insufficient.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Search query"}
+                        },
+                        "required": ["query"],
+                    },
                 },
-            },
-        })
+            }
+        )
     return tools
 
 
-def _dispatch_pageindex_tool(conn, name, args, course_id, grounding_refs, on_event) -> tuple[str, dict]:
+def _candidate_frontier_trace(iteration: int, args: dict, meta: dict, budget: dict) -> dict:
+    budget = meta.get("effective_budget") or budget
+    return {
+        "tool": "select_page_candidates",
+        "args": args,
+        "iteration": iteration,
+        "candidate_count": meta.get("candidate_count", 0),
+        "dropped_candidates": meta.get("dropped_candidates", 0),
+        "raw_pages": meta.get("raw_pages", 0),
+        "raw_tokens": meta.get("raw_tokens", 0),
+        "summary_pages": meta.get("summary_pages", 0),
+        "summary_tokens": meta.get("summary_tokens", 0),
+        "omitted_summary_pages": meta.get("omitted_summary_pages", 0),
+        "retrieval_budget_tokens": budget.get("active_tokens", 0),
+        "raw_budget_tokens": budget.get("raw_tokens", 0),
+        "summary_budget_tokens": budget.get("summary_tokens", 0),
+    }
+
+
+def _format_frontier_locations(locations: list) -> str:
+    by_material: dict[int, list[int]] = {}
+    for location in locations:
+        by_material.setdefault(location["material_id"], []).append(location["page"])
+    return "; ".join(
+        f"Material {material_id}: pages {', '.join(str(p) for p in pages)}"
+        for material_id, pages in by_material.items()
+    )
+
+
+def _dispatch_candidate_frontier(
+    conn, args: dict, budget: dict, grounding_refs: list
+) -> tuple[str, dict]:
+    candidates, dropped = _normalize_page_candidates(args.get("candidates") or [])
+    if len(candidates) > _FRONTIER_EXPAND_CANDIDATE_THRESHOLD:
+        budget = _expand_retrieval_budget(budget)
+    raw_evidence, summary_evidence, materialization_meta = _materialize_page_candidates(
+        conn, candidates, budget
+    )
+    for material_id in _dedupe_preserve_order(
+        materialization_meta.get("raw_material_ids") or []
+    ):
+        grounding_refs.append(f"material:{material_id}")
+    meta = {
+        "raw_evidence": raw_evidence,
+        "summary_evidence": summary_evidence,
+        "candidate_count": len(candidates),
+        "dropped_candidates": dropped,
+        "effective_budget": budget,
+        **materialization_meta,
+    }
+    lines = [
+        f"Candidate frontier accepted: "
+        f"{meta['raw_pages']} raw pages, "
+        f"{meta['summary_pages']} summary pages, "
+        f"{meta['omitted_summary_pages']} summary pages omitted."
+    ]
+    if meta.get("raw_admitted"):
+        lines.append(
+            "Raw text admitted (sent to the answer model in full): "
+            + _format_frontier_locations(meta["raw_admitted"])
+        )
+    if meta.get("summary_admitted"):
+        lines.append(
+            "Summarized only (raw text not admitted): "
+            + _format_frontier_locations(meta["summary_admitted"])
+        )
+    if meta.get("omitted"):
+        lines.append(
+            "Omitted (over budget or no summary available): "
+            + _format_frontier_locations(meta["omitted"])
+        )
+    if meta.get("summary_admitted") or meta.get("omitted"):
+        lines.append(
+            "If any summarized or omitted pages likely contain the answer, fetch the most "
+            "important ones directly with get_page_content, or resubmit a smaller frontier "
+            "with those pages ranked core."
+        )
+    return "\n".join(lines), meta
+
+
+def _dispatch_pageindex_tool(
+    conn, name, args, course_id, grounding_refs, on_event
+) -> tuple[str, dict]:
     """Dispatch a single PageIndex tool call. Returns (tool-result text, extra trace metadata).
     Appends to grounding_refs and emits events as a side effect."""
     from pageindex_retrieval import get_material_structure, get_page_content
 
     if name == "get_material_structure":
         material_id = args.get("material_id")
-        tool_result = json.dumps(
-            get_material_structure(conn, material_id), indent=2
-        )
+        tool_result = json.dumps(get_material_structure(conn, material_id), indent=2)
     elif name == "get_page_content":
         material_id = args.get("material_id")
         pages_spec = args.get("pages", "")
@@ -1754,6 +2248,7 @@ def _dispatch_pageindex_tool(conn, name, args, course_id, grounding_refs, on_eve
             )
     elif name == "web_search":
         from tools import execute_web_search
+
         if on_event:
             on_event({"type": "web_search_start", "query": args.get("query", "")})
         result = execute_web_search(conn, args.get("query", ""))
@@ -1779,11 +2274,15 @@ def _pageindex_tools_anthropic(tools: list) -> list:
     result = []
     for t in tools:
         fn = t.get("function", t)
-        result.append({
-            "name": fn["name"],
-            "description": fn.get("description", ""),
-            "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
-        })
+        result.append(
+            {
+                "name": fn["name"],
+                "description": fn.get("description", ""),
+                "input_schema": fn.get(
+                    "parameters", {"type": "object", "properties": {}}
+                ),
+            }
+        )
     return result
 
 
@@ -1854,11 +2353,15 @@ def _pageindex_tools_gemini(tools: list) -> list:
     declarations = []
     for t in tools:
         fn = t.get("function", t)
-        declarations.append({
-            "name": fn["name"],
-            "description": fn.get("description", ""),
-            "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
-        })
+        declarations.append(
+            {
+                "name": fn["name"],
+                "description": fn.get("description", ""),
+                "parameters": fn.get(
+                    "parameters", {"type": "object", "properties": {}}
+                ),
+            }
+        )
     return [{"functionDeclarations": declarations}]
 
 
@@ -1940,6 +2443,11 @@ def run_agent_pageindex(
 
     history_system_content = system_content + _CONVERSATION_HISTORY_NOTICE
 
+    # Budget starts at the base slice; the candidate frontier auto-expands it
+    # when the planner submits a broad frontier. History reserves the max slice
+    # so a later expansion cannot overflow the context window.
+    retrieval_budget = _retrieval_budget_for(model)
+
     _history_turns = _build_history_turns(
         conn=conn,
         chat_id=chat_id,
@@ -1947,6 +2455,7 @@ def run_agent_pageindex(
         model=model,
         system_text=history_system_content,
         current_user_text=user_message,
+        reserved_retrieval_tokens=retrieval_budget["max_tokens"],
     )
 
     system_content = history_system_content
@@ -1986,6 +2495,7 @@ def run_agent_pageindex(
     repair_invoked = False
     course_evidence: list[str] = []
     web_evidence: list[str] = []
+    summary_evidence: list[str] = []
 
     def _record_evidence(tool_name: str, tool_result: str) -> None:
         if tool_name == "get_page_content":
@@ -1993,26 +2503,33 @@ def run_agent_pageindex(
         elif tool_name == "web_search":
             web_evidence.append(str(tool_result))
 
-    # Retrieval always uses gpt-4o-mini; synthesis always uses the user-selected model.
-    retrieval_model = DEFAULT_AGENTIC_MODEL
+    # Retrieval planning runs on the user-selected model — navigation quality is
+    # the dominant retrieval failure mode, so it gets the same model as synthesis.
+    retrieval_model = model
 
     def _retrieval_call(msgs, tls):
-        """Tool-calling loop: always gpt-4o-mini, non-text events pass through."""
+        """Tool-calling loop: user-selected model, non-text events pass through."""
+
         def _non_text_evt(evt):
             if on_event and evt.get("type") != "text":
                 on_event(evt)
-        return _pageindex_stream_call(api_key, retrieval_model, msgs, tls, _non_text_evt if on_event else None)
+
+        return _pageindex_stream_call(
+            api_key, retrieval_model, msgs, tls, _non_text_evt if on_event else None
+        )
 
     def _synthesis_call(msgs):
         """Final answer: user-selected model with full text streaming."""
         if on_event is None:
             return _pageindex_stream_call(api_key, model, msgs, None, None)
         filt = _ReplyStreamFilter(lambda t: on_event({"type": "text", "chunk": t}))
+
         def _evt(evt):
             if evt.get("type") == "text":
                 filt.feed(evt["chunk"])
             else:
                 on_event(evt)
+
         result = _pageindex_stream_call(api_key, model, msgs, None, _evt)
         filt.flush()
         return result
@@ -2024,7 +2541,10 @@ def run_agent_pageindex(
     if provider == "claude":
         if request_images:
             claude_user_content = [
-                {"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}}
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": mime, "data": data},
+                }
                 for mime, data in request_images
             ] + [{"type": "text", "text": user_message}]
         else:
@@ -2034,7 +2554,12 @@ def run_agent_pageindex(
         ]
         for iteration in range(MAX_TOOL_ITERATIONS):
             blocks, stop_reason = _pageindex_stream_call_claude(
-                api_key, model, system_content, claude_messages, tools, _non_text_event if on_event else None
+                api_key,
+                model,
+                system_content,
+                claude_messages,
+                tools,
+                _non_text_event if on_event else None,
             )
             tool_use_blocks = [b for b in blocks if b["type"] == "tool_use"]
             if not tool_use_blocks or stop_reason != "tool_use":
@@ -2043,12 +2568,16 @@ def run_agent_pageindex(
             assistant_content = []
             for b in blocks:
                 if b["type"] == "tool_use":
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": b["id"],
-                        "name": b["name"],
-                        "input": json.loads(b["input_json"]) if b["input_json"] else {},
-                    })
+                    assistant_content.append(
+                        {
+                            "type": "tool_use",
+                            "id": b["id"],
+                            "name": b["name"],
+                            "input": json.loads(b["input_json"])
+                            if b["input_json"]
+                            else {},
+                        }
+                    )
                 elif b["type"] == "text" and b["text"]:
                     assistant_content.append({"type": "text", "text": b["text"]})
             claude_messages.append({"role": "assistant", "content": assistant_content})
@@ -2063,13 +2592,23 @@ def run_agent_pageindex(
                         "generation_type": args.get("generation_type") or "",
                         "title": args.get("title") or "",
                         "discussion_summary": args.get("discussion_summary") or "",
-                        "material_ids": args.get("material_ids") or list(context_material_ids or []),
+                        "material_ids": args.get("material_ids")
+                        or list(context_material_ids or []),
                         "params": args.get("params") or {},
                     }
                     if on_event:
                         on_event(proposal)
                     proposal_emitted = True
                     result_text = ""
+                elif b["name"] == "select_page_candidates":
+                    result_text, _tmeta = _dispatch_candidate_frontier(
+                        conn=conn,
+                        args=args,
+                        budget=retrieval_budget,
+                        grounding_refs=grounding_refs,
+                    )
+                    course_evidence.extend(_tmeta.get("raw_evidence") or [])
+                    summary_evidence.extend(_tmeta.get("summary_evidence") or [])
                 else:
                     result_text, _tmeta = _dispatch_pageindex_tool(
                         conn=conn,
@@ -2080,15 +2619,20 @@ def run_agent_pageindex(
                         on_event=on_event,
                     )
                     _record_evidence(b["name"], result_text)
-                _te = {"tool": b["name"], "args": args, "iteration": iteration}
-                if _tmeta.get("urls"):
-                    _te["urls"] = _tmeta["urls"]
+                if b["name"] == "select_page_candidates":
+                    _te = _candidate_frontier_trace(iteration, args, _tmeta, retrieval_budget)
+                else:
+                    _te = {"tool": b["name"], "args": args, "iteration": iteration}
+                    if _tmeta.get("urls"):
+                        _te["urls"] = _tmeta["urls"]
                 tool_trace.append(_te)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": b["id"],
-                    "content": result_text,
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": b["id"],
+                        "content": result_text,
+                    }
+                )
             if proposal_emitted:
                 final_text = GENERATION_PROPOSAL_READY_MESSAGE
                 break
@@ -2097,7 +2641,7 @@ def run_agent_pageindex(
         if not proposal_emitted:
             evt_cb, flush = _filtered_on_event(on_event)
             synthesis_system_content = _build_pageindex_synthesis_system_context(
-                _format_pageindex_evidence(course_evidence, web_evidence),
+                _format_pageindex_evidence(course_evidence, web_evidence, summary_evidence),
                 clarification_depth=clarification_depth,
             )
             synthesis_messages = _shape_history_claude(_history_turns) + [
@@ -2108,7 +2652,10 @@ def run_agent_pageindex(
             )
             flush()
             full_text = "".join(b["text"] for b in blocks if b["type"] == "text")
-            raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+            raw_final = (
+                full_text.strip()
+                or "I could not find relevant content in the course materials."
+            )
             (
                 reply_body,
                 assistant_reply_summary,
@@ -2119,16 +2666,24 @@ def run_agent_pageindex(
             if _looks_like_retrieval_preamble(final_text):
                 repair_invoked = True
                 strict_system_content = _build_pageindex_synthesis_system_context(
-                    _format_pageindex_evidence(course_evidence, web_evidence),
+                    _format_pageindex_evidence(course_evidence, web_evidence, summary_evidence),
                     clarification_depth=clarification_depth,
                     strict=True,
                 )
                 blocks, _ = _pageindex_stream_call_claude(
-                    api_key, model, strict_system_content, synthesis_messages, [], evt_cb
+                    api_key,
+                    model,
+                    strict_system_content,
+                    synthesis_messages,
+                    [],
+                    evt_cb,
                 )
                 flush()
                 full_text = "".join(b["text"] for b in blocks if b["type"] == "text")
-                raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+                raw_final = (
+                    full_text.strip()
+                    or "I could not find relevant content in the course materials."
+                )
                 (
                     reply_body,
                     assistant_reply_summary,
@@ -2149,7 +2704,9 @@ def run_agent_pageindex(
                 "intent_type": "pageindex",
                 "verifier_passed": True,
                 "repair_invoked": repair_invoked,
-                "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+                "history_token_estimate": sum(
+                    _estimate_tokens(t["content"]) for t in _history_turns
+                ),
                 "history_turn_count": len(_history_turns),
             },
             assistant_reply_summary,
@@ -2165,10 +2722,17 @@ def run_agent_pageindex(
             ] + [{"text": user_message}]
         else:
             gemini_user_parts = [{"text": user_message}]
-        contents = _shape_history_gemini(_history_turns) + [{"role": "user", "parts": gemini_user_parts}]
+        contents = _shape_history_gemini(_history_turns) + [
+            {"role": "user", "parts": gemini_user_parts}
+        ]
         for iteration in range(MAX_TOOL_ITERATIONS):
             parts, has_fc = _pageindex_stream_call_gemini(
-                api_key, model, system_content, contents, tools, _non_text_event if on_event else None
+                api_key,
+                model,
+                system_content,
+                contents,
+                tools,
+                _non_text_event if on_event else None,
             )
             if not has_fc:
                 break
@@ -2187,13 +2751,23 @@ def run_agent_pageindex(
                             "generation_type": args.get("generation_type") or "",
                             "title": args.get("title") or "",
                             "discussion_summary": args.get("discussion_summary") or "",
-                            "material_ids": args.get("material_ids") or list(context_material_ids or []),
+                            "material_ids": args.get("material_ids")
+                            or list(context_material_ids or []),
                             "params": args.get("params") or {},
                         }
                         if on_event:
                             on_event(proposal)
                         proposal_emitted = True
                         result_text = ""
+                    elif fc["name"] == "select_page_candidates":
+                        result_text, _tmeta = _dispatch_candidate_frontier(
+                            conn=conn,
+                            args=args,
+                            budget=retrieval_budget,
+                            grounding_refs=grounding_refs,
+                        )
+                        course_evidence.extend(_tmeta.get("raw_evidence") or [])
+                        summary_evidence.extend(_tmeta.get("summary_evidence") or [])
                     else:
                         result_text, _tmeta = _dispatch_pageindex_tool(
                             conn=conn,
@@ -2204,9 +2778,12 @@ def run_agent_pageindex(
                             on_event=on_event,
                         )
                         _record_evidence(fc["name"], result_text)
-                    _te = {"tool": fc["name"], "args": args, "iteration": iteration}
-                    if _tmeta.get("urls"):
-                        _te["urls"] = _tmeta["urls"]
+                    if fc["name"] == "select_page_candidates":
+                        _te = _candidate_frontier_trace(iteration, args, _tmeta, retrieval_budget)
+                    else:
+                        _te = {"tool": fc["name"], "args": args, "iteration": iteration}
+                        if _tmeta.get("urls"):
+                            _te["urls"] = _tmeta["urls"]
                     tool_trace.append(_te)
                     function_response = {
                         "name": fc["name"],
@@ -2223,7 +2800,7 @@ def run_agent_pageindex(
         if not proposal_emitted:
             evt_cb, flush = _filtered_on_event(on_event)
             synthesis_system_content = _build_pageindex_synthesis_system_context(
-                _format_pageindex_evidence(course_evidence, web_evidence),
+                _format_pageindex_evidence(course_evidence, web_evidence, summary_evidence),
                 clarification_depth=clarification_depth,
             )
             synthesis_contents = _shape_history_gemini(_history_turns) + [
@@ -2234,7 +2811,10 @@ def run_agent_pageindex(
             )
             flush()
             full_text = "".join(p.get("text", "") for p in parts if "text" in p)
-            raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+            raw_final = (
+                full_text.strip()
+                or "I could not find relevant content in the course materials."
+            )
             (
                 reply_body,
                 assistant_reply_summary,
@@ -2245,16 +2825,24 @@ def run_agent_pageindex(
             if _looks_like_retrieval_preamble(final_text):
                 repair_invoked = True
                 strict_system_content = _build_pageindex_synthesis_system_context(
-                    _format_pageindex_evidence(course_evidence, web_evidence),
+                    _format_pageindex_evidence(course_evidence, web_evidence, summary_evidence),
                     clarification_depth=clarification_depth,
                     strict=True,
                 )
                 parts, _ = _pageindex_stream_call_gemini(
-                    api_key, model, strict_system_content, synthesis_contents, [], evt_cb
+                    api_key,
+                    model,
+                    strict_system_content,
+                    synthesis_contents,
+                    [],
+                    evt_cb,
                 )
                 flush()
                 full_text = "".join(p.get("text", "") for p in parts if "text" in p)
-                raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+                raw_final = (
+                    full_text.strip()
+                    or "I could not find relevant content in the course materials."
+                )
                 (
                     reply_body,
                     assistant_reply_summary,
@@ -2275,7 +2863,9 @@ def run_agent_pageindex(
                 "intent_type": "pageindex",
                 "verifier_passed": True,
                 "repair_invoked": repair_invoked,
-                "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+                "history_token_estimate": sum(
+                    _estimate_tokens(t["content"]) for t in _history_turns
+                ),
                 "history_turn_count": len(_history_turns),
             },
             assistant_reply_summary,
@@ -2283,6 +2873,7 @@ def run_agent_pageindex(
             assistant_clarifying_question,
         )
 
+    nudged = False
     for iteration in range(MAX_TOOL_ITERATIONS):
         started = time.time()
         message, finish_reason = _retrieval_call(messages, tools)
@@ -2297,6 +2888,21 @@ def run_agent_pageindex(
                     "latency_ms": int((time.time() - started) * 1000),
                 }
             )
+            if (
+                not nudged
+                and not course_evidence
+                and not summary_evidence
+                and not web_evidence
+            ):
+                nudged = True
+                messages.append(
+                    {"role": "assistant", "content": message.get("content") or ""}
+                )
+                messages.append(
+                    {"role": "user", "content": _RETRIEVAL_NUDGE_MESSAGE}
+                )
+                tool_trace.append({"phase": "retrieval_nudge", "iteration": iteration})
+                continue
             break
 
         messages.append(
@@ -2322,13 +2928,23 @@ def run_agent_pageindex(
                     "generation_type": args.get("generation_type") or "",
                     "title": args.get("title") or "",
                     "discussion_summary": args.get("discussion_summary") or "",
-                    "material_ids": args.get("material_ids") or list(context_material_ids or []),
+                    "material_ids": args.get("material_ids")
+                    or list(context_material_ids or []),
                     "params": args.get("params") or {},
                 }
                 if on_event:
                     on_event(proposal)
                 proposal_emitted = True
                 tool_result = ""
+            elif name == "select_page_candidates":
+                tool_result, _tmeta = _dispatch_candidate_frontier(
+                    conn=conn,
+                    args=args,
+                    budget=retrieval_budget,
+                    grounding_refs=grounding_refs,
+                )
+                course_evidence.extend(_tmeta.get("raw_evidence") or [])
+                summary_evidence.extend(_tmeta.get("summary_evidence") or [])
             else:
                 tool_result, _tmeta = _dispatch_pageindex_tool(
                     conn=conn,
@@ -2340,9 +2956,12 @@ def run_agent_pageindex(
                 )
                 _record_evidence(name, tool_result)
 
-            _te = {"tool": name, "args": args, "iteration": iteration}
-            if _tmeta.get("urls"):
-                _te["urls"] = _tmeta["urls"]
+            if name == "select_page_candidates":
+                _te = _candidate_frontier_trace(iteration, args, _tmeta, retrieval_budget)
+            else:
+                _te = {"tool": name, "args": args, "iteration": iteration}
+                if _tmeta.get("urls"):
+                    _te["urls"] = _tmeta["urls"]
             tool_trace.append(_te)
             messages.append(
                 {
@@ -2366,7 +2985,9 @@ def run_agent_pageindex(
                 "intent_type": "pageindex",
                 "verifier_passed": True,
                 "repair_invoked": repair_invoked,
-                "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+                "history_token_estimate": sum(
+                    _estimate_tokens(t["content"]) for t in _history_turns
+                ),
                 "history_turn_count": len(_history_turns),
             },
             None,
@@ -2374,14 +2995,18 @@ def run_agent_pageindex(
             None,
         )
     started = time.time()
-    evidence_text = _format_pageindex_evidence(course_evidence, web_evidence)
+    evidence_text = _format_pageindex_evidence(course_evidence, web_evidence, summary_evidence)
     synthesis_system_content = _build_pageindex_synthesis_system_context(
         evidence_text,
         clarification_depth=clarification_depth,
     )
-    synthesis_msgs = [
-        {"role": "system", "content": synthesis_system_content},
-    ] + openai_history_messages + [current_user_message]
+    synthesis_msgs = (
+        [
+            {"role": "system", "content": synthesis_system_content},
+        ]
+        + openai_history_messages
+        + [current_user_message]
+    )
     synthesis_message, _ = _synthesis_call(synthesis_msgs)
     raw_final = (
         _message_text(synthesis_message).strip()
@@ -2401,9 +3026,13 @@ def run_agent_pageindex(
             clarification_depth=clarification_depth,
             strict=True,
         )
-        strict_msgs = [
-            {"role": "system", "content": strict_system_content},
-        ] + openai_history_messages + [current_user_message]
+        strict_msgs = (
+            [
+                {"role": "system", "content": strict_system_content},
+            ]
+            + openai_history_messages
+            + [current_user_message]
+        )
         synthesis_message, _ = _synthesis_call(strict_msgs)
         raw_final = (
             _message_text(synthesis_message).strip()
@@ -2417,13 +3046,14 @@ def run_agent_pageindex(
         ) = _parse_synthesis_json(raw_final)
         final_text = reply_body if (reply_body or "").strip() else raw_final
     import re as _re
+
     # Always strip [WN] markers; also strip plain [N] markers when web search was used
     # (model may renumber web results as [1], [2] without page chunks to back them up)
     has_web_refs = any(r.startswith("web:") for r in grounding_refs)
     has_page_refs = any(r.startswith("material:") for r in grounding_refs)
     if has_web_refs and not has_page_refs:
-        final_text = _re.sub(r'\s*\[\d+\]', '', final_text or "").strip()
-    final_text = _re.sub(r'\s*\[W\d+\]', '', final_text or "").strip()
+        final_text = _re.sub(r"\s*\[\d+\]", "", final_text or "").strip()
+    final_text = _re.sub(r"\s*\[W\d+\]", "", final_text or "").strip()
     tool_trace.append(
         {"phase": "synthesis", "latency_ms": int((time.time() - started) * 1000)}
     )
@@ -2436,7 +3066,9 @@ def run_agent_pageindex(
             "intent_type": "pageindex",
             "verifier_passed": True,
             "repair_invoked": repair_invoked,
-            "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+            "history_token_estimate": sum(
+                _estimate_tokens(t["content"]) for t in _history_turns
+            ),
             "history_turn_count": len(_history_turns),
         },
         assistant_reply_summary,
@@ -2494,7 +3126,7 @@ def suggest_chat_title(
         "You suggest short chat titles. Given the current title and recent conversation turns, "
         "return a refined title that better reflects the conversation topic. "
         "Rules: max 80 characters, no quotes, no markdown, minimal alteration from the current "
-        "title unless the topic has clearly shifted. Return strict JSON: {\"title\": \"...\"}."
+        'title unless the topic has clearly shifted. Return strict JSON: {"title": "..."}.'
     )
     payload = {
         "current_title": current_title or "New Chat",
@@ -2504,7 +3136,10 @@ def suggest_chat_title(
     try:
         resp = requests.post(
             _TITLE_URL,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
             json={
                 "model": _TITLE_MODEL,
                 "response_format": {"type": "json_object"},
@@ -2566,7 +3201,9 @@ def synthesize(
 
     # PageIndex is the only retrieval path. `chunks` and `force_context_only`
     # remain in the signature for caller compatibility but are no longer used.
-    material_scope = context_material_ids if isinstance(context_material_ids, list) else []
+    material_scope = (
+        context_material_ids if isinstance(context_material_ids, list) else []
+    )
     agentic_api_key = _get_api_key(conn, user_id, ai_provider)
     pageindex_course_id = None
     if context_material_ids:

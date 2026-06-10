@@ -58,7 +58,10 @@ def test_get_course_routing_index_formats_output():
     assert len(results) == 1
     assert results[0]["title"] == "Lecture 5"
     assert results[0]["doc_type"] == "lecture_slide"
-    assert results[0]["sections"] == [{"start_page": 1, "end_page": 2, "summary": "Chain rule"}]
+    section = results[0]["sections"][0]
+    assert section["start_page"] == 1
+    assert section["end_page"] == 2
+    assert section["summary"] == "Chain rule"
 
 
 def test_get_material_relations_returns_formatted_list():
@@ -88,3 +91,65 @@ def test_get_material_relations_both_directions():
     result = get_material_relations(conn, course_id=1, material_id=10)
     assert len(result) == 1
     assert result[0]["other_material_id"] == 20
+
+
+def test_get_page_content_returns_token_count():
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.fetchall.return_value = [
+        {"page_number": 1, "text_content": "Intro", "has_images": False, "token_count": 7},
+    ]
+    conn.cursor.return_value = cursor
+    rows = get_page_content(conn, material_id=742, pages="1")
+    assert rows[0]["token_count"] == 7
+
+
+def test_extract_page_summaries_recurses_into_nested_nodes():
+    from pageindex_retrieval import _extract_page_summaries
+
+    nodes = [
+        {
+            "start_page": 1,
+            "end_page": 10,
+            "summary": "Whole lecture",
+            "nodes": [
+                {"start_page": 3, "end_page": 4, "summary": "Bellman backup", "nodes": []},
+            ],
+        },
+    ]
+    sections = _extract_page_summaries(nodes)
+    summaries = [s["summary"] for s in sections]
+    assert "Whole lecture" in summaries
+    assert "Bellman backup" in summaries
+
+
+def test_get_page_section_summaries_prefers_deepest_section():
+    from pageindex_retrieval import get_page_section_summaries
+
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.fetchall.return_value = [
+        {
+            "material_id": 742,
+            "material_title": "Lecture 4",
+            "nodes": [
+                {
+                    "start_page": 1,
+                    "end_page": 10,
+                    "summary": "Whole lecture",
+                    "nodes": [
+                        {"start_page": 3, "end_page": 4, "summary": "Bellman backup", "nodes": []},
+                    ],
+                },
+            ],
+        }
+    ]
+    conn.cursor.return_value = cursor
+
+    summaries = get_page_section_summaries(conn, [742])
+
+    # Pages inside the nested section get its tighter summary...
+    assert summaries[(742, 3)]["summary"] == "Bellman backup"
+    assert summaries[(742, 4)]["summary"] == "Bellman backup"
+    # ...while other pages keep the parent's.
+    assert summaries[(742, 1)]["summary"] == "Whole lecture"

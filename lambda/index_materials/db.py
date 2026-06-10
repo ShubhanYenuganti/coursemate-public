@@ -59,18 +59,20 @@ def store_page_texts(conn, material_id: int, page_rows: list[dict]) -> None:
             row.get("text_content"),
             row.get("has_images", False),
             row.get("section_name"),
+            row.get("token_count"),
             json.dumps(row.get("section_path", [])),
         )
         try:
             _execute_with_savepoint(
                 """INSERT INTO material_page_text
                        (material_id, page_number, text_content, has_images, section_name,
-                        section_path)
-                   VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                        token_count, section_path)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
                    ON CONFLICT (material_id, page_number) DO UPDATE
                    SET text_content = EXCLUDED.text_content,
                        has_images   = EXCLUDED.has_images,
                        section_name = EXCLUDED.section_name,
+                       token_count  = EXCLUDED.token_count,
                        section_path = EXCLUDED.section_path""",
                 params,
             )
@@ -85,7 +87,7 @@ def store_page_texts(conn, material_id: int, page_rows: list[dict]) -> None:
                    SET text_content = EXCLUDED.text_content,
                        has_images   = EXCLUDED.has_images,
                        section_name = EXCLUDED.section_name""",
-                params[:-1],
+                params[:5],
             )
 
 

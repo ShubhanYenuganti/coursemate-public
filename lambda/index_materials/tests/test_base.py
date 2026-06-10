@@ -58,3 +58,26 @@ def test_material_index_to_dict():
     assert d["nodes"][0]["nodes"][0]["title"] == "Sub"
     assert d["retrieval_policy"]["mode"] == "structure_first"
     assert d["retrieval_policy"]["min_candidate_pages"] == 2
+
+
+from token_counter import TokenCounter
+
+
+def test_token_counter_uses_o200k_base_encoding():
+    counter = TokenCounter()
+
+    assert counter.estimate_text("") == 1
+    assert counter.estimate_text("hello world") == len(counter.encoding.encode("hello world"))
+    assert counter.encoding_name == "o200k_base"
+
+
+def test_index_node_serializes_token_count():
+    node = IndexNode(
+        node_id="node_methods",
+        title="Methods",
+        start_page=2,
+        end_page=5,
+        token_count=123,
+    )
+
+    assert node.to_dict()["token_count"] == 123

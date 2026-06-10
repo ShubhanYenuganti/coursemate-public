@@ -104,14 +104,15 @@ def _stub_openai_response_no_tools(content: str = "All done.") -> MagicMock:
 def test_run_agent_pageindex_preloads_routing_and_drops_search_tool():
     """The agent should receive the routing index in the system prompt
     and the search_course_materials tool should not be exposed."""
+    import copy
     from llm import run_agent_pageindex
 
     conn = MagicMock()
 
-    captured = {}
+    payloads = []
 
     def fake_post(url, headers=None, json=None, timeout=None, stream=None):
-        captured["payload"] = json
+        payloads.append(copy.deepcopy(json))
         return _stub_openai_response_no_tools(
             '{"reply": "ok", "summary": "ok", "follow_ups": [], "clarifying_question": null}'
         )
@@ -143,7 +144,7 @@ def test_run_agent_pageindex_preloads_routing_and_drops_search_tool():
             context_material_ids=[10],
         )
 
-    payload = captured["payload"]
+    payload = payloads[0]
     system_msg = payload["messages"][0]
     assert system_msg["role"] == "system"
     assert "<course_materials>" in system_msg["content"]
@@ -173,9 +174,9 @@ def _stub_openai_tool_call(material_id: int, pages: str) -> MagicMock:
 
 
 def test_run_agent_pageindex_forced_synthesis_when_iterations_exhausted():
-    """When MAX_TOOL_ITERATIONS is exhausted without a final answer, the agent
-    makes one additional no-tool call to synthesize from the accumulated context
-    (Q08 fix) rather than returning an error."""
+    """When MAX_TOOL_ITERATIONS (6) is exhausted without a final answer, the agent
+    still runs the separate synthesis call from the accumulated evidence rather
+    than returning an error."""
     from llm import run_agent_pageindex
 
     conn = MagicMock()
@@ -187,7 +188,9 @@ def test_run_agent_pageindex_forced_synthesis_when_iterations_exhausted():
         _stub_openai_tool_call(10, "4-5"),
         _stub_openai_tool_call(10, "6-7"),
         _stub_openai_tool_call(10, "8-9"),
-        # forced synthesis call (no tools in request)
+        _stub_openai_tool_call(10, "2-3"),
+        _stub_openai_tool_call(10, "4-5"),
+        # synthesis call (no tools in request)
         _stub_openai_response_no_tools(
             "<REPLY>\nSynthesized from evidence.\n</REPLY>\n"
             '<META>\n{"summary": "ok", "follow_ups": [], "clarifying_question": null}\n</META>'
@@ -226,15 +229,15 @@ def test_run_agent_pageindex_forced_synthesis_when_iterations_exhausted():
             context_material_ids=[10],
         )
 
-    # 4 retrieval iterations + 1 forced synthesis = 5 calls total
-    assert len(payloads) == 5
-    # Forced synthesis carries no tools
-    assert "tools" not in payloads[4]
-    # The accumulated context is passed (not a fresh lean prompt)
-    assert payloads[4]["messages"][0]["content"] != ""
+    # 6 retrieval iterations + 1 synthesis = 7 calls total
+    assert len(payloads) == 7
+    # Synthesis carries no tools
+    assert "tools" not in payloads[6]
+    # The synthesis system prompt carries the retrieved evidence
+    assert payloads[6]["messages"][0]["content"] != ""
     assert final_text == "Synthesized from evidence."
-    assert grounding_refs == ["material:10"] * 4
-    assert any(t.get("phase") == "forced_synthesis" for t in tool_trace)
+    assert grounding_refs == ["material:10"] * 6
+    assert any(t.get("phase") == "synthesis" for t in tool_trace)
 
 
 def test_synthesize_pageindex_infers_course_from_chat_without_material_scope():
@@ -263,13 +266,17 @@ def test_synthesize_pageindex_infers_course_from_chat_without_material_scope():
     assert run_agent.call_args.kwargs["context_material_ids"] == []
 
 
-def test_pageindex_prompt_documents_citation_numbering():
-    """PAGEINDEX_SYSTEM_PROMPT must explain how [N] markers map to fetched pages."""
-    from llm import PAGEINDEX_SYSTEM_PROMPT
-    text = PAGEINDEX_SYSTEM_PROMPT.lower()
-    assert "get_page_content" in text
-    assert ("order" in text and "call" in text) or "nth call" in text, \
-        "Prompt must instruct agent to use call-order for citation numbers"
+def test_pageindex_synthesis_prompt_documents_citation_numbering():
+    """The synthesis prompt (the model that writes the answer) must explain how
+    [N] markers map to the retrieved evidence blocks."""
+    import llm
+    prompt = llm._build_pageindex_synthesis_system_context(
+        "Raw retrieved course material:\nevidence", clarification_depth=0
+    )
+    lower = prompt.lower()
+    assert "citation" in lower
+    assert "[1]" in prompt
+    assert "order" in lower
 
 
 def test_dispatch_pageindex_tool_get_page_content_appends_grounding():
@@ -279,7 +286,7 @@ def test_dispatch_pageindex_tool_get_page_content_appends_grounding():
     events = []
     rows = [{"page_number": 5, "text_content": "Hello page 5"}]
     with patch("pageindex_retrieval.get_page_content", return_value=rows):
-        out = llm._dispatch_pageindex_tool(
+        out, _meta = llm._dispatch_pageindex_tool(
             conn=MagicMock(), name="get_page_content",
             args={"material_id": 7, "pages": "5"},
             course_id=1,
@@ -344,16 +351,18 @@ def _stub_anthropic_text(text):
 
 
 def test_run_agent_pageindex_claude_calls_tool_and_returns_answer():
-    """Claude provider: one tool call then a final text answer."""
+    """Claude provider: one tool call, retrieval ends, then a separate synthesis call."""
     from unittest.mock import patch, MagicMock, call
     from llm import run_agent_pageindex
 
     events = []
     tool_stub = _stub_anthropic_tool_use("tid1", "get_material_structure", {"course_id": 1})
-    text_stub = _stub_anthropic_text('{"answer":"Structure answer","cited_pages":[]}')
+    text_stub = _stub_anthropic_text("Retrieval done.")
+    synth_stub = _stub_anthropic_text("Structure answer")
 
-    with patch("requests.post", side_effect=[tool_stub, text_stub]) as mock_post, \
-         patch("llm._dispatch_pageindex_tool", return_value="<structure>...</structure>") as mock_dispatch, \
+    with patch("requests.post", side_effect=[tool_stub, text_stub, synth_stub]) as mock_post, \
+         patch("llm._dispatch_pageindex_tool", return_value=("<structure>...</structure>", {})) as mock_dispatch, \
+         patch("llm._recall_prior_chat_images", return_value=[]), \
          patch("llm._format_routing_index_block", return_value="<course_materials></course_materials>"):
         result = run_agent_pageindex(
             conn=MagicMock(),
@@ -367,11 +376,11 @@ def test_run_agent_pageindex_claude_calls_tool_and_returns_answer():
             provider="claude",
         )
 
-    # Should have called requests.post twice (tool call + final)
-    assert mock_post.call_count == 2
+    # tool call + retrieval end + separate synthesis call
+    assert mock_post.call_count == 3
     # Should have dispatched get_material_structure
     assert mock_dispatch.call_count == 1
-    # result[0] is the answer string
+    # result[0] is the answer string from the synthesis call
     assert "Structure answer" in result[0]
 
 
@@ -402,16 +411,18 @@ def _stub_gemini_text(text):
 
 
 def test_run_agent_pageindex_gemini_calls_tool_and_returns_answer():
-    """Gemini provider: one tool call then a final text answer."""
+    """Gemini provider: one tool call, retrieval ends, then a separate synthesis call."""
     from unittest.mock import patch, MagicMock
     from llm import run_agent_pageindex
 
     events = []
     tool_stub = _stub_gemini_function_call("get_material_structure", {"course_id": 1})
-    text_stub = _stub_gemini_text('{"answer":"Gemini structure answer","cited_pages":[]}')
+    text_stub = _stub_gemini_text("Retrieval done.")
+    synth_stub = _stub_gemini_text("Gemini structure answer")
 
-    with patch("requests.post", side_effect=[tool_stub, text_stub]) as mock_post, \
-         patch("llm._dispatch_pageindex_tool", return_value="<structure>...</structure>") as mock_dispatch, \
+    with patch("requests.post", side_effect=[tool_stub, text_stub, synth_stub]) as mock_post, \
+         patch("llm._dispatch_pageindex_tool", return_value=("<structure>...</structure>", {})) as mock_dispatch, \
+         patch("llm._recall_prior_chat_images", return_value=[]), \
          patch("llm._format_routing_index_block", return_value="<course_materials></course_materials>"):
         result = run_agent_pageindex(
             conn=MagicMock(),
@@ -425,7 +436,7 @@ def test_run_agent_pageindex_gemini_calls_tool_and_returns_answer():
             provider="gemini",
         )
 
-    assert mock_post.call_count == 2
+    assert mock_post.call_count == 3
     assert mock_dispatch.call_count == 1
     assert "Gemini structure answer" in result[0]
 
@@ -547,6 +558,7 @@ def test_run_agent_pageindex_propose_generation_emits_event():
 
     with patch("llm.requests.post", side_effect=[copy.deepcopy(first), copy.deepcopy(second)]), \
          patch("pageindex_retrieval.get_course_routing_index", return_value=[]), \
+         patch("llm._recall_prior_chat_images", return_value=[]), \
          patch("llm._format_routing_index_block", return_value="<course_materials></course_materials>"):
         run_agent_pageindex(
             conn=MagicMock(),
@@ -567,3 +579,242 @@ def test_run_agent_pageindex_propose_generation_emits_event():
     assert p["material_ids"] == [101, 102]          # defaulted from context_material_ids
     assert p["params"]["tf_count"] == 3
     assert "SYN" in p["discussion_summary"]
+
+
+def test_retrieval_loop_uses_user_selected_model():
+    """The retrieval planning loop must run on the user-selected model,
+    not the hardcoded gpt-4o-mini default."""
+    import copy
+    from llm import run_agent_pageindex
+
+    payloads = []
+
+    def fake_post(url, headers=None, json=None, timeout=None, stream=None):
+        payloads.append(copy.deepcopy(json))
+        return _stub_openai_response_no_tools(
+            '<REPLY>\nok\n</REPLY>\n'
+            '<META>\n{"summary": "ok", "follow_ups": [], "clarifying_question": null}\n</META>'
+        )
+
+    with patch("llm.requests.post", side_effect=fake_post), \
+         patch("pageindex_retrieval.get_course_routing_index", return_value=[]):
+        run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="Summarize lectures 1-3.",
+            model="gpt-4.1",
+            api_key="sk-test",
+            chat_id=None,
+            course_id=7,
+            context_material_ids=[],
+        )
+
+    retrieval_payloads = [p for p in payloads if "tools" in p]
+    assert retrieval_payloads, "expected at least one retrieval call with tools"
+    assert all(p["model"] == "gpt-4.1" for p in retrieval_payloads)
+
+
+def test_retrieval_loop_nudges_once_when_no_evidence():
+    """If the planner stops without fetching any course material, the loop
+    injects one corrective user message and gives it another chance."""
+    import copy
+    from llm import run_agent_pageindex
+
+    payloads = []
+    responses = [
+        _stub_openai_response_no_tools("Routing summaries look sufficient."),
+        _stub_openai_tool_call(10, "2-3"),
+        _stub_openai_response_no_tools("Done."),
+        _stub_openai_response_no_tools(
+            '<REPLY>\nanswer\n</REPLY>\n'
+            '<META>\n{"summary": "ok", "follow_ups": [], "clarifying_question": null}\n</META>'
+        ),
+    ]
+
+    def fake_post(url, headers=None, json=None, timeout=None, stream=None):
+        payloads.append(copy.deepcopy(json))
+        return responses[len(payloads) - 1]
+
+    routing_rows = [
+        {
+            "material_id": 10,
+            "title": "L1",
+            "doc_type": "lecture",
+            "page_count": 9,
+            "summary": "s",
+            "tags": [],
+            "sections": [],
+        }
+    ]
+    page_rows = [{"page_number": 2, "text_content": "content"}]
+
+    with patch("llm.requests.post", side_effect=fake_post), \
+         patch("pageindex_retrieval.get_course_routing_index", return_value=routing_rows), \
+         patch("pageindex_retrieval.get_page_content", return_value=page_rows):
+        final_text, grounding_refs, tool_trace, *_ = run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="What does lecture 1 cover?",
+            model="gpt-4o-mini",
+            api_key="sk-test",
+            chat_id=None,
+            course_id=7,
+            context_material_ids=[10],
+        )
+
+    # no-tool turn + nudged retry + post-fetch turn + synthesis
+    assert len(payloads) == 4
+    nudge_msgs = [
+        m
+        for p in payloads
+        for m in p["messages"]
+        if m["role"] == "user" and "without fetching" in str(m["content"])
+    ]
+    assert nudge_msgs, "expected a corrective nudge message in the retrieval conversation"
+    assert grounding_refs == ["material:10"]
+    assert any(t.get("phase") == "retrieval_nudge" for t in tool_trace)
+
+
+def test_retrieval_nudge_fires_at_most_once():
+    """The corrective nudge must not loop forever when the planner keeps
+    returning no tool calls."""
+    import copy
+    from llm import run_agent_pageindex
+
+    payloads = []
+    responses = [
+        _stub_openai_response_no_tools("Nothing relevant."),
+        _stub_openai_response_no_tools("Still nothing relevant."),
+        _stub_openai_response_no_tools(
+            '<REPLY>\nNo relevant material.\n</REPLY>\n'
+            '<META>\n{"summary": "ok", "follow_ups": [], "clarifying_question": null}\n</META>'
+        ),
+    ]
+
+    def fake_post(url, headers=None, json=None, timeout=None, stream=None):
+        payloads.append(copy.deepcopy(json))
+        return responses[len(payloads) - 1]
+
+    with patch("llm.requests.post", side_effect=fake_post), \
+         patch("pageindex_retrieval.get_course_routing_index", return_value=[]):
+        run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="What does lecture 99 cover?",
+            model="gpt-4o-mini",
+            api_key="sk-test",
+            chat_id=None,
+            course_id=7,
+            context_material_ids=[],
+        )
+
+    # initial no-tool turn + single nudged retry + synthesis
+    assert len(payloads) == 3
+    last_retrieval = payloads[1]
+    nudges = [
+        m
+        for m in last_retrieval["messages"]
+        if m["role"] == "user" and "without fetching" in str(m["content"])
+    ]
+    assert len(nudges) == 1
+
+
+def test_pageindex_retrieval_prompt_defines_planner_role():
+    """The retrieval prompt must frame the model as a planner whose text is
+    discarded, and must not contain the old contradictory instructions."""
+    from llm import PAGEINDEX_SYSTEM_PROMPT
+    text = PAGEINDEX_SYSTEM_PROMPT
+    lower = text.lower()
+    assert "retrieval planner" in lower
+    assert "never shown to the user" in lower
+    # No final-answer format in the planner prompt — its text is discarded.
+    assert "<REPLY>" not in text
+    # Old contradictions removed.
+    assert "Do NOT call any other tools" not in text
+    assert "only call `get_material_structure" not in lower
+    assert "q`" not in text  # typo from the old citation paragraph
+
+
+def test_format_routing_index_block_keeps_long_section_summaries():
+    """Section summaries must not be truncated to unusably short snippets —
+    the planner navigates by them."""
+    long_summary = (
+        "Dynamic programming value iteration convergence proof with Bellman "
+        "operator contraction mapping argument, discount factor bounds, and "
+        "stopping criteria, followed by worked gridworld examples comparing "
+        "policy iteration sweep costs against value iteration sweep costs."
+    )
+    assert len(long_summary) > 200
+    materials = [
+        {
+            "material_id": 1,
+            "title": "Lecture 4",
+            "doc_type": "lecture_slide",
+            "page_count": 12,
+            "summary": "MDP planning.",
+            "tags": [],
+            "sections": [
+                {"start_page": 2, "end_page": 4, "summary": long_summary},
+            ],
+        }
+    ]
+    block = _format_routing_index_block(materials)
+    assert long_summary[:200] in block
+
+
+def _stub_responses_api_post(captured):
+    def fake_post(url, headers=None, json=None, timeout=None, stream=None):
+        captured["url"] = url
+        captured["timeout"] = timeout
+        captured["body"] = json
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {"output_text": "ok", "output": []}
+        return resp
+
+    return fake_post
+
+
+def test_pageindex_responses_call_uses_extended_timeout():
+    """gpt-5.x retrieval/synthesis goes through a non-streaming Responses API
+    call — reasoning models routinely exceed the default 60s read timeout."""
+    import llm
+
+    captured = {}
+    with patch("llm.requests.post", side_effect=_stub_responses_api_post(captured)):
+        llm._pageindex_call_responses(
+            "sk-test",
+            "gpt-5.5",
+            [{"role": "user", "content": "q"}],
+            llm._pageindex_tool_list(),
+            None,
+        )
+
+    assert captured["url"].endswith("/responses")
+    assert captured["timeout"] >= 300
+
+
+def test_pageindex_responses_call_uses_low_reasoning_effort_for_planning():
+    """Planner calls (tools present) cap reasoning effort to keep each of the
+    up-to-6 retrieval iterations fast; synthesis (no tools) keeps the default."""
+    import llm
+
+    planner = {}
+    with patch("llm.requests.post", side_effect=_stub_responses_api_post(planner)):
+        llm._pageindex_call_responses(
+            "sk-test",
+            "gpt-5.5",
+            [{"role": "user", "content": "q"}],
+            llm._pageindex_tool_list(),
+            None,
+        )
+    assert planner["body"]["reasoning"] == {"effort": "low"}
+
+    synthesis = {}
+    with patch("llm.requests.post", side_effect=_stub_responses_api_post(synthesis)):
+        llm._pageindex_call_responses(
+            "sk-test",
+            "gpt-5.5",
+            [{"role": "user", "content": "q"}],
+            None,
+            None,
+        )
+    assert "reasoning" not in synthesis["body"]

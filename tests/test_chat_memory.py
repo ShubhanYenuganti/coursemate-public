@@ -156,7 +156,7 @@ def test_format_pageindex_evidence_blocks_course_and_web_results():
         web_contents=["web result"],
     )
 
-    assert "Retrieved course material:" in evidence
+    assert "Raw retrieved course material:" in evidence
     assert "page one\n\n---\n\npage two" in evidence
     assert "Web search results" in evidence
     assert "web result" in evidence
@@ -746,3 +746,435 @@ def test_openai_synthesis_retries_retrieval_preamble(monkeypatch):
 
     assert result[0] == "MDPs are decision models."
     assert result[3]["repair_invoked"] is True
+
+
+def test_retrieval_budget_for_128k_model_window():
+    budget = llm._retrieval_budget_for("gpt-4o-mini")
+
+    assert budget["window"] == 128000
+    assert budget["base_tokens"] == 15360
+    assert budget["max_tokens"] == 32000
+    assert budget["raw_tokens"] == 9984
+    assert budget["summary_tokens"] == 5376
+
+
+def test_retrieval_budget_clamps_large_model_window():
+    budget = llm._retrieval_budget_for("gpt-4.1")
+
+    assert budget["window"] == 1000000
+    assert budget["base_tokens"] == 48000
+    assert budget["max_tokens"] == 48000
+
+
+def test_retrieval_budget_can_expand_for_broad_questions():
+    budget = llm._retrieval_budget_for("gpt-4o-mini", expanded=True)
+
+    assert budget["base_tokens"] == 15360
+    assert budget["active_tokens"] == 32000
+
+
+def test_scope_classifier_call_removed():
+    # The pre-retrieval LLM scope classification is gone; budgets start at base
+    # and expand from the planner's own frontier size instead.
+    assert not hasattr(llm, "_classify_retrieval_scope")
+
+
+def test_dispatch_candidate_frontier_auto_expands_budget_for_many_candidate_pages(monkeypatch):
+    captured = {}
+
+    def fake_materialize(conn, candidates, budget):
+        captured["budget"] = budget
+        return [], [], {
+            "raw_pages": 0,
+            "raw_tokens": 0,
+            "raw_material_ids": [],
+            "summary_pages": 0,
+            "summary_tokens": 0,
+            "omitted_summary_pages": 0,
+        }
+
+    monkeypatch.setattr(llm, "_materialize_page_candidates", fake_materialize)
+    budget = llm._retrieval_budget_for("gpt-4o-mini")
+    assert budget["active_tokens"] == budget["base_tokens"]
+
+    _result, meta = llm._dispatch_candidate_frontier(
+        conn=object(),
+        args={"candidates": [{"material_id": 1, "pages": "1-6"}]},
+        budget=budget,
+        grounding_refs=[],
+    )
+
+    assert captured["budget"]["active_tokens"] == budget["max_tokens"]
+    assert captured["budget"]["raw_tokens"] == int(budget["max_tokens"] * llm.RETRIEVAL_RAW_RATIO)
+    assert meta["effective_budget"]["active_tokens"] == budget["max_tokens"]
+
+
+def test_dispatch_candidate_frontier_keeps_base_budget_for_small_candidate_sets(monkeypatch):
+    captured = {}
+
+    def fake_materialize(conn, candidates, budget):
+        captured["budget"] = budget
+        return [], [], {
+            "raw_pages": 0,
+            "raw_tokens": 0,
+            "raw_material_ids": [],
+            "summary_pages": 0,
+            "summary_tokens": 0,
+            "omitted_summary_pages": 0,
+        }
+
+    monkeypatch.setattr(llm, "_materialize_page_candidates", fake_materialize)
+    budget = llm._retrieval_budget_for("gpt-4o-mini")
+
+    llm._dispatch_candidate_frontier(
+        conn=object(),
+        args={"candidates": [{"material_id": 1, "pages": "1-3"}]},
+        budget=budget,
+        grounding_refs=[],
+    )
+
+    assert captured["budget"]["active_tokens"] == budget["base_tokens"]
+
+
+def test_history_budget_subtracts_reserved_retrieval_tokens():
+    budget = llm._history_budget(
+        window=10000,
+        system_text="s" * 400,
+        current_user_text="u" * 400,
+        reserved_retrieval_tokens=1000,
+    )
+
+    expected_without_history_cap = (
+        10000
+        - 100
+        - llm.RESPONSE_RESERVE_TOKENS
+        - 100
+        - int(10000 * llm.SAFETY_MARGIN_RATIO)
+        - 1000
+    )
+    assert budget == min(int(10000 * llm.HISTORY_CONTEXT_RATIO), expected_without_history_cap)
+
+
+def test_normalize_page_candidates_expands_and_dedupes_pages():
+    candidates = [
+        {"material_id": 742, "pages": "6-8", "reason": "definition", "priority": "core"},
+        {"material_id": 742, "pages": "8,9", "reason": "continuation", "priority": "supporting"},
+        {"material_id": 743, "pages": "2", "reason": "example", "priority": "background"},
+    ]
+
+    normalized, dropped = llm._normalize_page_candidates(candidates)
+
+    assert dropped == 0
+    assert normalized == [
+        {"material_id": 742, "page": 6, "reason": "definition", "priority": "core"},
+        {"material_id": 742, "page": 7, "reason": "definition", "priority": "core"},
+        {"material_id": 742, "page": 8, "reason": "definition", "priority": "core"},
+        {"material_id": 742, "page": 9, "reason": "continuation", "priority": "supporting"},
+        {"material_id": 743, "page": 2, "reason": "example", "priority": "background"},
+    ]
+
+
+def test_normalize_page_candidates_drops_malformed_candidates():
+    candidates = [
+        {"material_id": "bad", "pages": "1"},
+        {"material_id": 742, "pages": "x-y"},
+        {"material_id": 742, "pages": "3"},
+    ]
+
+    normalized, dropped = llm._normalize_page_candidates(candidates)
+
+    assert dropped == 2
+    assert normalized == [
+        {"material_id": 742, "page": 3, "reason": "", "priority": "supporting"},
+    ]
+
+
+class _FakeCursor:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def execute(self, query, params):
+        pass
+
+    def fetchall(self):
+        return self.rows
+
+    def close(self):
+        pass
+
+
+class _FakeConn:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def cursor(self):
+        return _FakeCursor(self._rows)
+
+
+def test_get_page_section_summaries_returns_matching_sections():
+    from pageindex_retrieval import get_page_section_summaries
+
+    conn = _FakeConn(
+        [
+            {
+                "material_id": 742,
+                "material_title": "Lecture 4",
+                "nodes": [
+                    {"start_page": 1, "end_page": 3, "summary": "Intro", "token_count": 300},
+                    {"start_page": 4, "end_page": 6, "summary": "MDP setup", "token_count": 600},
+                ],
+            }
+        ]
+    )
+
+    summaries = get_page_section_summaries(conn, [742])
+
+    assert summaries[(742, 4)]["summary"] == "MDP setup"
+    assert summaries[(742, 4)]["token_count"] == 600
+    assert summaries[(742, 6)]["title"] == "Lecture 4"
+
+
+def test_materialize_page_candidates_splits_raw_and_summary(monkeypatch):
+    candidates = [
+        {"material_id": 742, "page": 1, "reason": "definition", "priority": "core"},
+        {"material_id": 742, "page": 2, "reason": "setup", "priority": "supporting"},
+        {"material_id": 742, "page": 3, "reason": "example", "priority": "supporting"},
+    ]
+    budget = {
+        "raw_tokens": 160,
+        "summary_tokens": 500,
+    }
+
+    def fake_get_page_content(conn, material_id, pages):
+        token_counts = {1: 100, 2: 80, 3: 40}
+        page = int(pages)
+        return [{"page_number": page, "text_content": f"raw page {pages}", "has_images": False, "token_count": token_counts[page]}]
+
+    def fake_get_page_section_summaries(conn, material_ids):
+        return {
+            (742, 2): {
+                "material_id": 742,
+                "title": "Lecture",
+                "page": 2,
+                "start_page": 2,
+                "end_page": 2,
+                "summary": "summary page 2",
+                "token_count": 80,
+            }
+        }
+
+    monkeypatch.setattr(llm, "_get_page_content_for_materialization", fake_get_page_content)
+    monkeypatch.setattr(llm, "_get_page_section_summaries_for_materialization", fake_get_page_section_summaries)
+
+    raw, summaries, meta = llm._materialize_page_candidates(object(), candidates, budget)
+
+    assert len(raw) == 2
+    assert "raw page 1" in raw[0]
+    assert "raw page 3" in raw[1]
+    assert summaries == [
+        "Material 742 (Lecture), page 2: summary page 2\nReason selected: setup"
+    ]
+    assert meta["raw_pages"] == 2
+    assert meta["raw_tokens"] == 140
+    assert meta["summary_pages"] == 1
+
+
+def test_materialize_page_candidates_tracks_summary_omissions(monkeypatch):
+    candidates = [
+        {"material_id": 742, "page": 1, "reason": "", "priority": "core"},
+        {"material_id": 742, "page": 2, "reason": "", "priority": "supporting"},
+        {"material_id": 742, "page": 3, "reason": "", "priority": "supporting"},
+    ]
+    budget = {"raw_tokens": 1, "summary_tokens": 1}
+
+    monkeypatch.setattr(
+        llm,
+        "_get_page_content_for_materialization",
+        lambda conn, material_id, pages: [{"page_number": int(pages), "text_content": "raw", "has_images": False, "token_count": 50}],
+    )
+    monkeypatch.setattr(
+        llm,
+        "_get_page_section_summaries_for_materialization",
+        lambda conn, material_ids: {
+            (742, 2): {"material_id": 742, "title": "Lecture", "page": 2, "start_page": 2, "end_page": 2, "summary": "summary two"},
+            (742, 3): {"material_id": 742, "title": "Lecture", "page": 3, "start_page": 3, "end_page": 3, "summary": "summary three"},
+        },
+    )
+
+    raw, summaries, meta = llm._materialize_page_candidates(object(), candidates, budget)
+
+    assert len(raw) == 1
+    assert summaries == []
+    assert meta["omitted_summary_pages"] == 2
+
+
+def test_pageindex_tool_list_includes_candidate_frontier_tool():
+    tool_names = [tool["function"]["name"] for tool in llm._pageindex_tool_list(web_search_enabled=False)]
+
+    assert "select_page_candidates" in tool_names
+
+
+def test_retrieval_prompt_describes_budgeted_candidate_frontier():
+    prompt = llm._build_pageindex_retrieval_system_context(
+        "<course_materials></course_materials>",
+        web_search_enabled=False,
+        clarification_depth=0,
+    )
+
+    assert "select_page_candidates" in prompt
+    assert "broad" in prompt.lower()
+    assert "raw text" in prompt.lower()
+    assert "summary" in prompt.lower()
+
+
+def test_dispatch_select_page_candidates_materializes_evidence(monkeypatch):
+    monkeypatch.setattr(
+        llm,
+        "_materialize_page_candidates",
+        lambda conn, candidates, budget: (
+            ["raw evidence"],
+            ["summary evidence"],
+            {
+                "raw_pages": 1,
+                "raw_tokens": 50,
+                "raw_material_ids": [742],
+                "summary_pages": 1,
+                "summary_tokens": 20,
+                "omitted_summary_pages": 0,
+            },
+        ),
+    )
+    grounding_refs = []
+
+    result, meta = llm._dispatch_candidate_frontier(
+        conn=object(),
+        args={"candidates": [{"material_id": 742, "pages": "1"}]},
+        budget={"raw_tokens": 100, "summary_tokens": 100},
+        grounding_refs=grounding_refs,
+    )
+
+    assert result.splitlines()[0] == (
+        "Candidate frontier accepted: 1 raw pages, 1 summary pages, 0 summary pages omitted."
+    )
+    assert meta["raw_evidence"] == ["raw evidence"]
+    assert meta["summary_evidence"] == ["summary evidence"]
+    assert grounding_refs == ["material:742"]
+
+
+def test_dispatch_candidate_frontier_reports_admitted_and_demoted_pages(monkeypatch):
+    def fake_get_page_content(conn, material_id, pages):
+        token_counts = {1: 100, 2: 80, 3: 40}
+        page = int(pages)
+        return [{"page_number": page, "text_content": f"raw page {pages}", "has_images": False, "token_count": token_counts[page]}]
+
+    def fake_get_page_section_summaries(conn, material_ids):
+        return {
+            (742, 2): {
+                "material_id": 742,
+                "title": "Lecture",
+                "page": 2,
+                "start_page": 2,
+                "end_page": 2,
+                "summary": "summary page 2",
+                "token_count": 80,
+            }
+        }
+
+    monkeypatch.setattr(llm, "_get_page_content_for_materialization", fake_get_page_content)
+    monkeypatch.setattr(llm, "_get_page_section_summaries_for_materialization", fake_get_page_section_summaries)
+
+    result, meta = llm._dispatch_candidate_frontier(
+        conn=object(),
+        args={
+            "candidates": [
+                {"material_id": 742, "pages": "1", "priority": "core", "reason": "definition"},
+                {"material_id": 742, "pages": "2", "priority": "supporting", "reason": "setup"},
+                {"material_id": 742, "pages": "3", "priority": "supporting"},
+            ]
+        },
+        budget={"raw_tokens": 160, "summary_tokens": 500},
+        grounding_refs=[],
+    )
+
+    # Pages 1 and 3 fit the raw budget; page 2 was demoted to a summary.
+    assert "Material 742: pages 1, 3" in result
+    assert "Material 742: pages 2" in result
+    # The planner is told how to recover important demoted pages.
+    assert "get_page_content" in result
+    assert meta["raw_admitted"] == [
+        {"material_id": 742, "page": 1},
+        {"material_id": 742, "page": 3},
+    ]
+    assert meta["summary_admitted"] == [{"material_id": 742, "page": 2}]
+
+
+def test_candidate_frontier_trace_prefers_effective_budget():
+    trace = llm._candidate_frontier_trace(
+        iteration=0,
+        args={},
+        meta={
+            "candidate_count": 6,
+            "dropped_candidates": 0,
+            "raw_pages": 4,
+            "raw_tokens": 2000,
+            "summary_pages": 2,
+            "summary_tokens": 300,
+            "omitted_summary_pages": 0,
+            "effective_budget": {
+                "active_tokens": 32000,
+                "raw_tokens": 20800,
+                "summary_tokens": 11200,
+            },
+        },
+        budget={"active_tokens": 15360, "raw_tokens": 9984, "summary_tokens": 5376},
+    )
+
+    assert trace["retrieval_budget_tokens"] == 32000
+    assert trace["raw_budget_tokens"] == 20800
+
+
+def test_format_pageindex_evidence_includes_candidate_summaries():
+    evidence = llm._format_pageindex_evidence(
+        ["raw course"],
+        ["web result"],
+        ["summary course"],
+    )
+
+    assert "Raw retrieved course material:" in evidence
+    assert "Candidate coverage summaries:" in evidence
+    assert "summary course" in evidence
+    assert "Web search results" in evidence
+
+
+def test_synthesis_prompt_distinguishes_raw_and_summary_evidence():
+    prompt = llm._build_pageindex_synthesis_system_context(
+        "Candidate coverage summaries:\nsummary",
+        clarification_depth=0,
+    )
+
+    assert "Raw material is direct evidence" in prompt
+    assert "Candidate coverage summaries" in prompt
+
+
+def test_retrieval_budget_trace_contains_candidate_counts():
+    trace = llm._candidate_frontier_trace(
+        iteration=2,
+        args={"candidates": [{"material_id": 742, "pages": "1-3"}]},
+        meta={
+            "candidate_count": 3,
+            "dropped_candidates": 0,
+            "raw_pages": 2,
+            "raw_tokens": 1500,
+            "summary_pages": 1,
+            "summary_tokens": 200,
+            "omitted_summary_pages": 0,
+        },
+        budget={"active_tokens": 15360, "raw_tokens": 9984, "summary_tokens": 5376},
+    )
+
+    assert trace["tool"] == "select_page_candidates"
+    assert trace["candidate_count"] == 3
+    assert trace["raw_pages"] == 2
+    assert trace["raw_tokens"] == 1500
+    assert trace["summary_pages"] == 1
+    assert trace["retrieval_budget_tokens"] == 15360
