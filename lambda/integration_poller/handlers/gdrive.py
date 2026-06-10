@@ -157,6 +157,26 @@ def _register_new_material(
     return None
 
 
+def _mark_missing_materials_unsynced(source_point_id: int, missing_ids: set[str]):
+    if not missing_ids:
+        return
+    ordered_ids = sorted(missing_ids)
+    with get_db() as db:
+        result = db.execute(
+            """
+            UPDATE materials
+            SET sync = FALSE, updated_at = CURRENT_TIMESTAMP
+            WHERE integration_source_point_id = %s
+              AND external_id = ANY(%s)
+            """,
+            (source_point_id, ordered_ids),
+        )
+    print(
+        f'[gdrive_handler] Reconciled {getattr(result, "rowcount", 0)} missing remote file(s) '
+        f'as unsynced source_point_id={source_point_id}'
+    )
+
+
 def _upsert_material(
     user_id, course_id, source_point_id, file_id, file_name, modified_time
 ):
@@ -317,6 +337,8 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
                 (source_point_id,),
             ).fetchall()
         known_ids = {r['external_id'] for r in known_rows}
+
+        _mark_missing_materials_unsynced(source_point_id, known_ids - remote_ids)
 
         new_file_ids = remote_ids - known_ids
         if new_file_ids:
