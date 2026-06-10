@@ -2,18 +2,25 @@ import re
 
 
 def _extract_page_summaries(nodes: list) -> list[dict]:
+    # The index tree nests sub-sections under each node's "nodes" key —
+    # flatten the whole tree so nested sections stay visible.
     result = []
-    for node in nodes:
-        start = node.get("start_page")
-        if start is None:
-            continue
-        result.append({
-            "start_page": start,
-            "end_page": node.get("end_page") or start,
-            "summary": (node.get("summary") or "").strip().replace("\n", " "),
-            "token_count": node.get("token_count"),
-        })
-    return sorted(result, key=lambda x: x["start_page"])
+
+    def _walk(current: list) -> None:
+        for node in current or []:
+            start = node.get("start_page")
+            if start is not None:
+                result.append({
+                    "start_page": start,
+                    "end_page": node.get("end_page") or start,
+                    "summary": (node.get("summary") or "").strip().replace("\n", " "),
+                    "token_count": node.get("token_count"),
+                })
+            _walk(node.get("nodes") or [])
+
+    _walk(nodes)
+    # Parents (wider spans) sort before their children at the same start page.
+    return sorted(result, key=lambda x: (x["start_page"], x["start_page"] - x["end_page"]))
 
 
 def _parse_pages(pages_str: str) -> list[int]:
@@ -117,7 +124,12 @@ def get_page_section_summaries(conn, material_ids: list[int]) -> dict[tuple[int,
         material_id = row["material_id"]
         title = row.get("material_title") or f"Material {material_id}"
         for section in _extract_page_summaries(row.get("nodes") or []):
+            section_span = section["end_page"] - section["start_page"]
             for page in range(section["start_page"], section["end_page"] + 1):
+                existing = summaries.get((material_id, page))
+                # Deepest (narrowest) section wins for each page.
+                if existing is not None and existing["end_page"] - existing["start_page"] < section_span:
+                    continue
                 summaries[(material_id, page)] = {
                     "material_id": material_id,
                     "title": title,

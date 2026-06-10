@@ -773,18 +773,67 @@ def test_retrieval_budget_can_expand_for_broad_questions():
     assert budget["active_tokens"] == 32000
 
 
-def test_parse_retrieval_scope_accepts_agent_outputs():
-    assert llm._parse_retrieval_scope("broad") == "broad"
-    assert llm._parse_retrieval_scope('{"scope":"broad"}') == "broad"
-    assert llm._parse_retrieval_scope("This is specific.") == "specific"
+def test_scope_classifier_call_removed():
+    # The pre-retrieval LLM scope classification is gone; budgets start at base
+    # and expand from the planner's own frontier size instead.
+    assert not hasattr(llm, "_classify_retrieval_scope")
 
 
-def test_retrieval_budget_uses_scope_to_choose_base_or_max_slice():
-    specific = llm._retrieval_budget_for_scope("gpt-4o-mini", "specific")
-    broad = llm._retrieval_budget_for_scope("gpt-4o-mini", "broad")
+def test_dispatch_candidate_frontier_auto_expands_budget_for_many_candidate_pages(monkeypatch):
+    captured = {}
 
-    assert specific["active_tokens"] == specific["base_tokens"]
-    assert broad["active_tokens"] == broad["max_tokens"]
+    def fake_materialize(conn, candidates, budget):
+        captured["budget"] = budget
+        return [], [], {
+            "raw_pages": 0,
+            "raw_tokens": 0,
+            "raw_material_ids": [],
+            "summary_pages": 0,
+            "summary_tokens": 0,
+            "omitted_summary_pages": 0,
+        }
+
+    monkeypatch.setattr(llm, "_materialize_page_candidates", fake_materialize)
+    budget = llm._retrieval_budget_for("gpt-4o-mini")
+    assert budget["active_tokens"] == budget["base_tokens"]
+
+    _result, meta = llm._dispatch_candidate_frontier(
+        conn=object(),
+        args={"candidates": [{"material_id": 1, "pages": "1-6"}]},
+        budget=budget,
+        grounding_refs=[],
+    )
+
+    assert captured["budget"]["active_tokens"] == budget["max_tokens"]
+    assert captured["budget"]["raw_tokens"] == int(budget["max_tokens"] * llm.RETRIEVAL_RAW_RATIO)
+    assert meta["effective_budget"]["active_tokens"] == budget["max_tokens"]
+
+
+def test_dispatch_candidate_frontier_keeps_base_budget_for_small_candidate_sets(monkeypatch):
+    captured = {}
+
+    def fake_materialize(conn, candidates, budget):
+        captured["budget"] = budget
+        return [], [], {
+            "raw_pages": 0,
+            "raw_tokens": 0,
+            "raw_material_ids": [],
+            "summary_pages": 0,
+            "summary_tokens": 0,
+            "omitted_summary_pages": 0,
+        }
+
+    monkeypatch.setattr(llm, "_materialize_page_candidates", fake_materialize)
+    budget = llm._retrieval_budget_for("gpt-4o-mini")
+
+    llm._dispatch_candidate_frontier(
+        conn=object(),
+        args={"candidates": [{"material_id": 1, "pages": "1-3"}]},
+        budget=budget,
+        grounding_refs=[],
+    )
+
+    assert captured["budget"]["active_tokens"] == budget["base_tokens"]
 
 
 def test_history_budget_subtracts_reserved_retrieval_tokens():
@@ -1004,10 +1053,84 @@ def test_dispatch_select_page_candidates_materializes_evidence(monkeypatch):
         grounding_refs=grounding_refs,
     )
 
-    assert result == "Candidate frontier accepted: 1 raw pages, 1 summary pages, 0 summary pages omitted."
+    assert result.splitlines()[0] == (
+        "Candidate frontier accepted: 1 raw pages, 1 summary pages, 0 summary pages omitted."
+    )
     assert meta["raw_evidence"] == ["raw evidence"]
     assert meta["summary_evidence"] == ["summary evidence"]
     assert grounding_refs == ["material:742"]
+
+
+def test_dispatch_candidate_frontier_reports_admitted_and_demoted_pages(monkeypatch):
+    def fake_get_page_content(conn, material_id, pages):
+        token_counts = {1: 100, 2: 80, 3: 40}
+        page = int(pages)
+        return [{"page_number": page, "text_content": f"raw page {pages}", "has_images": False, "token_count": token_counts[page]}]
+
+    def fake_get_page_section_summaries(conn, material_ids):
+        return {
+            (742, 2): {
+                "material_id": 742,
+                "title": "Lecture",
+                "page": 2,
+                "start_page": 2,
+                "end_page": 2,
+                "summary": "summary page 2",
+                "token_count": 80,
+            }
+        }
+
+    monkeypatch.setattr(llm, "_get_page_content_for_materialization", fake_get_page_content)
+    monkeypatch.setattr(llm, "_get_page_section_summaries_for_materialization", fake_get_page_section_summaries)
+
+    result, meta = llm._dispatch_candidate_frontier(
+        conn=object(),
+        args={
+            "candidates": [
+                {"material_id": 742, "pages": "1", "priority": "core", "reason": "definition"},
+                {"material_id": 742, "pages": "2", "priority": "supporting", "reason": "setup"},
+                {"material_id": 742, "pages": "3", "priority": "supporting"},
+            ]
+        },
+        budget={"raw_tokens": 160, "summary_tokens": 500},
+        grounding_refs=[],
+    )
+
+    # Pages 1 and 3 fit the raw budget; page 2 was demoted to a summary.
+    assert "Material 742: pages 1, 3" in result
+    assert "Material 742: pages 2" in result
+    # The planner is told how to recover important demoted pages.
+    assert "get_page_content" in result
+    assert meta["raw_admitted"] == [
+        {"material_id": 742, "page": 1},
+        {"material_id": 742, "page": 3},
+    ]
+    assert meta["summary_admitted"] == [{"material_id": 742, "page": 2}]
+
+
+def test_candidate_frontier_trace_prefers_effective_budget():
+    trace = llm._candidate_frontier_trace(
+        iteration=0,
+        args={},
+        meta={
+            "candidate_count": 6,
+            "dropped_candidates": 0,
+            "raw_pages": 4,
+            "raw_tokens": 2000,
+            "summary_pages": 2,
+            "summary_tokens": 300,
+            "omitted_summary_pages": 0,
+            "effective_budget": {
+                "active_tokens": 32000,
+                "raw_tokens": 20800,
+                "summary_tokens": 11200,
+            },
+        },
+        budget={"active_tokens": 15360, "raw_tokens": 9984, "summary_tokens": 5376},
+    )
+
+    assert trace["retrieval_budget_tokens"] == 32000
+    assert trace["raw_budget_tokens"] == 20800
 
 
 def test_format_pageindex_evidence_includes_candidate_summaries():

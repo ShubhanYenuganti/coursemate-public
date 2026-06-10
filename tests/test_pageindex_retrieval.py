@@ -102,3 +102,54 @@ def test_get_page_content_returns_token_count():
     conn.cursor.return_value = cursor
     rows = get_page_content(conn, material_id=742, pages="1")
     assert rows[0]["token_count"] == 7
+
+
+def test_extract_page_summaries_recurses_into_nested_nodes():
+    from pageindex_retrieval import _extract_page_summaries
+
+    nodes = [
+        {
+            "start_page": 1,
+            "end_page": 10,
+            "summary": "Whole lecture",
+            "nodes": [
+                {"start_page": 3, "end_page": 4, "summary": "Bellman backup", "nodes": []},
+            ],
+        },
+    ]
+    sections = _extract_page_summaries(nodes)
+    summaries = [s["summary"] for s in sections]
+    assert "Whole lecture" in summaries
+    assert "Bellman backup" in summaries
+
+
+def test_get_page_section_summaries_prefers_deepest_section():
+    from pageindex_retrieval import get_page_section_summaries
+
+    conn = MagicMock()
+    cursor = MagicMock()
+    cursor.fetchall.return_value = [
+        {
+            "material_id": 742,
+            "material_title": "Lecture 4",
+            "nodes": [
+                {
+                    "start_page": 1,
+                    "end_page": 10,
+                    "summary": "Whole lecture",
+                    "nodes": [
+                        {"start_page": 3, "end_page": 4, "summary": "Bellman backup", "nodes": []},
+                    ],
+                },
+            ],
+        }
+    ]
+    conn.cursor.return_value = cursor
+
+    summaries = get_page_section_summaries(conn, [742])
+
+    # Pages inside the nested section get its tighter summary...
+    assert summaries[(742, 3)]["summary"] == "Bellman backup"
+    assert summaries[(742, 4)]["summary"] == "Bellman backup"
+    # ...while other pages keep the parent's.
+    assert summaries[(742, 1)]["summary"] == "Whole lecture"

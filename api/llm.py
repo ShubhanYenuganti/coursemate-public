@@ -204,45 +204,44 @@ _AGENTIC_JSON_FINAL_INSTRUCTION = (
 AGENTIC_SYSTEM_PROMPT = SYSTEM_PROMPT + _AGENTIC_JSON_FINAL_INSTRUCTION
 
 _PAGEINDEX_TOOL_USE = (
-    "\n\n**Tool use**: A routing index of available course materials is provided below. "
-    "Each material includes per-page summaries — use them to identify the right pages and call "
-    "`get_page_content(material_id, pages)` directly with a page range (e.g. '3,4,5' or '3-5'). "
-    "Only call `get_material_structure(material_id)` if the routing index has no page summaries "
-    "for that material or you need sub-section detail not visible in the summaries. "
-    "If the fetched content does not fully answer the question, call `get_related_materials(material_id)` "
-    "to discover related materials and repeat. "
-    "Do NOT call any other tools — only these three are available."
-    "\n\n**High-recall retrieval policy**: Prefer recall over minimal context. Before answering, fetch "
+    "\n\n**Your role**: You are a retrieval planner. Your text output is never shown to the user — "
+    "a separate model writes the final answer from exactly the evidence you fetch with the tools "
+    "below. Do not write the answer yourself; spend your turns fetching the right pages, and stop "
+    "calling tools only once the evidence is sufficient. If in doubt, fetch more."
+    "\n\n**Tool use**: A routing index of available course materials is provided below. Each material "
+    "lists per-section page summaries — use them to locate likely pages, then call "
+    "`get_page_content(material_id, pages)` with a page range (e.g. '3,4,5' or '3-5'). Routing "
+    "summaries are heavily truncated: when they look only loosely related to the question, call "
+    "`get_material_structure(material_id)` to see the full section tree and summaries before "
+    "deciding which pages to fetch. If the fetched content does not fully answer the question, call "
+    "`get_related_materials(material_id)` to discover related materials and repeat. Call "
+    "`propose_generation` only when the user explicitly asks to create a quiz, flashcards, or a report."
+    "\n\n**High-recall retrieval policy**: Prefer recall over minimal context. Fetch "
     "2-4 candidate evidence locations when the question is conceptual, comparative, broad, multi-part, "
-    "or when multiple routing summaries look plausible. Use `get_material_structure(material_id)` for "
-    "conceptual or broad questions before final synthesis when page summaries alone may hide sub-section "
-    "detail. When you fetch a likely page, include neighboring pages when they are likely to contain setup, "
-    "definitions, results, or continuation text. Do not stop after one small fetch unless the fetched page "
-    "fully and directly answers the question. For evaluation-style questions, prefer Recall@5 behavior: "
-    "retrieve several plausible evidence pages first, then synthesize from the best evidence."
+    "or when multiple routing summaries look plausible. When you fetch a likely page, include "
+    "neighboring pages when they are likely to contain setup, definitions, results, or continuation "
+    "text. Do not stop after one small fetch unless the fetched page fully and directly answers the "
+    "question. For evaluation-style questions, prefer Recall@5 behavior: retrieve several plausible "
+    "evidence pages first."
     "\n\n**Structure-first rule**: For broad, conceptual, comparative, multi-part, method, result, or "
     "limitation questions, you must call `get_material_structure(material_id)` before any final answer, "
-    "then call `get_page_content` for the most plausible pages from that structure. Skip this only for "
-    "narrow fact lookup questions where one routing summary directly identifies the exact page."
+    "then select pages from that structure. Skip this only for narrow fact lookup questions where one "
+    "routing summary directly identifies the exact page."
     "\n\n**Broad candidate frontier**: For broad, survey, comparative, cross-topic, or multi-section "
-    "questions, call `select_page_candidates(candidates)` after inspecting the routing tree. Include "
-    "every plausible candidate range in ranked order. The backend will admit raw text for the top "
-    "budgeted subset and compact the rest into summaries. Use direct `get_page_content` for narrow "
-    "lookups where only one small range is needed."
-    "\n\n**Citation numbering**: Each `get_page_content` call you make becomes one numbered citation, "
-    "in the order you   q` called it. The first `get_page_content` call is citation [1], the second is [2], "
-    "and so on. When you write the final answer, cite each fact using the bracket that matches the call "
-    "that fetched its evidence. Do not invent citation numbers that do not correspond to a "
-    "`get_page_content` call. If you fetched the same material on multiple calls, each call gets its own "
-    "citation number — do not collapse them."
+    "questions, call `select_page_candidates(candidates)` after inspecting the routing tree or material "
+    "structure. Include every plausible candidate range in ranked order. The backend admits raw text "
+    "for the top budgeted subset and compacts each remaining page into a one-line summary; its result "
+    "tells you which pages were admitted as raw text, which got a summary, and which were omitted — "
+    "fetch any critical demoted pages directly with `get_page_content`. Use direct `get_page_content` "
+    "for narrow lookups where only one small range is needed."
 )
 
-# System prompt for the PageIndex agentic loop. Uses _SYSTEM_PROMPT_BASE for
-# citations/formatting, a pageindex-specific tool-use section (not _SYSTEM_PROMPT_TOOL_USE,
-# which references search_materials/web_search that don't exist here), and the
-# JSON final-answer schema.
+# System prompt for the PageIndex retrieval loop. The planner's text output is
+# discarded (synthesis is a separate call), so this prompt deliberately omits
+# _SYSTEM_PROMPT_BASE's answer/citation/formatting rules and any final-answer
+# format — the planner's only job is tool-driven evidence gathering.
 PAGEINDEX_SYSTEM_PROMPT = (
-    _SYSTEM_PROMPT_BASE + _PAGEINDEX_TOOL_USE + _AGENTIC_JSON_FINAL_INSTRUCTION
+    "You are the retrieval planner for a course assistant." + _PAGEINDEX_TOOL_USE
 )
 
 _PAGEINDEX_SYNTHESIS_INSTRUCTION = (
@@ -255,6 +254,10 @@ _PAGEINDEX_SYNTHESIS_INSTRUCTION = (
     "Candidate coverage summaries are compact course-index evidence for breadth and "
     "orientation; use them for coverage and caveats, but do not invent details that "
     "require raw text if only a summary was provided."
+    "\n\n**Citation numbering**: The raw evidence blocks appear in retrieval order — "
+    "the first block is citation [1], the second is [2], and so on. Cite each fact with "
+    "the bracket of the block containing its evidence; never invent citation numbers "
+    "that do not correspond to an evidence block."
 )
 
 _CONVERSATION_HISTORY_NOTICE = (
@@ -269,7 +272,15 @@ _SUMMARY_MAX_LEN = 200
 _TIMEOUT = 60  # seconds
 DEFAULT_AGENTIC_PROVIDER = "openai"
 DEFAULT_AGENTIC_MODEL = "gpt-4o-mini"
-MAX_TOOL_ITERATIONS = 4
+MAX_TOOL_ITERATIONS = 6
+
+# Injected once when the retrieval planner stops without fetching any evidence.
+_RETRIEVAL_NUDGE_MESSAGE = (
+    "You ended retrieval without fetching any course material. If any routing summaries "
+    "or sections could plausibly contain the answer, call `select_page_candidates` with "
+    "every plausible page range, or `get_page_content` for specific pages, now. Only stop "
+    "without fetching if the course materials clearly contain nothing relevant."
+)
 NON_VISION_MODEL_IDS = {"gpt-oss-120b"}
 GENERATION_PROPOSAL_READY_MESSAGE = "I prepared a proposal for that. Review it and confirm when you're ready to generate it."
 
@@ -626,48 +637,22 @@ def _retrieval_budget_for(model: str, expanded: bool = False) -> dict:
     }
 
 
-_RETRIEVAL_SCOPE_PROMPT = (
-    "Classify the user's course-material retrieval need as exactly one word: broad or specific.\n"
-    "Use broad for questions that likely need coverage across many sections, comparisons, surveys, "
-    "overviews, or cross-material synthesis.\n"
-    "Use specific for narrow lookups, single definitions, page-specific questions, or questions likely "
-    "answerable from a small number of pages.\n"
-    'Return JSON only: {"scope":"broad"} or {"scope":"specific"}.'
-)
+# A frontier larger than this many candidate pages signals a broad question;
+# the budget expands from the base slice to the max slice.
+_FRONTIER_EXPAND_CANDIDATE_THRESHOLD = 5
 
 
-def _parse_retrieval_scope(text: str) -> str:
-    normalized = (text or "").strip().lower()
-    if not normalized:
-        return "specific"
-    parsed = _extract_json_object(normalized)
-    if isinstance(parsed, dict):
-        normalized = str(parsed.get("scope") or "").strip().lower()
-    if "broad" in normalized:
-        return "broad"
-    return "specific"
-
-
-def _retrieval_budget_for_scope(model: str, scope: str) -> dict:
-    return _retrieval_budget_for(
-        model, expanded=_parse_retrieval_scope(scope) == "broad"
-    )
-
-
-def _classify_retrieval_scope(
-    provider: str, model: str, api_key: str, user_message: str
-) -> str:
-    prompt = f"{_RETRIEVAL_SCOPE_PROMPT}\n\nUser message:\n{user_message}"
-    try:
-        if provider == "claude":
-            raw = _synthesize_claude("", prompt, model, api_key)
-        elif provider == "gemini":
-            raw = _synthesize_gemini("", prompt, model, api_key)
-        else:
-            raw = _synthesize_openai("", prompt, model, api_key)
-    except Exception:
-        return "specific"
-    return _parse_retrieval_scope(raw)
+def _expand_retrieval_budget(budget: dict) -> dict:
+    max_tokens = int(budget.get("max_tokens") or 0)
+    if max_tokens <= 0:
+        return budget
+    raw_tokens = int(max_tokens * RETRIEVAL_RAW_RATIO)
+    return {
+        **budget,
+        "active_tokens": max_tokens,
+        "raw_tokens": raw_tokens,
+        "summary_tokens": max_tokens - raw_tokens,
+    }
 
 
 def _parse_page_spec(pages: str) -> list[int]:
@@ -762,9 +747,12 @@ def _materialize_page_candidates(
         "raw_pages": 0,
         "raw_tokens": 0,
         "raw_material_ids": [],
+        "raw_admitted": [],
         "summary_pages": 0,
         "summary_tokens": 0,
+        "summary_admitted": [],
         "omitted_summary_pages": 0,
+        "omitted": [],
     }
     candidates_with_order = [{**c, "_order": i} for i, c in enumerate(candidates or [])]
     raw_budget = max(0, int(budget.get("raw_tokens") or 0))
@@ -787,6 +775,9 @@ def _materialize_page_candidates(
             meta["raw_pages"] += len(rows)
             meta["raw_tokens"] += row_tokens
             meta["raw_material_ids"].append(candidate["material_id"])
+            meta["raw_admitted"].append(
+                {"material_id": candidate["material_id"], "page": candidate["page"]}
+            )
         else:
             summary_candidates.append(candidate)
         first = False
@@ -801,9 +792,11 @@ def _materialize_page_candidates(
     running_tokens = 0
 
     for candidate in summary_candidates:
+        location = {"material_id": candidate["material_id"], "page": candidate["page"]}
         section = summaries_by_page.get((candidate["material_id"], candidate["page"]))
         if not section:
             meta["omitted_summary_pages"] += 1
+            meta["omitted"].append(location)
             continue
         line = (
             f"Material {candidate['material_id']} ({section['title']}), "
@@ -814,11 +807,13 @@ def _materialize_page_candidates(
         line_tokens = _estimate_tokens(line)
         if running_tokens + line_tokens > summary_budget:
             meta["omitted_summary_pages"] += 1
+            meta["omitted"].append(location)
             continue
         summary_evidence.append(line)
         running_tokens += line_tokens
         meta["summary_pages"] += 1
         meta["summary_tokens"] += line_tokens
+        meta["summary_admitted"].append(location)
 
     return raw_evidence, summary_evidence, meta
 
@@ -1494,7 +1489,8 @@ def _format_routing_index_block(materials: list[dict]) -> str:
             for s in sections[:50]:
                 start, end = s["start_page"], s["end_page"]
                 page_ref = f"{start}-{end}" if end != start else str(start)
-                snip = s["summary"][:80].rstrip()
+                # The planner navigates by these snippets — keep them informative.
+                snip = s["summary"][:240].rstrip()
                 snippets.append(f"{page_ref}:{snip}")
             if snippets:
                 lines.append(f"  pages: {' · '.join(snippets)}")
@@ -2103,6 +2099,7 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
 
 
 def _candidate_frontier_trace(iteration: int, args: dict, meta: dict, budget: dict) -> dict:
+    budget = meta.get("effective_budget") or budget
     return {
         "tool": "select_page_candidates",
         "args": args,
@@ -2120,10 +2117,22 @@ def _candidate_frontier_trace(iteration: int, args: dict, meta: dict, budget: di
     }
 
 
+def _format_frontier_locations(locations: list) -> str:
+    by_material: dict[int, list[int]] = {}
+    for location in locations:
+        by_material.setdefault(location["material_id"], []).append(location["page"])
+    return "; ".join(
+        f"Material {material_id}: pages {', '.join(str(p) for p in pages)}"
+        for material_id, pages in by_material.items()
+    )
+
+
 def _dispatch_candidate_frontier(
     conn, args: dict, budget: dict, grounding_refs: list
 ) -> tuple[str, dict]:
     candidates, dropped = _normalize_page_candidates(args.get("candidates") or [])
+    if len(candidates) > _FRONTIER_EXPAND_CANDIDATE_THRESHOLD:
+        budget = _expand_retrieval_budget(budget)
     raw_evidence, summary_evidence, materialization_meta = _materialize_page_candidates(
         conn, candidates, budget
     )
@@ -2136,15 +2145,37 @@ def _dispatch_candidate_frontier(
         "summary_evidence": summary_evidence,
         "candidate_count": len(candidates),
         "dropped_candidates": dropped,
+        "effective_budget": budget,
         **materialization_meta,
     }
-    result = (
+    lines = [
         f"Candidate frontier accepted: "
         f"{meta['raw_pages']} raw pages, "
         f"{meta['summary_pages']} summary pages, "
         f"{meta['omitted_summary_pages']} summary pages omitted."
-    )
-    return result, meta
+    ]
+    if meta.get("raw_admitted"):
+        lines.append(
+            "Raw text admitted (sent to the answer model in full): "
+            + _format_frontier_locations(meta["raw_admitted"])
+        )
+    if meta.get("summary_admitted"):
+        lines.append(
+            "Summarized only (raw text not admitted): "
+            + _format_frontier_locations(meta["summary_admitted"])
+        )
+    if meta.get("omitted"):
+        lines.append(
+            "Omitted (over budget or no summary available): "
+            + _format_frontier_locations(meta["omitted"])
+        )
+    if meta.get("summary_admitted") or meta.get("omitted"):
+        lines.append(
+            "If any summarized or omitted pages likely contain the answer, fetch the most "
+            "important ones directly with get_page_content, or resubmit a smaller frontier "
+            "with those pages ranked core."
+        )
+    return "\n".join(lines), meta
 
 
 def _dispatch_pageindex_tool(
@@ -2404,8 +2435,10 @@ def run_agent_pageindex(
 
     history_system_content = system_content + _CONVERSATION_HISTORY_NOTICE
 
-    retrieval_scope = _classify_retrieval_scope(provider, model, api_key, user_message)
-    retrieval_budget = _retrieval_budget_for_scope(model, retrieval_scope)
+    # Budget starts at the base slice; the candidate frontier auto-expands it
+    # when the planner submits a broad frontier. History reserves the max slice
+    # so a later expansion cannot overflow the context window.
+    retrieval_budget = _retrieval_budget_for(model)
 
     _history_turns = _build_history_turns(
         conn=conn,
@@ -2414,7 +2447,7 @@ def run_agent_pageindex(
         model=model,
         system_text=history_system_content,
         current_user_text=user_message,
-        reserved_retrieval_tokens=retrieval_budget["active_tokens"],
+        reserved_retrieval_tokens=retrieval_budget["max_tokens"],
     )
 
     system_content = history_system_content
@@ -2462,11 +2495,12 @@ def run_agent_pageindex(
         elif tool_name == "web_search":
             web_evidence.append(str(tool_result))
 
-    # Retrieval always uses gpt-4o-mini; synthesis always uses the user-selected model.
-    retrieval_model = DEFAULT_AGENTIC_MODEL
+    # Retrieval planning runs on the user-selected model — navigation quality is
+    # the dominant retrieval failure mode, so it gets the same model as synthesis.
+    retrieval_model = model
 
     def _retrieval_call(msgs, tls):
-        """Tool-calling loop: always gpt-4o-mini, non-text events pass through."""
+        """Tool-calling loop: user-selected model, non-text events pass through."""
 
         def _non_text_evt(evt):
             if on_event and evt.get("type") != "text":
@@ -2831,6 +2865,7 @@ def run_agent_pageindex(
             assistant_clarifying_question,
         )
 
+    nudged = False
     for iteration in range(MAX_TOOL_ITERATIONS):
         started = time.time()
         message, finish_reason = _retrieval_call(messages, tools)
@@ -2845,6 +2880,21 @@ def run_agent_pageindex(
                     "latency_ms": int((time.time() - started) * 1000),
                 }
             )
+            if (
+                not nudged
+                and not course_evidence
+                and not summary_evidence
+                and not web_evidence
+            ):
+                nudged = True
+                messages.append(
+                    {"role": "assistant", "content": message.get("content") or ""}
+                )
+                messages.append(
+                    {"role": "user", "content": _RETRIEVAL_NUDGE_MESSAGE}
+                )
+                tool_trace.append({"phase": "retrieval_nudge", "iteration": iteration})
+                continue
             break
 
         messages.append(
