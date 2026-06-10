@@ -274,6 +274,10 @@ DEFAULT_AGENTIC_PROVIDER = "openai"
 DEFAULT_AGENTIC_MODEL = "gpt-4o-mini"
 MAX_TOOL_ITERATIONS = 6
 
+# Non-streaming Responses API calls block for the model's full reasoning time;
+# 60s is routinely exceeded by gpt-5.x planning/synthesis over large prompts.
+_RESPONSES_TIMEOUT = 300  # seconds
+
 # Injected once when the retrieval planner stops without fetching any evidence.
 _RETRIEVAL_NUDGE_MESSAGE = (
     "You ended retrieval without fetching any course material. If any routing summaries "
@@ -1802,6 +1806,10 @@ def _pageindex_call_responses(
     if tools:
         req_body["tools"] = _tools_to_responses_format(tools)
         req_body["tool_choice"] = "auto"
+        # Planner calls run up to MAX_TOOL_ITERATIONS times before synthesis;
+        # cap reasoning effort so each iteration stays fast. Synthesis (no
+        # tools) keeps the model's default effort.
+        req_body["reasoning"] = {"effort": "low"}
     response = requests.post(
         "https://api.openai.com/v1/responses",
         headers={
@@ -1809,7 +1817,7 @@ def _pageindex_call_responses(
             "Content-Type": "application/json",
         },
         json=req_body,
-        timeout=_TIMEOUT,
+        timeout=_RESPONSES_TIMEOUT,
     )
     _raise_for_status_verbose(response)
     payload = response.json()

@@ -757,3 +757,64 @@ def test_format_routing_index_block_keeps_long_section_summaries():
     ]
     block = _format_routing_index_block(materials)
     assert long_summary[:200] in block
+
+
+def _stub_responses_api_post(captured):
+    def fake_post(url, headers=None, json=None, timeout=None, stream=None):
+        captured["url"] = url
+        captured["timeout"] = timeout
+        captured["body"] = json
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {"output_text": "ok", "output": []}
+        return resp
+
+    return fake_post
+
+
+def test_pageindex_responses_call_uses_extended_timeout():
+    """gpt-5.x retrieval/synthesis goes through a non-streaming Responses API
+    call — reasoning models routinely exceed the default 60s read timeout."""
+    import llm
+
+    captured = {}
+    with patch("llm.requests.post", side_effect=_stub_responses_api_post(captured)):
+        llm._pageindex_call_responses(
+            "sk-test",
+            "gpt-5.5",
+            [{"role": "user", "content": "q"}],
+            llm._pageindex_tool_list(),
+            None,
+        )
+
+    assert captured["url"].endswith("/responses")
+    assert captured["timeout"] >= 300
+
+
+def test_pageindex_responses_call_uses_low_reasoning_effort_for_planning():
+    """Planner calls (tools present) cap reasoning effort to keep each of the
+    up-to-6 retrieval iterations fast; synthesis (no tools) keeps the default."""
+    import llm
+
+    planner = {}
+    with patch("llm.requests.post", side_effect=_stub_responses_api_post(planner)):
+        llm._pageindex_call_responses(
+            "sk-test",
+            "gpt-5.5",
+            [{"role": "user", "content": "q"}],
+            llm._pageindex_tool_list(),
+            None,
+        )
+    assert planner["body"]["reasoning"] == {"effort": "low"}
+
+    synthesis = {}
+    with patch("llm.requests.post", side_effect=_stub_responses_api_post(synthesis)):
+        llm._pageindex_call_responses(
+            "sk-test",
+            "gpt-5.5",
+            [{"role": "user", "content": "q"}],
+            None,
+            None,
+        )
+    assert "reasoning" not in synthesis["body"]
