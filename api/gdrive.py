@@ -70,6 +70,12 @@ _GDRIVE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 _DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
 _DOCS_API_BASE = "https://docs.googleapis.com/v1"
 _USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
+_DRIVE_SOURCE_MIME_TYPES = (
+    "application/pdf",
+    "application/vnd.google-apps.document",
+    "application/vnd.google-apps.spreadsheet",
+    "application/vnd.google-apps.presentation",
+)
 
 # Drive scopes: readonly for import, drive.file for export (only files we create)
 _GDRIVE_SCOPES = " ".join([
@@ -155,6 +161,10 @@ def _extract_drive_folder_id(raw: str) -> str | None:
     if candidate and _DRIVE_ID_RE.fullmatch(candidate.strip()):
         return candidate.strip()
     return None
+
+
+def _drive_supported_source_query() -> str:
+    return "(" + " or ".join(f"mimeType='{mime}'" for mime in _DRIVE_SOURCE_MIME_TYPES) + ")"
 
 
 def _redirect(handler_self, location: str):
@@ -1136,7 +1146,7 @@ def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
 
     while len(all_files) < target_count:
         params = {
-            "q": f"'{folder_id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false",
+            "q": f"'{folder_id}' in parents and trashed = false and {_drive_supported_source_query()}",
             "fields": "nextPageToken,files(id,name,mimeType)",
             "pageSize": min(page_size, target_count - len(all_files)),
         }

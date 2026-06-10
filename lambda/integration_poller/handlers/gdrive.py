@@ -26,6 +26,8 @@ GOOGLE_DOC_MIME = 'application/vnd.google-apps.document'
 GOOGLE_SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
 GOOGLE_SLIDES_MIME = 'application/vnd.google-apps.presentation'
 GOOGLE_NATIVE_TYPES = frozenset([GOOGLE_DOC_MIME, GOOGLE_SHEET_MIME, GOOGLE_SLIDES_MIME])
+PDF_MIME = 'application/pdf'
+SUPPORTED_EXPORT_MIME_TYPES = GOOGLE_NATIVE_TYPES | frozenset([PDF_MIME])
 
 s3 = boto3.client('s3', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
 sfn = boto3.client('stepfunctions', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
@@ -93,6 +95,10 @@ def _list_all_folder_files(folder_id: str, token: str) -> list[dict]:
     return files
 
 
+def _is_supported_drive_file(file_info: dict) -> bool:
+    return file_info.get('mimeType') in SUPPORTED_EXPORT_MIME_TYPES
+
+
 def _get_drive_file_as_pdf(file_id, mime_type, token):
     """
     Export or download a Drive file as PDF bytes.
@@ -106,13 +112,15 @@ def _get_drive_file_as_pdf(file_id, mime_type, token):
             params={'mimeType': 'application/pdf'},
             stream=True,
         )
-    else:
+    elif mime_type == PDF_MIME:
         resp = _drive_get(
             f'files/{file_id}',
             token,
             params={'alt': 'media'},
             stream=True,
         )
+    else:
+        raise ValueError(f'Unsupported Drive file type: {mime_type or "unknown"}')
 
     content = resp.content
     if len(content) > MAX_FILE_SIZE_BYTES:
@@ -297,7 +305,10 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
         # ── Discovery sweep: find files in the folder not yet in the DB ────────
         folder_id = source_point['external_id']
         print(f'[gdrive_handler] Discovery sweep: listing folder_id={folder_id}')
-        remote_files = _list_all_folder_files(folder_id, token)
+        remote_files = [
+            f for f in _list_all_folder_files(folder_id, token)
+            if _is_supported_drive_file(f)
+        ]
         remote_ids = {f['id'] for f in remote_files}
 
         with get_db() as db:
@@ -343,9 +354,8 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
         mime_type = file_info.get('mimeType', '')
         modified_time = file_info.get('modifiedTime', '')
 
-        # Skip subfolders
-        if mime_type == 'application/vnd.google-apps.folder':
-            print(f'[gdrive_handler] Skipping subfolder file_id={file_id} name={file_name!r}')
+        if not _is_supported_drive_file(file_info):
+            print(f'[gdrive_handler] Skipping unsupported file_id={file_id} name={file_name!r} mime={mime_type!r}')
             continue
 
         try:
