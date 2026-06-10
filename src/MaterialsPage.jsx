@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { formatDateTime } from "./utils/dateUtils";
+import {
+  buildBulkSyncDocTypes,
+  buildBulkSyncToggles,
+  buildSyncFilesPayload,
+} from "./utils/syncWorkflow";
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -511,9 +516,11 @@ function SyncModal({
   error,
   onToggle,
   onDocTypeChange,
+  onSetAllDocTypes,
   onPrevPage,
   onNextPage,
   onSync,
+  onSyncAll,
   onClose,
 }) {
   return (
@@ -547,6 +554,32 @@ function SyncModal({
         </p>
       ) : (
         <div className="space-y-2">
+          {rows.length > 1 && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-indigo-100 bg-indigo-50/50">
+              <span className="text-xs text-gray-500 shrink-0">Set all to:</span>
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value) onSetAllDocTypes(e.target.value);
+                }}
+                className="text-xs rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              >
+                <option value="" disabled>— pick type —</option>
+                {DOCUMENT_TYPES.map((dt) => (
+                  <option key={dt.value} value={dt.value}>{dt.label}</option>
+                ))}
+              </select>
+              <div className="flex-1" />
+              <button
+                type="button"
+                onClick={onSyncAll}
+                disabled={loading}
+                className="shrink-0 px-3 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Sync all
+              </button>
+            </div>
+          )}
           {rows.map((row) => {
             const enabled = toggles[row.external_id] ?? row.sync !== false;
             return (
@@ -1532,17 +1565,24 @@ export default function MaterialsPage({
     setSyncDocTypes((prev) => ({ ...prev, [externalId]: docType }));
   }, []);
 
-  const handleSyncConfirm = useCallback(async () => {
+  const handleSetAllSyncDocTypes = useCallback((docType) => {
+    setSyncDocTypes((prev) => ({
+      ...prev,
+      ...buildBulkSyncDocTypes(syncRows, docType),
+    }));
+  }, [syncRows]);
+
+  const handleSyncConfirm = useCallback(async (options = {}) => {
     if (!selectedSourcePointId || syncRows.length === 0) return;
     setSyncRowsLoading(true);
     setSyncRowsError("");
     try {
-      const filesPayload = syncRows.map((row) => ({
-        external_id: row.external_id,
-        name: row.name,
-        sync: syncToggles[row.external_id] ?? row.sync !== false,
-        doc_type: syncDocTypes[row.external_id] ?? row.doc_type ?? "general",
-      }));
+      const filesPayload = buildSyncFilesPayload(
+        syncRows,
+        syncToggles,
+        syncDocTypes,
+        { forceAll: options.forceAll },
+      );
       const res = await fetch("/api/material", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1627,6 +1667,14 @@ export default function MaterialsPage({
     syncRows,
     syncToggles,
   ]);
+
+  const handleSyncAll = useCallback(() => {
+    setSyncToggles((prev) => ({
+      ...prev,
+      ...buildBulkSyncToggles(syncRows, true),
+    }));
+    handleSyncConfirm({ forceAll: true });
+  }, [handleSyncConfirm, syncRows]);
 
   const handleAddSourcePoint = useCallback(
     async (result) => {
@@ -2097,9 +2145,11 @@ export default function MaterialsPage({
           error={syncRowsError}
           onToggle={handleSyncToggle}
           onDocTypeChange={handleSyncDocTypeChange}
+          onSetAllDocTypes={handleSetAllSyncDocTypes}
           onPrevPage={() => fetchSyncRowsPage(Math.max(1, syncPage - 1))}
           onNextPage={() => fetchSyncRowsPage(syncPage + 1)}
           onSync={handleSyncConfirm}
+          onSyncAll={handleSyncAll}
           onClose={closeSyncModal}
         />
       )}
