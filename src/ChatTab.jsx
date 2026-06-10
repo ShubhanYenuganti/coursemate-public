@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { formatDateTime, parseUTC } from './utils/dateUtils';
 import { getMaterialUrl } from './utils/materialUtils';
+import { PROVIDER_MODELS, NON_VISION_MODEL_IDS } from './modelCatalog.js';
 import SearchChat from './SearchChat';
+import GenerationProposalCard from './components/GenerationProposalCard';
+import PromptLibrary from './components/PromptLibrary';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
@@ -274,52 +277,9 @@ const MODEL_LABELS = {
   claude: 'Claude',
 };
 
-const PROVIDER_MODELS = {
-  claude: [
-    { label: 'Claude Opus 4.6',   id: 'claude-opus-4-6' },
-    { label: 'Claude Sonnet 4.6', id: 'claude-sonnet-4-6' },
-    { label: 'Claude Haiku 4.5',  id: 'claude-haiku-4-5-20251001' },
-    { label: 'Claude Sonnet 4.5', id: 'claude-sonnet-4-5-20250929' },
-    { label: 'Claude Sonnet 4',   id: 'claude-sonnet-4-20250514' },
-    { label: 'Claude Opus 4',     id: 'claude-opus-4-20250514' },
-  ],
-  gemini: [
-    { label: 'Gemini 3.1 Pro',        id: 'gemini-3.1-pro-preview' },
-    { label: 'Gemini 3 Flash',        id: 'gemini-3-flash-preview' },
-    { label: 'Gemini 2.5 Pro',        id: 'gemini-2.5-pro' },
-    { label: 'Gemini 2.5 Flash',      id: 'gemini-2.5-flash' },
-    { label: 'Gemini 2.5 Flash-Lite', id: 'gemini-2.5-flash-lite' },
-    { label: 'Deep Research',         id: 'deep-research-pro-preview-12-2025' },
-    { label: 'Gemini 2.0 Flash',      id: 'gemini-2.0-flash' },
-    { label: 'Gemini 2.0 Flash-Lite', id: 'gemini-2.0-flash-lite' },
-  ],
-  openai: [
-    { label: 'GPT-5.2',               id: 'gpt-5.2' },
-    { label: 'GPT-5.1',               id: 'gpt-5.1' },
-    { label: 'GPT-5 Mini',            id: 'gpt-5-mini' },
-    { label: 'GPT-5 Nano',            id: 'gpt-5-nano' },
-    { label: 'GPT-4.1',               id: 'gpt-4.1' },
-    { label: 'GPT-4.1 mini',          id: 'gpt-4.1-mini' },
-    { label: 'GPT-4.1 nano',          id: 'gpt-4.1-nano' },
-    { label: 'GPT-4o',                id: 'gpt-4o' },
-    { label: 'GPT-4o mini',           id: 'gpt-4o-mini' },
-    { label: 'o3',                    id: 'o3' },
-    { label: 'o3-mini',               id: 'o3-mini' },
-    { label: 'o3-pro',                id: 'o3-pro' },
-    { label: 'o4-mini',               id: 'o4-mini' },
-    { label: 'o1',                    id: 'o1' },
-    { label: 'o1-pro',                id: 'o1-pro' },
-    { label: 'o3 Deep Research',      id: 'o3-deep-research' },
-    { label: 'o4-mini Deep Research', id: 'o4-mini-deep-research' },
-    { label: 'GPT-OSS 120B',          id: 'gpt-oss-120b' },
-  ],
-};
-
-const NON_VISION_MODEL_IDS = new Set([
-  'deep-research-pro-preview-12-2025',
-  'o3-deep-research',
-  'o4-mini-deep-research',
-]);
+// PROVIDER_MODELS lives in ./modelCatalog.js; re-exported here for existing
+// importers (e.g. CoursePage) that pull it from this module.
+export { PROVIDER_MODELS };
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -438,6 +398,85 @@ function SourcesPanel({ open, chunks, focusIndex, onClose, materials }) {
           const isFocused = n === focusIndex;
           const material = chunk.material_id != null ? materialMap[chunk.material_id] : null;
           const downloadUrl = getMaterialUrl(material) || null;
+          const pageCount = (chunks || []).filter((c) => c.citation_type === 'page').length;
+
+          if (chunk.citation_type === 'web') {
+            const webNum = idx - pageCount + 1;
+            let hostname = chunk.url || '';
+            try { hostname = new URL(chunk.url).hostname.replace(/^www\./, ''); } catch {}
+            return (
+              <div
+                key={idx}
+                ref={isFocused ? focusRef : null}
+                className={`rounded-lg px-3 py-2.5 border text-xs transition-colors ${
+                  isFocused ? 'border-l-4 border-teal-400 bg-teal-50' : 'border-gray-100 bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center justify-center px-1 h-4 rounded bg-teal-100 text-teal-700 font-semibold text-[10px] flex-shrink-0">
+                    W{webNum}
+                  </span>
+                  <span className="text-gray-700 font-medium truncate flex-1">{chunk.title || hostname}</span>
+                  {chunk.url && (
+                    <a
+                      href={chunk.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1 rounded text-gray-400 hover:text-teal-600 hover:bg-teal-50 transition-colors flex-shrink-0"
+                    >
+                      <ExternalLinkIcon />
+                    </a>
+                  )}
+                </div>
+                {hostname && chunk.title && (
+                  <div className="mt-0.5 ml-6 text-[10px] text-gray-400 truncate">{hostname}</div>
+                )}
+              </div>
+            );
+          }
+
+          if (chunk.citation_type === 'page') {
+            const pages = chunk.pages || [];
+            const pageLabel = pages.length === 0
+              ? ''
+              : pages.length === 1
+                ? `p. ${pages[0]}`
+                : `pp. ${pages[0]}–${pages[pages.length - 1]}`;
+            return (
+              <div
+                key={idx}
+                ref={isFocused ? focusRef : null}
+                className={`rounded-lg px-3 py-2.5 border text-xs transition-colors ${
+                  isFocused
+                    ? 'border-l-4 border-indigo-400 bg-indigo-50'
+                    : 'border-gray-100 bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-indigo-100 text-indigo-600 font-semibold text-[10px] flex-shrink-0">
+                    {n}
+                  </span>
+                  {material?.name && (
+                    <span className="text-gray-700 font-medium truncate">
+                      {material.name.replace(/\.[^.]+$/, '')}
+                    </span>
+                  )}
+                  {pageLabel && <span className="text-gray-400 ml-auto flex-shrink-0">{pageLabel}</span>}
+                  {downloadUrl && (
+                    <a
+                      href={downloadUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors flex-shrink-0"
+                    >
+                      <ExternalLinkIcon />
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div
               key={idx}
@@ -514,6 +553,12 @@ function MessageBubble({
   onFollowUpClick,
   onSkipClarification,
   isLastAssistantMsg,
+  editImages = [],
+  onEditImageAdd,
+  onEditImageRemove,
+  editFileInputRef,
+  onBuild,
+  onRefine,
 }) {
   const isUser = msg.role === 'user';
   const modelLabel = getMessageModelLabel(msg);
@@ -535,21 +580,36 @@ function MessageBubble({
     const nodes = Array.isArray(children) ? children : [children];
     return nodes.flatMap((child, ci) => {
       if (typeof child !== 'string') return [child];
-      // Only match [N] not immediately adjacent to another bracket group
-      const parts = child.split(/(?<!\])(\[\d+\])(?!\[)/);
+      // Match [N] (page) and [W1],[W2] (web) citations
+      const parts = child.split(/(?<!\])(\[(?:\d+|W\d+)\])(?!\[)/);
       return parts.map((part, i) => {
-        const m = part.match(/^\[(\d+)\]$/);
-        if (!m) return part;
-        const n = Number(m[1]);
-        return (
-          <button
-            key={`${ci}-${i}`}
-            onClick={() => onCiteClick && onCiteClick(n)}
-            className="inline-flex items-center justify-center w-4 h-4 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-600 hover:bg-indigo-200 cursor-pointer align-super mx-0.5"
-          >
-            {n}
-          </button>
-        );
+        const pageM = part.match(/^\[(\d+)\]$/);
+        if (pageM) {
+          const n = Number(pageM[1]);
+          return (
+            <button
+              key={`${ci}-${i}`}
+              onClick={() => onCiteClick && onCiteClick(n)}
+              className="inline-flex items-center justify-center w-4 h-4 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-600 hover:bg-indigo-200 cursor-pointer align-super mx-0.5"
+            >
+              {n}
+            </button>
+          );
+        }
+        const webM = part.match(/^\[W(\d+)\]$/);
+        if (webM) {
+          const wn = Number(webM[1]);
+          return (
+            <button
+              key={`${ci}-${i}`}
+              onClick={() => onCiteClick && onCiteClick(`W${wn}`)}
+              className="inline-flex items-center justify-center px-1 h-4 rounded text-[10px] font-semibold bg-teal-100 text-teal-700 hover:bg-teal-200 cursor-pointer align-super mx-0.5"
+            >
+              W{wn}
+            </button>
+          );
+        }
+        return part;
       });
     });
   }
@@ -630,8 +690,46 @@ function MessageBubble({
                     onEditCancel();
                   }
                 }}
+                onPaste={(e) => {
+                  const items = Array.from(e.clipboardData?.items || []);
+                  const imageItems = items.filter((it) => it.type.startsWith('image/'));
+                  if (imageItems.length === 0) return;
+                  e.preventDefault();
+                  onEditImageAdd?.(imageItems.map((it) => it.getAsFile()).filter(Boolean));
+                }}
                 rows={3}
                 className="w-full rounded-lg border border-indigo-200 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 text-sm text-gray-800 leading-relaxed px-3 py-2 resize-y"
+              />
+              {editImages.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {editImages.map((entry, idx) => {
+                    const src = entry.kind === 'existing' ? entry.url : URL.createObjectURL(entry.file);
+                    const name = entry.kind === 'existing' ? entry.filename : entry.file.name;
+                    return (
+                      <div key={idx} className="relative flex flex-col items-center gap-0.5">
+                        <div className="w-14 h-14 rounded-lg overflow-hidden border border-gray-200 bg-gray-50 flex-shrink-0">
+                          <img src={src} alt={name} className="w-full h-full object-cover" />
+                        </div>
+                        <span className="text-[9px] text-gray-400 max-w-[56px] truncate">{name}</span>
+                        <button
+                          type="button"
+                          onClick={() => onEditImageRemove?.(idx)}
+                          className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-gray-600 text-white flex items-center justify-center hover:bg-red-500 transition-colors"
+                        >
+                          <XIcon />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <input
+                ref={editFileInputRef}
+                type="file"
+                accept="image/png,image/jpeg"
+                multiple
+                className="hidden"
+                onChange={(e) => { onEditImageAdd?.(e.target.files); e.target.value = ''; }}
               />
               <div className="flex items-center gap-2">
                 <button
@@ -648,11 +746,39 @@ function MessageBubble({
                 >
                   Cancel
                 </button>
+                <button
+                  type="button"
+                  onClick={() => editFileInputRef?.current?.click()}
+                  className="p-1 rounded text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 transition-colors"
+                  title="Attach image"
+                >
+                  <PaperclipIcon />
+                </button>
               </div>
             </div>
           ) : (
             <div className="space-y-1">
-              {msg.image_download_urls?.length > 0 && (
+              {msg._inflightImages?.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-1">
+                  {msg._inflightImages.map((img, i) => (
+                    <div key={i} className="relative flex flex-col items-center gap-0.5">
+                      <div
+                        className={`relative w-14 h-14 rounded-lg overflow-hidden border border-gray-200 bg-gray-50 flex-shrink-0 ${!msg._isTemp ? 'cursor-pointer' : ''}`}
+                        onClick={!msg._isTemp ? () => window.open(img.objectUrl, '_blank') : undefined}
+                      >
+                        <img src={img.objectUrl} alt={img.filename} className="w-full h-full object-cover" />
+                        {msg._isTemp && (
+                          <div className="absolute inset-0 bg-white/70 flex items-center justify-center">
+                            <SpinnerIcon />
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-[9px] text-gray-400 max-w-[56px] truncate">{img.filename}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!msg._inflightImages?.length && msg.image_download_urls?.length > 0 && (
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
                   <span className="text-gray-400 flex-shrink-0"><PaperclipIcon /></span>
                   {msg.image_download_urls.map((img, i) => (
@@ -710,10 +836,23 @@ function MessageBubble({
             <span className="w-1 h-1 rounded-full bg-indigo-300" />
           )}
         </div>
-        <ToolTraceIndicator toolTrace={msg.tool_trace} materials={materials} />
-        <div className="text-sm text-gray-700 leading-relaxed space-y-0.5">
-          {renderContent(msg.content)}
-        </div>
+        {msg._streaming && !msg.content && !msg._generationProposal && (
+          <LiveStatusLine liveToolTrace={msg._liveToolTrace} materials={materials} />
+        )}
+        {!msg._generationProposal && <ToolTraceIndicator toolTrace={msg.tool_trace} materials={materials} />}
+        {!msg._generationProposal && (
+          <div className="text-sm text-gray-700 leading-relaxed space-y-0.5">
+            {renderContent(msg.content)}
+          </div>
+        )}
+        {msg._generationProposal && (
+          <GenerationProposalCard
+            proposal={msg._generationProposal}
+            status={msg._proposalStatus}
+            onBuild={onBuild}
+            onRefine={onRefine}
+          />
+        )}
         {webSearchUrls && webSearchUrls.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-2">
             {webSearchUrls.map((item, idx) => {
@@ -753,7 +892,7 @@ function MessageBubble({
             </button>
           </div>
         )}
-        {Array.isArray(msg.follow_ups) && msg.follow_ups.length > 0 && !(msg.is_clarification_request && !msg.clarification_skipped) && (
+        {!msg._generationProposal && Array.isArray(msg.follow_ups) && msg.follow_ups.length > 0 && !(msg.is_clarification_request && !msg.clarification_skipped) && (
           <div className="flex flex-wrap gap-1.5 mt-3">
             {isLastAssistantMsg && msg.is_clarification_request && msg.clarification_skipped && (
               <p className="w-full text-xs text-gray-500 mb-0.5">Would you like to discuss any of these further?</p>
@@ -885,7 +1024,47 @@ function MessageBubble({
 
 // ─── streaming status bubble ──────────────────────────────────────────────────
 
-function getTracePrimary(status) {
+function materialTraceName(materialMap, materialId, limit = 25) {
+  const mat = (materialMap || {})[materialId];
+  const raw = mat?.name || mat?.title || mat?.filename || mat?.material_title;
+  return raw ? raw.replace(/\.[^.]+$/, '').slice(0, limit) : `material ${materialId}`;
+}
+
+function LiveStatusLine({ liveToolTrace, materials }) {
+  const materialMap = {};
+  (materials || []).forEach((m) => { materialMap[m.id] = m; });
+  const last = liveToolTrace?.[liveToolTrace.length - 1];
+  let text = 'Searching course materials…';
+  if (last) {
+    if (last.tool === 'web_search') {
+      text = 'Searching the web…';
+    } else if (last.tool === 'web_url_view') {
+      let display = last.args?.url || '';
+      try {
+        const u = new URL(display);
+        display = (u.hostname + u.pathname).replace(/^www\./, '').slice(0, 50);
+      } catch {}
+      text = `Viewing ${display}…`;
+    } else {
+      const name = materialTraceName(materialMap, last.args?.material_id);
+      if (last.tool === 'get_page_content') text = `Retrieving pages ${last.args?.pages || '?'} from ${name}`;
+      else if (last.tool === 'get_material_structure') text = `Reading structure of ${name}`;
+      else if (last.tool === 'get_related_materials') text = `Finding related materials for ${name}`;
+    }
+  }
+  return (
+    <div className="flex items-center gap-2 mb-2">
+      <div className="flex gap-0.5 items-center">
+        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '120ms' }} />
+        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '240ms' }} />
+      </div>
+      <span className="text-[11px] text-indigo-400">{text}</span>
+    </div>
+  );
+}
+
+function getTracePrimary(status, materialMap) {
   switch (status.phase) {
     case 'handoff_decision': {
       const rec = status.recommendation || 'optional';
@@ -906,6 +1085,18 @@ function getTracePrimary(status) {
       return `Inspecting web result from ${status.hostname || 'source'}`;
     case 'rerank':
       return `Re-ranking candidate chunks by relevance (${status.input_count || '?'} → ${status.output_count || '?'})`;
+    case 'page_fetch': {
+      const name = materialTraceName(materialMap, status.material_id);
+      return `Fetched pages ${status.pages || '?'} from ${name}`;
+    }
+    case 'structure_fetch': {
+      const name = materialTraceName(materialMap, status.material_id);
+      return `Retrieved structure of ${name}`;
+    }
+    case 'related_fetch': {
+      const name = materialTraceName(materialMap, status.material_id);
+      return `Looked up materials related to ${name}`;
+    }
     default:
       return 'Initializing retrieval and planning tool steps…';
   }
@@ -917,8 +1108,7 @@ function getTraceSecondary(status, materialMap) {
       const chunks = status.chunks || [];
       if (!chunks.length) return null;
       const parts = chunks.map((c) => {
-        const mat = c.material_id != null ? (materialMap || {})[c.material_id] : null;
-        const name = mat?.name ? mat.name.replace(/\.[^.]+$/, '').slice(0, 20) : null;
+        const name = c.material_id != null ? materialTraceName(materialMap, c.material_id, 20) : null;
         return name ? `${name} — "${c.snippet}"` : `"${c.snippet}"`;
       });
       return parts.join('  ·  ');
@@ -960,6 +1150,12 @@ function toolTraceToEvents(toolTrace) {
       }
     } else if (entry.tool === 'rerank_results') {
       events.push({ phase: 'rerank', input_count: entry.result_count, output_count: entry.result_count });
+    } else if (entry.tool === 'get_page_content') {
+      events.push({ phase: 'page_fetch', material_id: entry.args?.material_id, pages: entry.args?.pages });
+    } else if (entry.tool === 'get_material_structure') {
+      events.push({ phase: 'structure_fetch', material_id: entry.args?.material_id });
+    } else if (entry.tool === 'get_related_materials') {
+      events.push({ phase: 'related_fetch', material_id: entry.args?.material_id });
     }
   }
   return events;
@@ -989,7 +1185,7 @@ function ToolTraceIndicator({ toolTrace, materials }) {
               <div key={i} className="flex items-start gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-indigo-200 mt-1 flex-shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-[11px] text-indigo-500 leading-snug">{getTracePrimary(s)}</p>
+                  <p className="text-[11px] text-indigo-500 leading-snug">{getTracePrimary(s, materialMap)}</p>
                   {secondary && <p className="text-[10px] text-indigo-300 leading-snug truncate">{secondary}</p>}
                 </div>
               </div>
@@ -997,46 +1193,6 @@ function ToolTraceIndicator({ toolTrace, materials }) {
           })}
         </div>
       )}
-    </div>
-  );
-}
-
-function StreamingHistoryBubble({ history, materials }) {
-  const materialMap = {};
-  (materials || []).forEach((m) => { materialMap[m.id] = m; });
-  const items = (history || []).filter((s) => s.phase !== 'init');
-
-  if (!items.length) {
-    return (
-      <div className="flex items-start">
-        <div className="w-10 flex-shrink-0" />
-        <div className="flex items-center gap-1 pt-2">
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-start">
-      <div className="w-10 flex-shrink-0" />
-      <div className="flex-1 flex flex-col gap-1.5 px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-100">
-        {items.map((s, i) => {
-          const isLast = i === items.length - 1;
-          const secondary = getTraceSecondary(s, materialMap);
-          return (
-            <div key={i} className="flex items-start gap-2">
-              <span className={`w-2 h-2 rounded-full mt-0.5 flex-shrink-0 ${isLast ? 'bg-indigo-400 animate-pulse' : 'bg-indigo-200'}`} />
-              <div className="min-w-0">
-                <p className={`text-xs font-medium leading-snug ${isLast ? 'text-indigo-700' : 'text-indigo-400'}`}>{getTracePrimary(s)}</p>
-                {secondary && <p className="text-[11px] text-indigo-300 leading-snug truncate">{secondary}</p>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -1174,19 +1330,49 @@ const CHAT_COMPOSER_MAX_HEIGHT_PX = 280;
 /** Min height (px) — matches the send row (~h-6) so single-line text isn’t short vs controls. */
 const CHAT_COMPOSER_MIN_HEIGHT_PX = 24;
 
-export default function ChatTab({ course, userData, onAddSource }) {
+function enrichMessageWithProposal(msg) {
+  if (msg.role !== 'assistant' || msg._generationProposal) return msg;
+  const trace = Array.isArray(msg.tool_trace) ? msg.tool_trace : [];
+  const entry = trace.find((t) => t.tool === 'propose_generation');
+  if (!entry) return msg;
+  const args = entry.args || {};
+  return {
+    ...msg,
+    _generationProposal: {
+      generation_type: args.generation_type || '',
+      title: args.title || '',
+      discussion_summary: args.discussion_summary || '',
+      material_ids: Array.isArray(args.material_ids) ? args.material_ids : [],
+      params: args.params || {},
+    },
+  };
+}
+
+export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   const [activeConv, setActiveConv] = useState(null);
   const [chats, setChats] = useState([]);
   const [chatsLoading, setChatsLoading] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [pendingScrollMessageId, setPendingScrollMessageId] = useState(null);
+  const [highlightMessageId, setHighlightMessageId] = useState(null);
   const [archivedChats, setArchivedChats] = useState([]);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
+  const [promptLibOpen, setPromptLibOpen] = useState(false);
   const [sending, setSending] = useState(false);
-  // null = idle; { phase, detail, iteration, maxIteration } = streaming in progress
-  const [streamingHistory, setStreamingHistory] = useState([]);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(
+    () => localStorage.getItem('chat_web_search_enabled') === '1'
+  );
+
+  function toggleWebSearch() {
+    setWebSearchEnabled((v) => {
+      const next = !v;
+      localStorage.setItem('chat_web_search_enabled', next ? '1' : '0');
+      return next;
+    });
+  }
   const [selectedModel, setSelectedModel] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
@@ -1226,6 +1412,9 @@ export default function ChatTab({ course, userData, onAddSource }) {
   const [imageUploadStates, setImageUploadStates] = useState({});
   const [visionBanner, setVisionBanner] = useState('');
   const fileInputRef = useRef(null);
+  // Edit-mode image staging: { kind: 'existing', s3_key, filename, url } | { kind: 'new', file: File }
+  const [editImages, setEditImages] = useState([]);
+  const editFileInputRef = useRef(null);
 
   // Sidebar resize / collapse
   const SIDEBAR_DEFAULT_WIDTH = 280;
@@ -1293,6 +1482,19 @@ export default function ChatTab({ course, userData, onAddSource }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    if (!pendingScrollMessageId || !messages.length) return;
+    const el = document.getElementById(`msg-${pendingScrollMessageId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightMessageId(pendingScrollMessageId);
+      const t = setTimeout(() => setHighlightMessageId(null), 2000);
+      setPendingScrollMessageId(null);
+      return () => clearTimeout(t);
+    }
+    setPendingScrollMessageId(null);
+  }, [pendingScrollMessageId, messages]);
+
   // Load materials for this course
   useEffect(() => {
     if (!course?.id) return;
@@ -1349,7 +1551,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
       credentials: 'include',
     })
       .then((r) => r.json())
-      .then((data) => setMessages(data.messages || []))
+      .then((data) => setMessages((data.messages || []).map(enrichMessageWithProposal)))
       .catch(() => {});
   }, [activeConv]);
 
@@ -1365,8 +1567,8 @@ export default function ChatTab({ course, userData, onAddSource }) {
           .map(([provider]) => provider);
         setAvailableModels(available);
         if (available.length > 0) {
-          const savedProvider = localStorage.getItem('chat_selected_provider');
-          const savedModelId = localStorage.getItem('chat_selected_model_id');
+          const savedProvider = course?.default_ai_provider || localStorage.getItem('chat_selected_provider');
+          const savedModelId = course?.default_ai_model || localStorage.getItem('chat_selected_model_id');
           const provider = available.includes(savedProvider) ? savedProvider : available[0];
           const modelList = PROVIDER_MODELS[provider] ?? [];
           const modelId = modelList.find((m) => m.id === savedModelId)?.id ?? modelList[0]?.id ?? null;
@@ -1375,7 +1577,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
         }
       })
       .catch(() => {});
-  }, []);
+  }, [course?.default_ai_provider, course?.default_ai_model]);
 
   useEffect(() => {
     if (!modelDropdownOpen) return;
@@ -1548,10 +1750,12 @@ export default function ChatTab({ course, userData, onAddSource }) {
     } catch {}
   }
 
-  function handleConvSelect(id) {
+  function handleConvSelect(chatId, target) {
+    const id = typeof chatId === 'object' ? chatId?.id : chatId;
     setActiveConv(id);
     setMessages([]);
     setEditingTitle(false);
+    setPendingScrollMessageId(target?.messageId ?? null);
   }
 
   async function handleDeletePin(pin) {
@@ -1671,60 +1875,110 @@ export default function ChatTab({ course, userData, onAddSource }) {
     }
   }
 
+  function resolveWebFocusIndex(chunks, focusIndex) {
+    if (typeof focusIndex !== 'string' || !/^W\d+$/.test(focusIndex)) return focusIndex;
+    const pageCount = (chunks || []).filter((c) => c.citation_type === 'page').length;
+    return pageCount + Number(focusIndex.slice(1));
+  }
+
   function openSources(messageId, focusIndex) {
     if (!msgChunks[messageId]) {
       fetch(`/api/chat?resource=chunks&message_id=${messageId}`, {
         credentials: 'include',
       })
         .then((r) => r.json())
-        .then((data) => setMsgChunks((prev) => ({ ...prev, [messageId]: data.chunks || [] })))
+        .then((data) => {
+          const chunks = data.chunks || [];
+          setMsgChunks((prev) => ({ ...prev, [messageId]: chunks }));
+          setSourcesPanel({ open: true, messageId, focusIndex: resolveWebFocusIndex(chunks, focusIndex) });
+        })
         .catch(() => {});
+      return;
     }
-    setSourcesPanel({ open: true, messageId, focusIndex });
-    setSidebarWidth(0);
+    setSourcesPanel({ open: true, messageId, focusIndex: resolveWebFocusIndex(msgChunks[messageId], focusIndex) });
   }
 
-  function handleStreamEvent(evt, { tempId, chatId, setActiveConvFn }) {
+  function handleStreamEvent(evt, { tempId, tempAssistantId, chatId, setActiveConvFn }) {
     switch (evt.type) {
-      case 'handoff_decision':
-        setStreamingHistory((prev) => [...prev, {
-          phase: 'handoff_decision',
-          recommendation: evt.recommendation || 'optional',
-          confidence: evt.confidence,
-          threshold: evt.threshold,
-          override: Boolean(evt.override),
-          web_search_allowed: evt.web_search_allowed,
-          missing_facts: Array.isArray(evt.missing_facts) ? evt.missing_facts : [],
-          suggested_queries: Array.isArray(evt.suggested_queries) ? evt.suggested_queries : [],
-          reasoning: evt.reasoning || '',
-        }]);
-        break;
       case 'user_message':
-        setMessages((prev) => [...prev.filter((m) => m.id !== tempId), evt.message]);
+        setMessages((prev) => {
+          const temp = prev.find((m) => m.id === tempId);
+          const enriched = temp?._inflightImages ? { ...evt.message, _inflightImages: temp._inflightImages, _isTemp: true } : evt.message;
+          return [
+            ...prev.filter((m) => m.id !== tempId),
+            enriched,
+            { id: tempAssistantId, role: 'assistant', content: '', _streaming: true },
+          ];
+        });
         break;
-      case 'loop_start':
-        setStreamingHistory((prev) => [...prev, { phase: 'loop_start', iteration: evt.iteration, maxIteration: evt.max }]);
-        break;
-      case 'sources_found':
-        setStreamingHistory((prev) => [...prev, { phase: 'sources_found', chunks: evt.chunks || [], result_count: evt.result_count || 0 }]);
+      case 'tool_call':
+        setMessages((prev) => {
+          const entry = { tool: evt.tool, args: { material_id: evt.material_id, pages: evt.pages } };
+          const existing = prev.find((m) => m.id === tempAssistantId);
+          if (existing) {
+            return prev.map((m) =>
+              m.id === tempAssistantId
+                ? { ...m, _liveToolTrace: [...(m._liveToolTrace || []), entry] }
+                : m
+            );
+          }
+          return [...prev, { id: tempAssistantId, role: 'assistant', content: '', _streaming: true, _liveToolTrace: [entry] }];
+        });
         break;
       case 'web_search_start':
-        setStreamingHistory((prev) => [...prev, { phase: 'web_search_start', query: evt.query || '' }]);
+        setMessages((prev) => {
+          const entry = { tool: 'web_search', args: { query: evt.query } };
+          const existing = prev.find((m) => m.id === tempAssistantId);
+          if (existing) {
+            return prev.map((m) =>
+              m.id === tempAssistantId
+                ? { ...m, _liveToolTrace: [...(m._liveToolTrace || []), entry] }
+                : m
+            );
+          }
+          return [...prev, { id: tempAssistantId, role: 'assistant', content: '', _streaming: true, _liveToolTrace: [entry] }];
+        });
         break;
-      case 'web_result': {
-        let hostname = evt.url || '';
-        try { hostname = new URL(evt.url).hostname.replace(/^www\./, ''); } catch {}
-        setStreamingHistory((prev) => [...prev, { phase: 'web_result', url: evt.url, hostname, excerpt: (evt.excerpt || '').slice(0, 80) }]);
+      case 'web_url_view':
+        setMessages((prev) => {
+          const entry = { tool: 'web_url_view', args: { url: evt.url } };
+          const existing = prev.find((m) => m.id === tempAssistantId);
+          if (existing) {
+            return prev.map((m) =>
+              m.id === tempAssistantId
+                ? { ...m, _liveToolTrace: [...(m._liveToolTrace || []), entry] }
+                : m
+            );
+          }
+          return [...prev, { id: tempAssistantId, role: 'assistant', content: '', _streaming: true, _liveToolTrace: [entry] }];
+        });
         break;
-      }
-      case 'rerank':
-        setStreamingHistory((prev) => [...prev, { phase: 'rerank', input_count: evt.input_count, output_count: evt.output_count }]);
+      case 'text':
+        if (!evt.chunk) break;
+        setMessages((prev) => {
+          const existing = prev.find((m) => m.id === tempAssistantId);
+          if (existing) {
+            return prev.map((m) =>
+              m.id === tempAssistantId ? { ...m, content: m.content + evt.chunk } : m
+            );
+          }
+          return [...prev, { id: tempAssistantId, role: 'assistant', content: evt.chunk }];
+        });
         break;
       case 'done':
-        setStreamingHistory([]);
         setMessages((prev) => {
-          const withoutTemp = prev.filter((m) => m.id !== tempId && m.id !== evt.user_message?.id);
-          return [...withoutTemp, evt.user_message, evt.assistant_message];
+          const prevUserMsg = prev.find((m) => m.id === tempId || m.id === evt.user_message?.id);
+          const prevAssistantMsg = prev.find((m) => m.id === tempAssistantId);
+          const enrichedUser = prevUserMsg?._inflightImages
+            ? { ...evt.user_message, _inflightImages: prevUserMsg._inflightImages }
+            : evt.user_message;
+          const withoutTemp = prev.filter(
+            (m) => m.id !== tempId && m.id !== tempAssistantId && m.id !== evt.user_message?.id
+          );
+          const finalAssistant = prevAssistantMsg?._generationProposal
+            ? { ...evt.assistant_message, _generationProposal: prevAssistantMsg._generationProposal }
+            : evt.assistant_message;
+          return [...withoutTemp, enrichedUser, finalAssistant];
         });
         setChats((prev) => prev.map((c) =>
           c.id === chatId
@@ -1740,10 +1994,21 @@ export default function ChatTab({ course, userData, onAddSource }) {
         sendingRef.current = false;
         break;
       case 'error':
-        setStreamingHistory([]);
+        console.error('[SSE error]', evt);
         setSending(false);
         sendingRef.current = false;
-        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        setMessages((prev) => prev.filter((m) => m.id !== tempId && m.id !== tempAssistantId));
+        break;
+      case 'generation_proposal':
+        setMessages((prev) => {
+          const existing = prev.find((m) => m.id === tempAssistantId);
+          if (existing) {
+            return prev.map((m) =>
+              m.id === tempAssistantId ? { ...m, _generationProposal: evt } : m
+            );
+          }
+          return [...prev, { id: tempAssistantId, role: 'assistant', content: '', _streaming: true, _generationProposal: evt }];
+        });
         break;
       default:
         break;
@@ -1769,6 +2034,21 @@ export default function ChatTab({ course, userData, onAddSource }) {
     });
   }
 
+  function addEditImages(files) {
+    const MAX_SIZE = 10 * 1024 * 1024;
+    const MAX_COUNT = 5;
+    setEditImages((prev) => {
+      const valid = Array.from(files)
+        .filter((f) => f.size <= MAX_SIZE)
+        .map((f) => ({ kind: 'new', file: f }));
+      return [...prev, ...valid].slice(0, MAX_COUNT);
+    });
+  }
+
+  function removeEditImage(index) {
+    setEditImages((prev) => prev.filter((_, i) => i !== index));
+  }
+
   function handleFileInputChange(e) {
     addImages(e.target.files);
     e.target.value = '';
@@ -1781,6 +2061,123 @@ export default function ChatTab({ course, userData, onAddSource }) {
     e.preventDefault();
     const files = imageItems.map((it) => it.getAsFile()).filter(Boolean);
     addImages(files);
+  }
+
+  const ENDPOINT_BY_TYPE = { quiz: '/api/quiz', flashcards: '/api/flashcards', report: '/api/reports' };
+
+  function handleRefineGeneration(msg) {
+    const p = msg._generationProposal;
+    if (!p || !onGoToTab) return;
+    const tabId = p.generation_type === 'report' ? 'reports' : p.generation_type;
+    const materialIds = Array.isArray(p.material_ids) && p.material_ids.length > 0 ? p.material_ids : null;
+    try {
+      if (tabId === 'quiz') {
+        const stored = JSON.parse(localStorage.getItem(`quiz_fields_${course.id}`) || '{}');
+        localStorage.setItem(`quiz_fields_${course.id}`, JSON.stringify({
+          ...stored, topic: p.title, ...(materialIds ? { material_ids: materialIds } : {}),
+        }));
+      } else if (tabId === 'flashcards') {
+        const stored = JSON.parse(localStorage.getItem(`flashcards_fields_${course.id}`) || '{}');
+        const cardCount = Number(p.params?.card_count ?? p.params?.num_cards ?? 0);
+        localStorage.setItem(`flashcards_fields_${course.id}`, JSON.stringify({
+          ...stored, topic: p.title,
+          ...(cardCount > 0 ? { card_count: cardCount } : {}),
+          ...(materialIds ? { material_ids: materialIds } : {}),
+        }));
+      } else if (tabId === 'reports') {
+        const stored = JSON.parse(localStorage.getItem(`reports_fields_${course.id}`) || '{}');
+        const tpl = normalizeReportTemplate(p.params?.template_id ?? p.params?.template);
+        const isCustomTpl = tpl === 'custom';
+        localStorage.setItem(`reports_fields_${course.id}`, JSON.stringify({
+          ...stored,
+          template: tpl,
+          ...(isCustomTpl ? { customPrompt: p.params?.custom_prompt || p.title } : {}),
+          ...(materialIds ? { material_ids: materialIds } : {}),
+        }));
+      }
+      localStorage.setItem(`coursemate_generations_tab_${course.id}`, tabId);
+    } catch {}
+    onGoToTab('generate');
+  }
+
+  const VALID_REPORT_TEMPLATES = ['study-guide', 'briefing', 'summary', 'custom'];
+
+  function normalizeReportTemplate(raw) {
+    const v = String(raw || 'study-guide').trim().replace(/_/g, '-').toLowerCase();
+    return VALID_REPORT_TEMPLATES.includes(v) ? v : 'study-guide';
+  }
+
+  // All generation types use the estimate → generate (async SQS) two-step flow.
+  async function queueProposalGeneration(p) {
+    const endpoint = ENDPOINT_BY_TYPE[p.generation_type];
+    if (!endpoint) throw new Error('unknown generation type');
+    const provider = selectedModel;
+    const model_id = selectedModelId || selectedModel;
+    const conversation_context = p.discussion_summary;
+    const material_ids = p.material_ids;
+
+    const estimateBody = {
+      action: 'estimate',
+      course_id: course.id,
+      topic: p.title,
+      material_ids,
+      conversation_context,
+      provider,
+      model_id,
+    };
+    if (p.generation_type === 'quiz') {
+      const tf = Number(p.params?.tf_count ?? 0);
+      const sa = Number(p.params?.sa_count ?? 0);
+      const la = Number(p.params?.la_count ?? 0);
+      const mcq = Number(p.params?.mcq_count ?? p.params?.question_count ?? 0);
+      estimateBody.tf_count = tf;
+      estimateBody.sa_count = sa;
+      estimateBody.la_count = la;
+      estimateBody.mcq_count = mcq || (!tf && !sa && !la ? 10 : 0);
+      estimateBody.mcq_options = Number(p.params?.mcq_options ?? 4);
+    } else if (p.generation_type === 'flashcards') {
+      estimateBody.card_count = Number(p.params?.card_count ?? p.params?.num_cards ?? 20);
+    } else if (p.generation_type === 'report') {
+      estimateBody.template_id = normalizeReportTemplate(p.params?.template_id ?? p.params?.template);
+    }
+
+    const estRes = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(estimateBody),
+    });
+    if (!estRes.ok) throw new Error('estimate failed');
+    const estData = await estRes.json();
+    const generationId = estData.generation_id;
+    if (!generationId) throw new Error('no generation_id from estimate');
+
+    const genRes = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        action: 'generate',
+        generation_id: generationId,
+        provider,
+        model_id,
+        conversation_context,
+      }),
+    });
+    if (!genRes.ok) throw new Error('queue failed');
+  }
+
+  async function handleBuildGeneration(msg) {
+    const p = msg._generationProposal;
+    if (!p || !ENDPOINT_BY_TYPE[p.generation_type]) return;
+
+    setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, _proposalStatus: 'building' } : m));
+    try {
+      await queueProposalGeneration(p);
+      setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, _proposalStatus: 'queued' } : m));
+    } catch (e) {
+      setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, _proposalStatus: null } : m));
+    }
   }
 
   async function handleSend() {
@@ -1799,14 +2196,22 @@ export default function ChatTab({ course, userData, onAddSource }) {
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setSending(true);
     sendingRef.current = true;
-    setStreamingHistory([{ phase: 'init' }]);
 
     const stagedImages = [...images];
     setImages([]);
     setImageUploadStates({});
 
     const tempId = Date.now();
-    const tempUserMsg = { id: tempId, role: 'user', content: text };
+    const tempAssistantId = tempId + 1;
+    const tempUserMsg = {
+      id: tempId,
+      role: 'user',
+      content: text,
+      ...(stagedImages.length > 0 ? {
+        _inflightImages: stagedImages.map((f) => ({ objectUrl: URL.createObjectURL(f), filename: f.name })),
+        _isTemp: true,
+      } : {}),
+    };
     setMessages((prev) => [...prev, tempUserMsg]);
 
     let imageAttachments = [];
@@ -1892,6 +2297,7 @@ export default function ChatTab({ course, userData, onAddSource }) {
           context_material_ids: contextIds,
           ai_provider: selectedModel,
           ai_model: selectedModelId || selectedModel,
+          web_search_enabled: webSearchEnabled,
           ...(imageAttachments.length > 0 ? { image_attachments: imageAttachments } : {}),
         }),
       });
@@ -1904,11 +2310,6 @@ export default function ChatTab({ course, userData, onAddSource }) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      // scheduledDelay accumulates when events arrive batched in the same read()
-      // so each phase is visible for 400ms. Resets to 0 when a read() returns only
-      // non-phase events, meaning the stream is actually progressive.
-      let scheduledDelay = 0;
-      const PHASE_EVENTS = new Set(['handoff_decision', 'loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1920,14 +2321,11 @@ export default function ChatTab({ course, userData, onAddSource }) {
           if (!part.startsWith('data: ')) continue;
           try {
             const evt = JSON.parse(part.slice(6));
-            const delay = scheduledDelay;
-            setTimeout(() => handleStreamEvent(evt, { tempId, chatId }), delay);
-            if (PHASE_EVENTS.has(evt.type)) scheduledDelay += 400;
-          } catch {}
+            handleStreamEvent(evt, { tempId, tempAssistantId, chatId });
+          } catch (e) { console.error('[SSE parse error]', e, part); }
         }
       }
     } catch {
-      setStreamingHistory([]);
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setSending(false);
       sendingRef.current = false;
@@ -1940,6 +2338,15 @@ export default function ChatTab({ course, userData, onAddSource }) {
     const target = messages.find((m) => m.id === messageId);
     if (!target || target.role !== 'user' || typeof target.message_index !== 'number') return;
 
+    const stagedEditImages = [...editImages];
+
+    if (stagedEditImages.length > 0 && NON_VISION_MODEL_IDS.has(selectedModelId || selectedModel)) {
+      const modelEntry = (PROVIDER_MODELS[selectedModel] || []).find((m) => m.id === (selectedModelId || selectedModel));
+      const label = modelEntry?.label || selectedModelId || selectedModel;
+      setVisionBanner(`${label} does not support image inputs. Please select a different model.`);
+      return;
+    }
+
     const contextIds = materials.filter((m) => m.selected).map((m) => m.id);
 
     const prevMessages = messages;
@@ -1950,11 +2357,68 @@ export default function ChatTab({ course, userData, onAddSource }) {
 
     setEditingMsgId(null);
     setEditingContent('');
+    setEditImages([]);
     setSending(true);
     sendingRef.current = true;
-    setStreamingHistory([{ phase: 'init' }]);
     setSourcesPanel({ open: false, messageId: null, focusIndex: null });
     setMessages([...keptPrefix, optimisticEdited]);
+
+    let imageAttachments = [];
+    try {
+      const newEntries = stagedEditImages.filter((e) => e.kind === 'new');
+      const existingEntries = stagedEditImages.filter((e) => e.kind === 'existing');
+
+      if (newEntries.length > 0) {
+        const uploadResults = await Promise.all(
+          newEntries.map(async ({ file }) => {
+            const buf = await file.arrayBuffer();
+            const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+            const sha256 = Array.from(new Uint8Array(hashBuf))
+              .map((b) => b.toString(16).padStart(2, '0'))
+              .join('');
+            const res = await fetch('/api/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({
+                resource: 'message',
+                action: 'upload_image',
+                filename: file.name,
+                content_type: file.type,
+                sha256,
+              }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Upload failed');
+            if (data.upload_url) {
+              await fetch(data.upload_url, {
+                method: 'PUT',
+                headers: { 'Content-Type': file.type },
+                body: file,
+              });
+            }
+            return { s3_key: data.s3_key, filename: file.name };
+          })
+        );
+        imageAttachments = [
+          ...existingEntries.map((e) => ({ s3_key: e.s3_key, filename: e.filename })),
+          ...uploadResults,
+        ];
+      } else {
+        imageAttachments = existingEntries.map((e) => ({ s3_key: e.s3_key, filename: e.filename }));
+      }
+    } catch {
+      setMessages(prevMessages);
+      setMsgChunks(prevMsgChunks);
+      setSending(false);
+      sendingRef.current = false;
+      setVisionBanner('Image upload failed. Please try again.');
+      return;
+    }
+
+    const existingUrlMap = Object.fromEntries(
+      stagedEditImages.filter((e) => e.kind === 'existing').map((e) => [e.s3_key, e.url])
+    );
 
     try {
       const response = await fetch('/api/chat', {
@@ -1971,6 +2435,8 @@ export default function ChatTab({ course, userData, onAddSource }) {
           context_material_ids: contextIds,
           ai_provider: selectedModel,
           ai_model: selectedModelId || selectedModel,
+          web_search_enabled: webSearchEnabled,
+          image_attachments: imageAttachments,
         }),
       });
 
@@ -1982,8 +2448,6 @@ export default function ChatTab({ course, userData, onAddSource }) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let scheduledDelay = 0;
-      const PHASE_EVENTS = new Set(['handoff_decision', 'loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
 
       let editDoneReceived = false;
       while (true) {
@@ -1996,53 +2460,53 @@ export default function ChatTab({ course, userData, onAddSource }) {
           if (!part.startsWith('data: ')) continue;
           try {
             const evt = JSON.parse(part.slice(6));
-            const delay = scheduledDelay;
-            setTimeout(() => {
-              if (evt.type === 'done') {
-                editDoneReceived = true;
-                setStreamingHistory([]);
-                const nextMessages = [...keptPrefix, evt.user_message, evt.assistant_message];
-                setMessages(nextMessages);
-                setMsgChunks((prev) => {
-                  const keptIds = new Set(nextMessages.map((m) => m.id));
-                  return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
-                });
-                setChats((prev) => prev.map((c) =>
-                  c.id === target.chat_id
-                    ? {
-                        ...c,
-                        last_message_at: evt.assistant_message?.created_at,
-                        message_count: nextMessages.length,
-                        ...(evt.suggested_title ? { title: evt.suggested_title } : {}),
-                      }
-                    : c
-                ));
-                setSending(false);
-                sendingRef.current = false;
-              } else if (evt.type === 'error') {
-                editDoneReceived = true;
-                setStreamingHistory([]);
-                setMessages(prevMessages);
-                setMsgChunks(prevMsgChunks);
-                setSending(false);
-                sendingRef.current = false;
-              } else {
-                handleStreamEvent(evt, { tempId: null, chatId: target.chat_id });
-              }
-            }, delay);
-            if (PHASE_EVENTS.has(evt.type)) scheduledDelay += 400;
-          } catch {}
+            if (evt.type === 'done') {
+              editDoneReceived = true;
+              const enrichedUserMessage = {
+                ...evt.user_message,
+                image_download_urls: imageAttachments.map((a) => ({
+                  filename: a.filename,
+                  url: existingUrlMap[a.s3_key] || '',
+                })),
+              };
+              const nextMessages = [...keptPrefix, enrichedUserMessage, evt.assistant_message];
+              setMessages(nextMessages);
+              setMsgChunks((prev) => {
+                const keptIds = new Set(nextMessages.map((m) => m.id));
+                return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
+              });
+              setChats((prev) => prev.map((c) =>
+                c.id === target.chat_id
+                  ? {
+                      ...c,
+                      last_message_at: evt.assistant_message?.created_at,
+                      message_count: nextMessages.length,
+                      ...(evt.suggested_title ? { title: evt.suggested_title } : {}),
+                    }
+                  : c
+              ));
+              setSending(false);
+              sendingRef.current = false;
+            } else if (evt.type === 'error') {
+              console.error('[SSE error] edit', evt);
+              editDoneReceived = true;
+              setMessages(prevMessages);
+              setMsgChunks(prevMsgChunks);
+              setSending(false);
+              sendingRef.current = false;
+            } else {
+              handleStreamEvent(evt, { tempId: null, chatId: target.chat_id });
+            }
+          } catch (e) { console.error('[SSE parse error] edit', e, part); }
         }
       }
       if (!editDoneReceived) {
-        setStreamingHistory([]);
         setMessages(prevMessages);
         setMsgChunks(prevMsgChunks);
         setSending(false);
         sendingRef.current = false;
       }
     } catch {
-      setStreamingHistory([]);
       setMessages(prevMessages);
       setMsgChunks(prevMsgChunks);
       setSending(false);
@@ -2175,8 +2639,8 @@ export default function ChatTab({ course, userData, onAddSource }) {
 
     setSending(true);
     sendingRef.current = true;
-    setStreamingHistory([{ phase: 'init' }]);
     setSourcesPanel({ open: false, messageId: null, focusIndex: null });
+    setMessages((prev) => prev.map((m) => m.id === assistantMsgId ? { ...m, content: '', ai_provider: provider, ai_model: modelId, _streaming: true, _liveToolTrace: undefined } : m));
 
     try {
       const response = await fetch('/api/chat', {
@@ -2200,8 +2664,6 @@ export default function ChatTab({ course, userData, onAddSource }) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let scheduledDelay = 0;
-      const PHASE_EVENTS = new Set(['handoff_decision', 'loop_start', 'sources_found', 'web_search_start', 'web_result', 'rerank']);
 
       let regenDoneReceived = false;
       while (true) {
@@ -2214,50 +2676,43 @@ export default function ChatTab({ course, userData, onAddSource }) {
           if (!part.startsWith('data: ')) continue;
           try {
             const evt = JSON.parse(part.slice(6));
-            const delay = scheduledDelay;
-            setTimeout(() => {
-              if (evt.type === 'done') {
-                regenDoneReceived = true;
-                setStreamingHistory([]);
-                const nextMessages = [...keptPrefix, evt.user_message, evt.assistant_message];
-                setMessages(nextMessages);
-                setMsgChunks((prev) => {
-                  const keptIds = new Set(nextMessages.map((m) => m.id));
-                  return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
-                });
-                if (evt.suggested_title) {
-                  setChats((prev) => prev.map((c) =>
-                    c.id === (userMsg.chat_id || assistantMsg.chat_id)
-                      ? { ...c, title: evt.suggested_title }
-                      : c
-                  ));
-                }
-                setSending(false);
-                sendingRef.current = false;
-              } else if (evt.type === 'error') {
-                regenDoneReceived = true;
-                setStreamingHistory([]);
-                setMessages(prevMessages);
-                setMsgChunks(prevMsgChunks);
-                setSending(false);
-                sendingRef.current = false;
-              } else {
-                handleStreamEvent(evt, { tempId: null, chatId: userMsg.chat_id });
+            if (evt.type === 'done') {
+              regenDoneReceived = true;
+              const nextMessages = [...keptPrefix, evt.user_message, evt.assistant_message];
+              setMessages(nextMessages);
+              setMsgChunks((prev) => {
+                const keptIds = new Set(nextMessages.map((m) => m.id));
+                return Object.fromEntries(Object.entries(prev).filter(([id]) => keptIds.has(Number(id))));
+              });
+              if (evt.suggested_title) {
+                setChats((prev) => prev.map((c) =>
+                  c.id === (userMsg.chat_id || assistantMsg.chat_id)
+                    ? { ...c, title: evt.suggested_title }
+                    : c
+                ));
               }
-            }, delay);
-            if (PHASE_EVENTS.has(evt.type)) scheduledDelay += 400;
+              setSending(false);
+              sendingRef.current = false;
+            } else if (evt.type === 'error') {
+              console.error('[SSE error] regen', evt);
+              regenDoneReceived = true;
+              setMessages(prevMessages);
+              setMsgChunks(prevMsgChunks);
+              setSending(false);
+              sendingRef.current = false;
+            } else {
+              handleStreamEvent(evt, { tempId: null, tempAssistantId: assistantMsgId, chatId: userMsg.chat_id });
+            }
           } catch {}
         }
       }
       if (!regenDoneReceived) {
-        setStreamingHistory([]);
         setMessages(prevMessages);
         setMsgChunks(prevMsgChunks);
         setSending(false);
         sendingRef.current = false;
       }
     } catch {
-      setStreamingHistory([]);
       setMessages(prevMessages);
       setMsgChunks(prevMsgChunks);
       setSending(false);
@@ -2659,31 +3114,54 @@ export default function ChatTab({ course, userData, onAddSource }) {
                   .flatMap((t) => t.urls)
                   .filter((u) => u.url && !seen.has(u.url) && seen.add(u.url));
               })() : null;
+              const usedWebOnly = msg.role === 'assistant' && (() => {
+                const trace = Array.isArray(msg.tool_trace) ? msg.tool_trace : [];
+                const hasWeb = trace.some((t) => t.tool === 'web_search');
+                const hasPage = trace.some((t) => t.tool === 'get_page_content');
+                return hasWeb && !hasPage;
+              })();
               return (
-              <MessageBubble
+              <div
                 key={msg.id}
+                id={`msg-${msg.id}`}
+                className={highlightMessageId === msg.id ? 'ring-2 ring-yellow-300 rounded-lg transition' : undefined}
+              >
+              <MessageBubble
                 msg={msg}
                 courseName={course?.title}
                 userPicture={userData?.picture}
-                onCiteClick={msg.role === 'assistant' ? (n) => openSources(msg.id, n) : null}
+                onCiteClick={msg.role === 'assistant' && !usedWebOnly ? (n) => openSources(msg.id, n) : null}
                 webSearchUrls={webSearchUrls?.length ? webSearchUrls : null}
                 isEditing={editingMsgId === msg.id}
                 editingContent={editingContent}
                 onEditStart={(id, content) => {
                   setEditingMsgId(id);
                   setEditingContent(content || '');
+                  const keys = msg.image_s3_keys || [];
+                  const urls = msg.image_download_urls || [];
+                  setEditImages(keys.map((key, i) => ({
+                    kind: 'existing',
+                    s3_key: key,
+                    filename: urls[i]?.filename || key.split('/').pop(),
+                    url: urls[i]?.url || '',
+                  })));
                 }}
                 onEditChange={setEditingContent}
                 onEditSave={() => handleEditMessage(msg.id, editingContent)}
                 onEditCancel={() => {
                   setEditingMsgId(null);
                   setEditingContent('');
+                  setEditImages([]);
                 }}
+                editImages={editImages}
+                onEditImageAdd={addEditImages}
+                onEditImageRemove={removeEditImage}
+                editFileInputRef={editFileInputRef}
                 canEdit={msg.role === 'user' && typeof msg.message_index === 'number' && !sending}
                 replyHistory={replyHistory}
-                onRevert={replyHistory?.back?.length ? handleRevertMessage : null}
+                onRevert={!msg._generationProposal && replyHistory?.back?.length ? handleRevertMessage : null}
                 onRestore={replyHistory?.forward?.length ? handleRestoreMessage : null}
-                onRegenerate={msg.role === 'assistant' && !sending ? handleRegenerateMessage : null}
+                onRegenerate={msg.role === 'assistant' && !msg._generationProposal && !sending ? handleRegenerateMessage : null}
                 availableModels={availableModels}
                 materials={materials}
                 onPin={msg.role === 'assistant' ? () => {
@@ -2697,13 +3175,13 @@ export default function ChatTab({ course, userData, onAddSource }) {
                 } : null}
                 onSkipClarification={msg.role === 'assistant' ? () => handleSkipClarification(msg.id) : null}
                 isLastAssistantMsg={msg.role === 'assistant' && i === lastAssistantIdx && !sending}
+                onBuild={msg._generationProposal ? () => handleBuildGeneration(msg) : null}
+                onRefine={msg._generationProposal ? () => handleRefineGeneration(msg) : null}
               />
+              </div>
               );
             });
             })()
-          )}
-          {sending && (
-            <StreamingHistoryBubble history={streamingHistory} materials={materials} />
           )}
           <div ref={messagesEndRef} />
         </div>
@@ -2754,7 +3232,16 @@ export default function ChatTab({ course, userData, onAddSource }) {
             onChange={handleFileInputChange}
           />
 
-          <div className="flex items-stretch gap-2 pl-4 pr-3 py-2 rounded-2xl border border-gray-200 bg-white hover:shadow-lg focus-within:border-indigo-300 focus-within:shadow-lg transition-all" style={{ boxShadow: '0 4px 24px 0 rgba(0,0,0,0.13)' }}>
+          <div className="relative flex flex-col rounded-2xl border border-gray-200 bg-white hover:shadow-lg focus-within:border-indigo-300 focus-within:shadow-lg transition-all" style={{ boxShadow: '0 4px 24px 0 rgba(0,0,0,0.13)' }}>
+            {promptLibOpen && (
+              <PromptLibrary
+                onInsert={(text) => {
+                  setInput((v) => (v ? `${v}\n${text}` : text));
+                  setPromptLibOpen(false);
+                }}
+                onClose={() => setPromptLibOpen(false)}
+              />
+            )}
             <textarea
               ref={textareaRef}
               value={input}
@@ -2763,15 +3250,14 @@ export default function ChatTab({ course, userData, onAddSource }) {
               onPaste={handlePaste}
               placeholder="Reply…"
               rows={1}
-              className="flex-1 min-h-0 min-w-0 bg-transparent resize-none text-xs text-gray-800 placeholder-gray-400 focus:outline-none leading-relaxed py-0.5"
+              className="w-full min-w-0 bg-transparent resize-none text-xs text-gray-800 placeholder-gray-400 focus:outline-none leading-relaxed px-4 pt-3 pb-1"
               style={{
                 minHeight: CHAT_COMPOSER_MIN_HEIGHT_PX,
                 maxHeight: CHAT_COMPOSER_MAX_HEIGHT_PX,
                 overflowY: 'auto',
               }}
             />
-            <div className="flex flex-col justify-end flex-shrink-0">
-              <div className="flex items-center gap-1">
+            <div className="flex items-center justify-end gap-1 px-3 pb-2 pt-1">
                 {/* Attachment button */}
                 <button
                   type="button"
@@ -2840,13 +3326,44 @@ export default function ChatTab({ course, userData, onAddSource }) {
                 )}
                 <button
                   type="button"
+                  onClick={() => setPromptLibOpen((o) => !o)}
+                  title="Saved prompts"
+                  aria-pressed={promptLibOpen}
+                  className={`flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full border transition-colors ${
+                    promptLibOpen
+                      ? 'border-indigo-400 text-indigo-600 bg-indigo-50'
+                      : 'border-gray-200 text-gray-400 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'
+                  }`}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleWebSearch}
+                  title={webSearchEnabled ? 'Web search on (click to disable)' : 'Web search off (click to enable)'}
+                  aria-pressed={webSearchEnabled}
+                  className={`flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full border transition-colors ${
+                    webSearchEnabled
+                      ? 'border-indigo-400 text-indigo-600 bg-indigo-50'
+                      : 'border-gray-200 text-gray-400 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'
+                  }`}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="2" y1="12" x2="22" y2="12"/>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                  </svg>
+                </button>
+                <button
+                  type="button"
                   onClick={handleSend}
                   disabled={(!input.trim() && images.length === 0) || sending || !selectedModel}
                   className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
                 >
                   <SendIcon />
                 </button>
-              </div>
             </div>
           </div>
           <p className="text-center text-[10px] text-gray-400 mt-1.5">

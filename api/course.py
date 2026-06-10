@@ -5,15 +5,38 @@
 
 import json
 from http.server import BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 
 try:
     from .middleware import send_json, handle_options, authenticate_request, sanitize_string
     from .courses import Course
     from .models import User
+    from .db import get_db
 except ImportError:
     from middleware import send_json, handle_options, authenticate_request, sanitize_string
     from courses import Course
     from models import User
+    from db import get_db
+
+
+def _extract_default_model_fields(body: dict) -> tuple:
+    p = (body.get('default_ai_provider') or '').strip() or None
+    m = (body.get('default_ai_model') or '').strip() or None
+    return (p, m)
+
+
+def _shape_stats(materials, quizzes, flashcards, reports, chats, messages) -> dict:
+    return {
+        "materials": materials,
+        "generations": {
+            "quiz": quizzes,
+            "flashcards": flashcards,
+            "reports": reports,
+            "total": quizzes + flashcards + reports,
+        },
+        "chats": chats,
+        "messages": messages,
+    }
 
 
 class handler(BaseHTTPRequestHandler):
@@ -30,6 +53,80 @@ class handler(BaseHTTPRequestHandler):
         user = User.get_by_google_id(google_id)
         if not user:
             send_json(self, 404, {"error": "User not found"})
+            return
+
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        action = params.get('action', [None])[0]
+
+        if action == 'stats':
+            course_id_raw = params.get('course_id', [None])[0]
+            if not course_id_raw or not course_id_raw.isdigit():
+                send_json(self, 400, {"error": "course_id is required"})
+                return
+            course_id = int(course_id_raw)
+
+            course = Course.get_by_id(course_id)
+            if not course:
+                send_json(self, 404, {"error": "Course not found"})
+                return
+
+            co_creators = course.get('co_creator_ids') or []
+            if course['primary_creator'] != user['id'] and user['id'] not in co_creators:
+                send_json(self, 403, {"error": "Access denied"})
+                return
+
+            with get_db() as conn:
+                cursor = conn.cursor()
+
+                cursor.execute(
+                    "SELECT COUNT(*) AS n FROM materials WHERE course_id = %s",
+                    (course_id,),
+                )
+                mat_count = cursor.fetchone()['n']
+
+                cursor.execute(
+                    "SELECT COUNT(*) AS n FROM quiz_generations WHERE course_id = %s",
+                    (course_id,),
+                )
+                quiz_count = cursor.fetchone()['n']
+
+                cursor.execute(
+                    "SELECT COUNT(*) AS n FROM flashcard_generations WHERE course_id = %s",
+                    (course_id,),
+                )
+                fc_count = cursor.fetchone()['n']
+
+                cursor.execute(
+                    "SELECT COUNT(*) AS n FROM report_generations WHERE course_id = %s",
+                    (course_id,),
+                )
+                rpt_count = cursor.fetchone()['n']
+
+                cursor.execute(
+                    "SELECT COUNT(*) AS n FROM chats WHERE course_id = %s AND user_id = %s AND is_archived = FALSE",
+                    (course_id, user['id']),
+                )
+                chat_count = cursor.fetchone()['n']
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS n FROM chat_messages cm
+                    JOIN chats c ON c.id = cm.chat_id
+                    WHERE c.course_id = %s AND c.user_id = %s AND c.is_archived = FALSE
+                    """,
+                    (course_id, user['id']),
+                )
+                msg_count = cursor.fetchone()['n']
+
+            send_json(self, 200, _shape_stats(
+                materials=mat_count,
+                quizzes=quiz_count,
+                flashcards=fc_count,
+                reports=rpt_count,
+                chats=chat_count,
+                messages=msg_count,
+            ))
             return
 
         courses = Course.get_by_creator(user['id'], include_co_created=True)
@@ -107,7 +204,14 @@ class handler(BaseHTTPRequestHandler):
 
         title = sanitize_string(data.get('title', '') or '', max_length=200) or None
         description = sanitize_string(data.get('description', '') or '', max_length=2000) or None
-        updated = Course.update(course_id, title=title, description=description)
+
+        kwargs = {"title": title, "description": description}
+        if 'default_ai_provider' in data or 'default_ai_model' in data:
+            default_provider, default_model = _extract_default_model_fields(data)
+            kwargs['default_ai_provider'] = default_provider
+            kwargs['default_ai_model'] = default_model
+
+        updated = Course.update(course_id, **kwargs)
         send_json(self, 200, {"course": updated})
 
     # ---------------------------------------------------------------- PATCH --

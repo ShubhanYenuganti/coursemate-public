@@ -53,13 +53,41 @@ Login flows:
 ### Chat + RAG Request Flow
 
 1. **Chat requests** hit `api/chat.py` (streaming responses via SSE).
-2. The backend performs **hybrid retrieval** over course materials: query embeddings are produced by the `embed_query` Lambda (`api/rag.py`), then retrieval runs in `services/query/retrieval.py` combining dual-modality hits from the `chunks` table.
-3. The retrieved context is passed to the selected LLM provider via `api/llm.py` to synthesize the final answer.
-4. Both the user message and assistant response are persisted to Postgres with grounding metadata.
+2. Course materials are indexed by `lambda/index_materials` into a **page-indexed material structure**: every document builder emits section/problem/slide/question nodes with page ranges, LLM-enriched summaries, retrieval keywords, evidence pages, semantic relations, and a structure-first retrieval policy.
+3. When PageIndex RAG is enabled, `api/llm.py::run_agent_pageindex` gives the model a routing index and production tools: `get_material_structure`, `get_page_content`, and `get_related_materials`.
+4. The model follows a **structure-first, high-recall retrieval policy**: inspect material structure for broad/conceptual questions, fetch multiple plausible evidence pages, include neighboring pages when useful, and synthesize only from fetched page text.
+5. Both the user message and assistant response are persisted to Postgres with grounding metadata.
 
-### Agentic RAG + Web Search (Tavily)
+### Agentic Page-Indexing RAG
 
-The backend supports an optional **agentic loop** that can run a cached web search tool backed by **Tavily** (`api/tools.py`, `web_cache` table) and rerank retrieved chunks via Voyage. This augments responses when the course corpus is missing key facts or when the query is better answered with live web context.
+CourseMate's current retrieval path is an **LLM-routed PageIndex agent**, not a standalone BM25/vector lookup. The agent sees compact material/page summaries, can request the full material structure, and then fetches raw page text through `get_page_content` before answering. This keeps citations tied to original course pages while letting the model navigate sections, slides, homework problems, quiz questions, figures, tables, and equations.
+
+The older chunk/vector path remains in the codebase as a fallback path, but PageIndex RAG is the evaluated path for grounded study answers.
+
+### Retrieval Eval Metrics
+
+The production PageIndex path is evaluated with the real **QASPER test split** from `allenai/qasper`, an academic QA corpus containing research papers, human-written questions, answers, and human evidence strings. In this eval, QASPER sections are treated as evidence locations because the dataset source does not carry native PDF page boundaries. The eval first indexes QASPER papers into a local SQLite store with production-shaped PageIndex tables, then runs the same `run_agent_pageindex(...)` production loop against that indexed store and scores the first 5 unique evidence locations fetched via `get_page_content`.
+
+Current agentic PageIndex eval over a deterministic 100-paper QASPER subset:
+
+- Indexed `100` QASPER test papers into SQLite as synthetic CourseMate materials.
+- Stored `1,228` section/evidence-location rows and `55` agent-built semantic relations.
+- Used `2,755` OpenAI calls during indexing for node summaries, keywords, document summaries, metadata tags, and relation building.
+- Evaluated `348` QASPER questions from those indexed papers; `321` had matched human evidence locations.
+
+| Variant | Recall@5 | MRR@5 | NDCG@5 | Evidence Location Hit@5 | Answerability Coverage | Tool Calls | Fetched Locations | Avg Latency ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `agentic_pageindex` | 0.654 | 0.623 | 0.607 | 0.773 | 0.922 | 2.34 | 2.95 | 9631 |
+
+Metric meanings:
+- **Recall@5**: fraction of gold human evidence locations recovered in the first 5 fetched locations.
+- **MRR@5**: reciprocal rank of the first correct evidence location in the first 5 fetched locations.
+- **NDCG@5**: rank-quality score; higher means correct evidence appears closer to the top of the fetched list.
+- **Evidence Location Hit@5**: share of questions where at least one correct evidence location was fetched in the first 5.
+- **Answerability Coverage**: share of questions where the loader could match at least one human evidence string to retrievable text.
+- **Tool Calls**: average number of PageIndex tool calls made per question.
+- **Fetched Locations**: average number of unique evidence locations fetched per question.
+- **Avg Latency ms**: average end-to-end agentic retrieval/answer latency per question.
 
 ### Async Generation (Quiz / Flashcards / Reports)
 
@@ -146,10 +174,11 @@ When the model returns a reply it also returns a `summary` field: a 5–6 word d
 | `QUIZ_GENERATION_QUEUE_URL` | No* | SQS queue URL for `quiz_generate` async jobs |
 | `FLASHCARDS_GENERATION_QUEUE_URL` | No* | SQS queue URL for `flashcards_generate` async jobs |
 | `REPORTS_GENERATION_QUEUE_URL` | No* | SQS queue URL for `reports_generate` async jobs |
-| `TAVILY_API_KEY` | No* | Tavily API key for agentic web search |
+| `PAGEINDEX_RAG_ENABLED` | No | Enable LLM-routed page-indexing RAG (`true`/`false`) |
+| `TAVILY_API_KEY` | No* | Tavily API key for optional web search integrations |
 | `AGENTIC_WEB_SEARCH_ENABLED` | No | Enable Tavily-backed web search tool (`true`/`false`) |
 | `AGENTIC_RERANK_ENABLED` | No | Enable Voyage rerank tool (`true`/`false`) |
-| `AGENTIC_LOOP_ENABLED` | No | Enable agentic loop in chat (`true`/`false`) |
+| `AGENTIC_LOOP_ENABLED` | No | Enable legacy agentic loop in chat (`true`/`false`) |
 
 `*` Required when enabling the respective integration.
 

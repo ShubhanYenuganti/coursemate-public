@@ -3,6 +3,7 @@ import { formatDateTime } from './utils/dateUtils';
 import { getMaterialUrl } from './utils/materialUtils';
 import FlashcardViewer from './FlashcardViewer';
 import GenerationConfirmModal from './components/GenerationConfirmModal.jsx';
+import { PROVIDER_MODELS } from './modelCatalog.js';
 
 function ExternalLinkIcon() {
   return (
@@ -143,46 +144,7 @@ const DEPTH_OPTIONS = [
   },
 ];
 
-const PROVIDER_MODELS = {
-  claude: [
-    { label: 'Claude Opus 4.6',   id: 'claude-opus-4-6' },
-    { label: 'Claude Sonnet 4.6', id: 'claude-sonnet-4-6' },
-    { label: 'Claude Haiku 4.5',  id: 'claude-haiku-4-5-20251001' },
-    { label: 'Claude Sonnet 4.5', id: 'claude-sonnet-4-5-20250929' },
-    { label: 'Claude Sonnet 4',   id: 'claude-sonnet-4-20250514' },
-    { label: 'Claude Opus 4',     id: 'claude-opus-4-20250514' },
-  ],
-  gemini: [
-    { label: 'Gemini 3.1 Pro',        id: 'gemini-3.1-pro-preview' },
-    { label: 'Gemini 3 Flash',        id: 'gemini-3-flash-preview' },
-    { label: 'Gemini 2.5 Pro',        id: 'gemini-2.5-pro' },
-    { label: 'Gemini 2.5 Flash',      id: 'gemini-2.5-flash' },
-    { label: 'Gemini 2.5 Flash-Lite', id: 'gemini-2.5-flash-lite' },
-    { label: 'Deep Research',         id: 'deep-research-pro-preview-12-2025' },
-    { label: 'Gemini 2.0 Flash',      id: 'gemini-2.0-flash' },
-    { label: 'Gemini 2.0 Flash-Lite', id: 'gemini-2.0-flash-lite' },
-  ],
-  openai: [
-    { label: 'GPT-5.2',               id: 'gpt-5.2' },
-    { label: 'GPT-5.1',               id: 'gpt-5.1' },
-    { label: 'GPT-5 Mini',            id: 'gpt-5-mini' },
-    { label: 'GPT-5 Nano',            id: 'gpt-5-nano' },
-    { label: 'GPT-4.1',               id: 'gpt-4.1' },
-    { label: 'GPT-4.1 mini',          id: 'gpt-4.1-mini' },
-    { label: 'GPT-4.1 nano',          id: 'gpt-4.1-nano' },
-    { label: 'GPT-4o',                id: 'gpt-4o' },
-    { label: 'GPT-4o mini',           id: 'gpt-4o-mini' },
-    { label: 'o3',                    id: 'o3' },
-    { label: 'o3-mini',               id: 'o3-mini' },
-    { label: 'o3-pro',                id: 'o3-pro' },
-    { label: 'o4-mini',               id: 'o4-mini' },
-    { label: 'o1',                    id: 'o1' },
-    { label: 'o1-pro',                id: 'o1-pro' },
-    { label: 'o3 Deep Research',      id: 'o3-deep-research' },
-    { label: 'o4-mini Deep Research', id: 'o4-mini-deep-research' },
-    { label: 'GPT-OSS 120B',          id: 'gpt-oss-120b' },
-  ],
-};
+// PROVIDER_MODELS imported from ./modelCatalog.js
 
 const MODEL_LABELS = { gemini: 'Gemini', openai: 'GPT', claude: 'Claude' };
 
@@ -190,9 +152,15 @@ export default function Flashcards({ course, onAddSource }) {
   const [materials, setMaterials] = useState([]);
   const [materialsLoading, setMaterialsLoading] = useState(true);
 
-  const [topic, setTopic] = useState('');
-  const [cardCount, setCardCount] = useState(20);
-  const [depth, setDepth] = useState('moderate');
+  const [topic, setTopic] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`flashcards_fields_${course?.id}`) || '{}').topic || ''; } catch { return ''; }
+  });
+  const [cardCount, setCardCount] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`flashcards_fields_${course?.id}`) || '{}').card_count ?? 20; } catch { return 20; }
+  });
+  const [depth, setDepth] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`flashcards_fields_${course?.id}`) || '{}').depth || 'moderate'; } catch { return 'moderate'; }
+  });
 
   const [availableProviders, setAvailableProviders] = useState([]);
   const [selectedProvider, setSelectedProvider] = useState(
@@ -242,7 +210,18 @@ export default function Flashcards({ course, onAddSource }) {
       credentials: 'include',
     })
       .then((r) => r.json())
-      .then((data) => setMaterials(Array.isArray(data) ? data : (data.materials || [])))
+      .then((data) => {
+        const mats = Array.isArray(data) ? data : (data.materials || []);
+        try {
+          const stored = JSON.parse(localStorage.getItem(`flashcards_fields_${course.id}`) || '{}');
+          if (Array.isArray(stored.material_ids) && stored.material_ids.length > 0) {
+            const ids = new Set(stored.material_ids.map(Number));
+            setMaterials(mats.map((m) => ({ ...m, selected: ids.has(Number(m.id)) })));
+            return;
+          }
+        } catch {}
+        setMaterials(mats);
+      })
       .catch(() => {})
       .finally(() => setMaterialsLoading(false));
   }, [course?.id]);
@@ -426,6 +405,13 @@ export default function Flashcards({ course, onAddSource }) {
       const depthToUse = overrides?.depth ?? depth;
       const providerToUse = overrides?.provider ?? selectedProvider;
       const modelIdToUse = overrides?.model_id ?? selectedModelId;
+
+      try {
+        localStorage.setItem(`flashcards_fields_${course?.id}`, JSON.stringify({
+          topic: topicToUse, card_count: cardCountToUse, depth: depthToUse,
+          material_ids: contextIds,
+        }));
+      } catch {}
 
       const res = await fetch('/api/flashcards', {
         method: 'POST',

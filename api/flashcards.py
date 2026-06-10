@@ -30,7 +30,7 @@ except ImportError:
 _FLASHCARDS_QUEUE_URL = os.environ.get('FLASHCARDS_GENERATION_QUEUE_URL')
 _AWS_REGION = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
 
-_MATERIAL_CHUNK_LIMIT = 80
+_MATERIAL_PAGE_LIMIT = 80
 _CONTEXT_CHAR_BUDGET = 24_000
 _ALLOWED_DEPTHS = {'brief', 'moderate', 'in-depth'}
 
@@ -57,14 +57,15 @@ def _fetch_material_context(conn, material_ids: list) -> str:
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT c.content
-        FROM chunks c
-        JOIN documents d ON c.document_id = d.id
-        WHERE d.material_id = ANY(%s::int[])
-        ORDER BY d.material_id, c.chunk_index
+        SELECT text_content
+        FROM material_page_text
+        WHERE material_id = ANY(%s::int[])
+          AND text_content IS NOT NULL
+          AND text_content != ''
+        ORDER BY material_id, page_number
         LIMIT %s
         """,
-        (material_ids, _MATERIAL_CHUNK_LIMIT),
+        (material_ids, _MATERIAL_PAGE_LIMIT),
     )
     rows = cursor.fetchall()
     cursor.close()
@@ -75,7 +76,7 @@ def _fetch_material_context(conn, material_ids: list) -> str:
     parts = []
     total = 0
     for row in rows:
-        content = row.get('content') or ''
+        content = row.get('text_content') or ''
         if total + len(content) > _CONTEXT_CHAR_BUDGET:
             remaining = _CONTEXT_CHAR_BUDGET - total
             if remaining > 200:
@@ -111,6 +112,12 @@ def _build_flashcards_prompt(topic: str, card_count: int, depth: str, material_c
     return system, user
 
 
+def _extract_conversation_context(body: dict):
+    """Optional conversation summary that grounds a chat-originated generation."""
+    val = (body.get('conversation_context') or '').strip()
+    return val or None
+
+
 def _enqueue_flashcards_generation_job(generation_id: int, user_id: int):
     if not _FLASHCARDS_QUEUE_URL:
         raise ValueError('FLASHCARDS_GENERATION_QUEUE_URL env var is not set')
@@ -143,6 +150,7 @@ def _persist_draft_generation(
     estimated_total_tokens_low: int,
     estimated_total_tokens_high: int,
     parent_generation_id=None,
+    conversation_context=None,
 ) -> int:
     cursor = conn.cursor()
     cursor.execute(
@@ -151,11 +159,11 @@ def _persist_draft_generation(
             (course_id, generated_by, title, topic, card_count, depth, provider, model_id,
              status, parent_generation_id, selected_material_ids, prompt_text, generation_settings,
              estimated_prompt_tokens_low, estimated_prompt_tokens_high,
-             estimated_total_tokens_low, estimated_total_tokens_high)
+             estimated_total_tokens_low, estimated_total_tokens_high, conversation_context)
         VALUES
             (%s, %s, %s, %s, %s, %s, %s, %s,
              'draft', %s, %s, %s, %s,
-             %s, %s, %s, %s)
+             %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -175,6 +183,7 @@ def _persist_draft_generation(
             estimated_prompt_tokens_high,
             estimated_total_tokens_low,
             estimated_total_tokens_high,
+            conversation_context,
         ),
     )
     generation_id = cursor.fetchone()['id']
@@ -376,6 +385,7 @@ class handler(BaseHTTPRequestHandler):
             int(x) for x in (body.get('material_ids') or [])
             if isinstance(x, int) or (isinstance(x, str) and x.isdigit())
         ]
+        conversation_context = _extract_conversation_context(body)
 
         user_id = user['id']
         with get_db() as conn:
@@ -423,6 +433,7 @@ class handler(BaseHTTPRequestHandler):
                 estimated_total_tokens_low=estimate['estimated_total_tokens_low'],
                 estimated_total_tokens_high=estimate['estimated_total_tokens_high'],
                 parent_generation_id=body.get('parent_generation_id'),
+                conversation_context=conversation_context,
             )
             cursor.close()
 
@@ -462,6 +473,7 @@ class handler(BaseHTTPRequestHandler):
                 send_json(self, 400, {'error': 'Invalid parent_generation_id'})
                 return
 
+        conversation_context = _extract_conversation_context(body)
         user_id = user['id']
         should_enqueue = False
         status_response = None
@@ -501,10 +513,11 @@ class handler(BaseHTTPRequestHandler):
                 cursor.execute(
                     """
                     UPDATE flashcard_generations
-                    SET status='queued', provider=%s, model_id=%s, parent_generation_id=%s, error=NULL
+                    SET status='queued', provider=%s, model_id=%s, parent_generation_id=%s, error=NULL,
+                        conversation_context=COALESCE(%s, conversation_context)
                     WHERE id=%s
                     """,
-                    (provider, model_id, parent_generation_id_int, generation_id),
+                    (provider, model_id, parent_generation_id_int, conversation_context, generation_id),
                 )
                 should_enqueue = True
                 current_status = 'queued'

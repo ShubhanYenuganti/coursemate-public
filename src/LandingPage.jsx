@@ -74,7 +74,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Which LLM providers are supported?",
-    a: "CourseMate supports OpenAI (GPT-4o, GPT-4 Turbo, etc.), Anthropic (Claude 3.5, Claude 3 Opus, etc.), and Google Gemini (1.5 Pro, 1.5 Flash, etc.). You can bring keys for one or all three.",
+    a: "CourseMate supports OpenAI (GPT-5.5, GPT-4.1, etc.), Anthropic (Claude Opus 4.8, Claude Sonnet 4.6, etc.), and Google Gemini (Gemini 3.5 Flash, Gemini 2.5 Pro, etc.). You can bring keys for one or all three.",
   },
   {
     q: "Can I use a different model for chat vs. generation?",

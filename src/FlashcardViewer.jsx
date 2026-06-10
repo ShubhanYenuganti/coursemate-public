@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import NotionTargetPicker from './components/NotionTargetPicker';
 import GDriveTargetPicker from './components/GDriveTargetPicker';
+import { loadRatings, setRating } from './utils/flashcardRatings';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -71,6 +72,24 @@ function StarIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    </svg>
+  );
+}
+
+function ThumbUpIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 10v12" />
+      <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2h0a3.13 3.13 0 0 1 3 3.88Z" />
+    </svg>
+  );
+}
+
+function ThumbDownIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 14V2" />
+      <path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22h0a3.13 3.13 0 0 1-3-3.88Z" />
     </svg>
   );
 }
@@ -163,9 +182,13 @@ export default function FlashcardViewer({
   const [shuffled, setShuffled] = useState(false);
   const [seen, setSeen] = useState(new Set());
   const [showHint, setShowHint] = useState(false);
+  const [ratings, setRatings] = useState(() => loadRatings(generationId));
   const [saveStatus, setSaveStatus] = useState(data?.artifact_material_id ? 'saved' : 'idle');
   const [exportStatus, setExportStatus] = useState('idle');
   const [resolving, setResolving] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [playInterval, setPlayInterval] = useState(4);
+  const [whitingOut, setWhitingOut] = useState(false);
 
   // Export state
   const courseId = course?.id;
@@ -192,6 +215,29 @@ export default function FlashcardViewer({
     return arr;
   }, [shuffled, cards]);
 
+  useEffect(() => {
+    if (!playing) return undefined;
+    const tick = setInterval(() => {
+      setIsFlipped((flipped) => {
+        if (!flipped) return true; // first tick: show answer
+        // second tick: white out back face, advance card, flip to front
+        setWhitingOut(true);
+        setTimeout(() => setWhitingOut(false), 450);
+        setCurrentIndex((i) => {
+          const lastIndex = displayCards.length - 1;
+          if (i >= lastIndex) {
+            setPlaying(false);
+            return i;
+          }
+          if (trackProgress) setSeen((prev) => new Set(prev).add(i));
+          return i + 1;
+        });
+        return false; // reset flip for next card
+      });
+    }, playInterval * 1000);
+    return () => clearInterval(tick);
+  }, [playing, playInterval, displayCards, trackProgress]);
+
   const total = displayCards.length;
   const card = displayCards[currentIndex] || {};
   const front = card.front || card.term || card.question || '';
@@ -204,6 +250,7 @@ export default function FlashcardViewer({
   const actionIconClass = "text-gray-500";
 
   function goNext() {
+    setPlaying(false);
     if (currentIndex < total - 1) {
       if (trackProgress) setSeen((prev) => new Set(prev).add(currentIndex));
       setCurrentIndex((i) => i + 1);
@@ -213,6 +260,7 @@ export default function FlashcardViewer({
   }
 
   function goPrev() {
+    setPlaying(false);
     if (currentIndex > 0) {
       setCurrentIndex((i) => i - 1);
       setIsFlipped(false);
@@ -223,6 +271,17 @@ export default function FlashcardViewer({
   function handleFlip() {
     if (trackProgress && !isFlipped) setSeen((prev) => new Set(prev).add(currentIndex));
     setIsFlipped((f) => !f);
+  }
+
+  function rateCard(value) {
+    const next = ratings[currentIndex] === value ? null : value;
+    setRating(generationId, currentIndex, next);
+    setRatings((prev) => {
+      const copy = { ...prev };
+      if (next == null) delete copy[currentIndex];
+      else copy[currentIndex] = next;
+      return copy;
+    });
   }
 
   function toggleShuffle() {
@@ -534,10 +593,19 @@ export default function FlashcardViewer({
                   </button>
                   <button
                     type="button"
-                    onClick={(e) => e.stopPropagation()}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                    aria-label="Thumb up"
+                    onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
+                    className={`p-1.5 rounded-lg border transition-colors ${ratings[currentIndex] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
                   >
-                    <StarIcon />
+                    <ThumbUpIcon />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Thumb down"
+                    onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
+                    className={`p-1.5 rounded-lg border transition-colors ${ratings[currentIndex] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
+                  >
+                    <ThumbDownIcon />
                   </button>
                 </div>
               </div>
@@ -566,6 +634,7 @@ export default function FlashcardViewer({
                 transform: 'rotateY(180deg)',
               }}
             >
+              {whitingOut && <div className="absolute inset-0 bg-white z-10 rounded-2xl" />}
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-50">
                 <span className="text-xs text-gray-400">Answer</span>
                 <div className="flex items-center gap-1">
@@ -578,10 +647,19 @@ export default function FlashcardViewer({
                   </button>
                   <button
                     type="button"
-                    onClick={(e) => e.stopPropagation()}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                    aria-label="Thumb up"
+                    onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
+                    className={`p-1.5 rounded-lg border transition-colors ${ratings[currentIndex] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
                   >
-                    <StarIcon />
+                    <ThumbUpIcon />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Thumb down"
+                    onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
+                    className={`p-1.5 rounded-lg border transition-colors ${ratings[currentIndex] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
+                  >
+                    <ThumbDownIcon />
                   </button>
                 </div>
               </div>
@@ -646,10 +724,26 @@ export default function FlashcardViewer({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              className="w-9 h-9 flex items-center justify-center rounded-full border border-gray-200 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+              onClick={() => setPlaying((p) => !p)}
+              aria-label={playing ? 'Pause' : 'Play'}
+              className={`w-9 h-9 flex items-center justify-center rounded-full border transition-colors ${
+                playing
+                  ? 'border-indigo-400 text-indigo-600 bg-indigo-50'
+                  : 'border-gray-200 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'
+              }`}
             >
               <PlayIcon />
             </button>
+            <select
+              value={playInterval}
+              onChange={(e) => setPlayInterval(Number(e.target.value))}
+              className="text-xs border border-gray-200 rounded-md px-1.5 py-1 text-gray-500 bg-white hover:border-indigo-400 focus:outline-none focus:border-indigo-400 cursor-pointer"
+              aria-label="Play speed"
+            >
+              {[1, 2, 3, 4, 5, 8, 10, 15].map((s) => (
+                <option key={s} value={s}>{s}s</option>
+              ))}
+            </select>
             <button
               type="button"
               onClick={toggleShuffle}

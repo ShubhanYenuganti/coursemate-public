@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import re
@@ -330,8 +332,14 @@ def _docs_api(method: str, path: str, access_token: str, body: dict | None = Non
 
 
 def _handle_auth(handler_self):
-    """Redirect user to Google OAuth consent page with CSRF state cookie."""
+    """Redirect user to Google OAuth consent page with CSRF state and PKCE cookies."""
     state = secrets.token_urlsafe(32)
+
+    # PKCE: generate verifier, derive S256 challenge
+    code_verifier = secrets.token_urlsafe(64)  # ~86 chars, within 43–128 spec
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
     params = {
         "client_id": _CLIENT_ID,
         "redirect_uri": _REDIRECT_URI,
@@ -340,24 +348,21 @@ def _handle_auth(handler_self):
         "access_type": "offline",
         "prompt": "consent",  # always prompt to ensure refresh token is issued
         "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
     }
     oauth_url = f"{_GDRIVE_AUTH_URL}?{urlencode(params)}"
 
-    cookie_attrs = [
-        "gdrive_oauth_state=" + state,
-        "HttpOnly",
-        "Max-Age=600",
-        "Path=/api/gdrive",
-    ]
-    if _IS_HTTPS:
-        cookie_attrs += ["Secure", "SameSite=Lax"]
-    else:
-        cookie_attrs.append("SameSite=Lax")
+    def _cookie(name, value):
+        attrs = [f"{name}={value}", "HttpOnly", "Max-Age=600", "Path=/api/gdrive"]
+        attrs += ["Secure", "SameSite=Lax"] if _IS_HTTPS else ["SameSite=Lax"]
+        return "; ".join(attrs)
 
     handler_self.send_response(302)
     for k, v in get_cors_headers().items():
         handler_self.send_header(k, v)
-    handler_self.send_header("Set-Cookie", "; ".join(cookie_attrs))
+    handler_self.send_header("Set-Cookie", _cookie("gdrive_oauth_state", state))
+    handler_self.send_header("Set-Cookie", _cookie("gdrive_pkce_verifier", code_verifier))
     handler_self.send_header("Location", oauth_url)
     handler_self.end_headers()
 
@@ -378,6 +383,11 @@ def _handle_callback(handler_self, qs: dict):
         send_json(handler_self, 400, {"error": "Invalid OAuth state"})
         return
 
+    code_verifier = _parse_cookie(cookie_header, "gdrive_pkce_verifier")
+    if not code_verifier:
+        send_json(handler_self, 400, {"error": "Missing PKCE verifier"})
+        return
+
     if not code:
         send_json(handler_self, 400, {"error": "Missing code"})
         return
@@ -390,6 +400,7 @@ def _handle_callback(handler_self, qs: dict):
             "redirect_uri": _REDIRECT_URI,
             "client_id": _CLIENT_ID,
             "client_secret": _CLIENT_SECRET,
+            "code_verifier": code_verifier,
         },
         timeout=15,
     )
@@ -431,11 +442,13 @@ def _handle_callback(handler_self, qs: dict):
         else:
             pending_cookie_attrs.append("SameSite=Lax")
         clear_state = "gdrive_oauth_state=; HttpOnly; Max-Age=0; Path=/api/gdrive"
+        clear_verifier = "gdrive_pkce_verifier=; HttpOnly; Max-Age=0; Path=/api/gdrive"
         handler_self.send_response(302)
         for k, v in get_cors_headers().items():
             handler_self.send_header(k, v)
         handler_self.send_header("Set-Cookie", "; ".join(pending_cookie_attrs))
         handler_self.send_header("Set-Cookie", clear_state)
+        handler_self.send_header("Set-Cookie", clear_verifier)
         handler_self.send_header("Location", "/profile?gdrive_pending=1")
         handler_self.end_headers()
         return
@@ -447,11 +460,13 @@ def _handle_callback(handler_self, qs: dict):
 
     _upsert_gdrive_integration(user["id"], encrypted, email)
 
-    clear_cookie = "gdrive_oauth_state=; HttpOnly; Max-Age=0; Path=/api/gdrive"
+    clear_state = "gdrive_oauth_state=; HttpOnly; Max-Age=0; Path=/api/gdrive"
+    clear_verifier = "gdrive_pkce_verifier=; HttpOnly; Max-Age=0; Path=/api/gdrive"
     handler_self.send_response(302)
     for k, v in get_cors_headers().items():
         handler_self.send_header(k, v)
-    handler_self.send_header("Set-Cookie", clear_cookie)
+    handler_self.send_header("Set-Cookie", clear_state)
+    handler_self.send_header("Set-Cookie", clear_verifier)
     handler_self.send_header("Location", "/profile?gdrive_connected=1")
     handler_self.end_headers()
 

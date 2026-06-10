@@ -1223,7 +1223,7 @@ def _handle_add_source_point(handler_self, user_id: int, body: dict):
         send_json(handler_self, 400, {"error": "course_id and external_id required"})
         return
 
-    resolved_id = _resolve_notion_database_id(external_id, token)
+    resolved_id = _resolve_notion_data_source_id(external_id, token)
     if not resolved_id:
         send_json(
             handler_self,
@@ -1423,6 +1423,7 @@ def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
     # Collect enough pages from Notion to satisfy the requested page
     all_pages = []
     cursor = None
+    healed = False
     while len(all_pages) < target_count:
         body = {"page_size": min(100, target_count - len(all_pages))}
         if cursor:
@@ -1431,6 +1432,21 @@ def _handle_list_source_point_files(handler_self, user_id: int, qs: dict):
             "POST", f"/data_sources/{data_source_id}/query", token, body=body, user_id=user_id
         )
         if err:
+            # Legacy rows may store a database ID instead of a data_source ID.
+            # Resolve it once, persist, and retry before surfacing the error.
+            if not healed:
+                healed = True
+                resolved = _resolve_notion_data_source_id(sp["external_id"], token)
+                if resolved and resolved != data_source_id:
+                    data_source_id = resolved
+                    with get_db() as conn:
+                        cur = conn.cursor()
+                        cur.execute(
+                            "UPDATE integration_source_points SET external_id = %s WHERE id = %s AND user_id = %s",
+                            (data_source_id, sp_id, user_id),
+                        )
+                        cur.close()
+                    continue
             send_json(handler_self, 502, {"error": "Notion API error", "code": err})
             return
         all_pages.extend((data or {}).get("results", []))

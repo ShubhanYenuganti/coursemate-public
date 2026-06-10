@@ -27,17 +27,13 @@ try:
     from .models import User
     from .courses import Course
     from .db import get_db
-    from .rag import retrieve_chunks
-    from .llm import synthesize, synthesize_with_clarification
-    from services.query.retrieval import _fetch_chunk_context
+    from .llm import synthesize
 except ImportError:
     from middleware import send_json, send_sse_headers, send_sse_event, handle_options, authenticate_request, sanitize_string, check_rate_limit
     from models import User
     from courses import Course
     from db import get_db
-    from rag import retrieve_chunks
-    from llm import synthesize, synthesize_with_clarification
-    from services.query.retrieval import _fetch_chunk_context
+    from llm import synthesize
 
 try:
     from services.query.persistence import embed_text_via_lambda, write_chat_message_embedding, embed_image_via_lambda
@@ -58,6 +54,18 @@ DEFAULT_AI_MODEL = "gpt-4o-mini"
 
 
 # ------------------------------------------------------------------ helpers --
+
+def _content_match_from_row(r: dict) -> dict:
+    return {
+        "id": r["id"],
+        "title": r["title"],
+        "last_message_at": r["last_message_at"],
+        "message_id": r["message_id"],
+        "message_index": r["message_index"],
+        "snippet": r["snippet"],
+        "hit_count": r["hit_count"],
+    }
+
 
 def _get_chat(conn, chat_id):
     cursor = conn.cursor()
@@ -506,6 +514,7 @@ class handler(BaseHTTPRequestHandler):
 
         with get_db() as conn:
             cursor = conn.cursor()
+            # title_tsq_sql is always one of two hard-coded literals — never user input
             cursor.execute(f"""
                 WITH title_matches AS (
                     SELECT id,
@@ -516,16 +525,20 @@ class handler(BaseHTTPRequestHandler):
                     WHERE course_id = %s
                       AND user_id = %s
                       AND is_archived = FALSE
-                      AND to_tsvector('english', title) @@ {title_tsq_sql}
+                      AND to_tsvector('english', title) @@ ({title_tsq_sql})
                     ORDER BY score DESC
                     LIMIT 20
                 ),
-                content_matches AS (
-                    SELECT c.id,
-                           c.title,
-                           c.last_message_at,
-                           COUNT(*) AS hit_count,
-                           MAX(ts_rank(to_tsvector('english', cm.content), plainto_tsquery('english', %s))) AS best_rank
+                ranked_messages AS (
+                    SELECT cm.chat_id,
+                           cm.id   AS message_id,
+                           cm.message_index,
+                           ts_rank(to_tsvector('english', cm.content),
+                                   plainto_tsquery('english', %s)) AS rank,
+                           ts_headline('english', cm.content,
+                                   plainto_tsquery('english', %s),
+                                   'StartSel=<mark>,StopSel=</mark>,MaxFragments=1,MaxWords=18,MinWords=6') AS snippet,
+                           COUNT(*) OVER (PARTITION BY cm.chat_id) AS hit_count
                     FROM chat_messages cm
                     JOIN chats c ON c.id = cm.chat_id
                     WHERE c.course_id = %s
@@ -533,14 +546,26 @@ class handler(BaseHTTPRequestHandler):
                       AND c.is_archived = FALSE
                       AND to_tsvector('english', cm.content) @@ plainto_tsquery('english', %s)
                       AND cm.chat_id != ALL(ARRAY(SELECT id FROM title_matches))
-                    GROUP BY c.id, c.title, c.last_message_at
-                    ORDER BY (1 + ln(COUNT(*))) * MAX(ts_rank(to_tsvector('english', cm.content), plainto_tsquery('english', %s))) DESC
+                      AND cm.is_deleted = FALSE
+                ),
+                content_matches AS (
+                    SELECT DISTINCT ON (rm.chat_id) rm.chat_id AS id,
+                           c.title, c.last_message_at,
+                           rm.message_id, rm.message_index, rm.snippet, rm.hit_count
+                    FROM ranked_messages rm
+                    JOIN chats c ON c.id = rm.chat_id
+                    ORDER BY rm.chat_id, rm.rank DESC
                     LIMIT 20
                 )
-                SELECT 'title' AS match_type, id, title, last_message_at, NULL AS hit_count FROM title_matches
+                SELECT 'title' AS match_type, id, title, last_message_at,
+                       NULL::int AS hit_count, NULL::int AS message_id,
+                       NULL::int AS message_index, NULL::text AS snippet
+                FROM title_matches
                 UNION ALL
-                SELECT 'content' AS match_type, id, title, last_message_at, hit_count FROM content_matches
-            """, (*title_tsq_params, course_id, user['id'], *title_tsq_params, q, course_id, user['id'], q, q))
+                SELECT 'content' AS match_type, id, title, last_message_at,
+                       hit_count, message_id, message_index, snippet
+                FROM content_matches
+            """, (*title_tsq_params, course_id, user['id'], *title_tsq_params, q, q, course_id, user['id'], q))
 
             rows = cursor.fetchall()
             cursor.close()
@@ -550,8 +575,7 @@ class handler(BaseHTTPRequestHandler):
             for r in rows if r["match_type"] == "title"
         ]
         content_matches = [
-            {"id": r["id"], "title": r["title"], "last_message_at": r["last_message_at"], "hit_count": r["hit_count"]}
-            for r in rows if r["match_type"] == "content"
+            _content_match_from_row(r) for r in rows if r["match_type"] == "content"
         ]
 
         send_json(self, 200, {"title_matches": title_matches, "content_matches": content_matches})
@@ -668,7 +692,7 @@ class handler(BaseHTTPRequestHandler):
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT cm.retrieved_chunk_ids, c.user_id
+                SELECT cm.retrieved_chunk_ids, cm.tool_trace, c.user_id
                 FROM chat_messages cm
                 JOIN chats c ON c.id = cm.chat_id
                 WHERE cm.id = %s AND cm.is_deleted = FALSE
@@ -688,7 +712,48 @@ class handler(BaseHTTPRequestHandler):
                 send_json(self, 200, {"chunks": []})
                 return
 
-            raw_chunks = _fetch_chunk_context(conn, chunk_ids)
+            is_pageindex = any(isinstance(cid, str) and cid.startswith('material:') for cid in chunk_ids)
+
+            if is_pageindex:
+                try:
+                    from pageindex_retrieval import _parse_pages
+                except ImportError:
+                    from .pageindex_retrieval import _parse_pages
+                tool_trace = row['tool_trace'] or []
+                serialized = []
+                for entry in tool_trace:
+                    if entry.get('tool') != 'get_page_content':
+                        continue
+                    mid = entry.get('args', {}).get('material_id')
+                    if mid is None:
+                        continue
+                    pages_str = entry.get('args', {}).get('pages', '')
+                    pages = _parse_pages(str(pages_str))
+                    serialized.append({
+                        "material_id": mid,
+                        "pages": pages,
+                        "citation_type": "page",
+                    })
+                for cid in chunk_ids:
+                    if not isinstance(cid, str) or not cid.startswith('web:'):
+                        continue
+                    rest = cid[4:]
+                    if '\t' in rest:
+                        url, title = rest.split('\t', 1)
+                    else:
+                        url, title = rest, rest
+                    serialized.append({
+                        "citation_type": "web",
+                        "url": url,
+                        "title": title,
+                    })
+                send_json(self, 200, {"chunks": serialized})
+                return
+
+            # Legacy (pre-PageIndex) messages stored vector chunk IDs; that
+            # citation source (the chunks table) has been retired, so there is
+            # nothing to hydrate — return no chunk citations for such messages.
+            raw_chunks = []
 
         chunk_map = {str(c['id']): c for c in raw_chunks}
         ordered = [chunk_map[str(cid)] for cid in chunk_ids if str(cid) in chunk_map]
@@ -912,7 +977,7 @@ class handler(BaseHTTPRequestHandler):
                 metrics["embedding_null"] += 1
 
             # RAG retrieval + LLM synthesis
-            chunks = retrieve_chunks(conn, content, context_material_ids)
+            chunks = []
 
             # Check if the prior assistant message has a pending clarification.
             prior_is_clarification, prior_clarification_skipped, prior_clarification_depth, \
@@ -937,33 +1002,18 @@ class handler(BaseHTTPRequestHandler):
             )
 
             try:
-                if clarification_pending:
-                    original_prompt = _get_prior_user_message(conn, chat_id) or content
-                    assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize_with_clarification(
-                        conn=conn,
-                        user_id=user['id'],
-                        ai_provider=ai_provider,
-                        ai_model=ai_model,
-                        original_prompt=original_prompt,
-                        prior_reply=prior_reply_content or "",
-                        clarifying_question=prior_clarification_question or "",
-                        user_clarification=content,
-                        clarification_depth=prior_clarification_depth,
-                        chunks=chunks,
-                        chat_id=chat_id,
-                        context_material_ids=context_material_ids,
-                    )
-                else:
-                    assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize(
-                        conn,
-                        user['id'],
-                        ai_provider,
-                        ai_model,
-                        content,
-                        chunks,
-                        chat_id=chat_id,
-                        context_material_ids=context_material_ids,
-                    )
+                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize(
+                    conn,
+                    user['id'],
+                    ai_provider,
+                    ai_model,
+                    content,
+                    chunks,
+                    chat_id=chat_id,
+                    context_material_ids=context_material_ids,
+                    history_before_index=user_message['message_index'],
+                    clarification_depth=prior_clarification_depth,
+                )
                 logger.info(
                     "chat_synthesize_done",
                     extra={
@@ -995,14 +1045,17 @@ class handler(BaseHTTPRequestHandler):
                 raise
 
             new_clarification_depth = (prior_clarification_depth + 1) if assistant_clarifying_question else 0
+            context_token_count = (grounding_meta or {}).get("history_token_estimate")
+            response_token_count = max(1, len(assistant_content or "") // 4)
             cursor.execute("""
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                      ai_provider, ai_model, context_material_ids,
                      grounding_meta, tool_trace,
                      retrieved_chunk_ids, follow_ups, message_index,
-                     clarification_question, is_clarification_request, clarification_depth)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     clarification_question, is_clarification_request, clarification_depth,
+                     context_token_count, response_token_count)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at, tool_trace, follow_ups,
@@ -1020,6 +1073,7 @@ class handler(BaseHTTPRequestHandler):
                 assistant_clarifying_question,
                 bool(assistant_clarifying_question),
                 new_clarification_depth,
+                context_token_count, response_token_count,
             ))
             assistant_message = cursor.fetchone()
             if embed_text_via_lambda and write_chat_message_embedding:
@@ -1074,6 +1128,7 @@ class handler(BaseHTTPRequestHandler):
         image_attachments = data.get('image_attachments') or []
         image_s3_keys = [a['s3_key'] for a in image_attachments if isinstance(a, dict) and a.get('s3_key')]
         image_s3_keys_with_filenames = [(a['s3_key'], a.get('filename', '')) for a in image_attachments if isinstance(a, dict) and a.get('s3_key')]
+        web_search_enabled = bool(data.get('web_search_enabled', False))
 
         if not isinstance(chat_id, int):
             send_json(self, 400, {"error": "chat_id is required"})
@@ -1150,11 +1205,7 @@ class handler(BaseHTTPRequestHandler):
             send_sse_headers(self)
             send_sse_event(self, {"type": "user_message", "message": dict(user_message)})
 
-            chunks = retrieve_chunks(
-                conn, content or "", context_material_ids,
-                image_s3_keys=image_s3_keys or [],
-                current_message_id=user_message['id'],
-            )
+            chunks = []
 
             # Check if the prior assistant message has a pending clarification.
             prior_is_clarification, prior_clarification_skipped, prior_clarification_depth, \
@@ -1182,51 +1233,38 @@ class handler(BaseHTTPRequestHandler):
                 send_sse_event(self, evt)
 
             try:
-                if clarification_pending:
-                    original_prompt = _get_prior_user_message(conn, chat_id) or content
-                    assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize_with_clarification(
-                        conn=conn,
-                        user_id=user['id'],
-                        ai_provider=ai_provider,
-                        ai_model=ai_model,
-                        original_prompt=original_prompt,
-                        prior_reply=prior_reply_content or "",
-                        clarifying_question=prior_clarification_question or "",
-                        user_clarification=content,
-                        clarification_depth=prior_clarification_depth,
-                        chunks=chunks,
-                        chat_id=chat_id,
-                        context_material_ids=context_material_ids,
-                        on_event=on_event,
-                        image_s3_keys=image_s3_keys or None,
-                    )
-                else:
-                    assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize(
-                        conn,
-                        user['id'],
-                        ai_provider,
-                        ai_model,
-                        content,
-                        chunks,
-                        chat_id=chat_id,
-                        context_material_ids=context_material_ids,
-                        on_event=on_event,
-                        image_s3_keys=image_s3_keys or None,
-                    )
+                assistant_content, retrieved_ids, grounding_meta, tool_trace, assistant_summary, assistant_follow_ups, assistant_clarifying_question = synthesize(
+                    conn,
+                    user['id'],
+                    ai_provider,
+                    ai_model,
+                    content,
+                    chunks,
+                    chat_id=chat_id,
+                    context_material_ids=context_material_ids,
+                    on_event=on_event,
+                    image_s3_keys=image_s3_keys or None,
+                    web_search_enabled=web_search_enabled,
+                    history_before_index=user_message['message_index'],
+                    clarification_depth=prior_clarification_depth,
+                )
             except Exception as e:
                 send_sse_event(self, {"type": "error", "message": str(e)})
                 cursor.close()
                 return
 
             new_clarification_depth = (prior_clarification_depth + 1) if assistant_clarifying_question else 0
+            context_token_count = (grounding_meta or {}).get("history_token_estimate")
+            response_token_count = max(1, len(assistant_content or "") // 4)
             cursor.execute("""
                 INSERT INTO chat_messages
                     (chat_id, course_id, user_id, parent_message_id, role, content, summary,
                      ai_provider, ai_model, context_material_ids,
                      grounding_meta, tool_trace,
                      retrieved_chunk_ids, follow_ups, message_index,
-                     clarification_question, is_clarification_request, clarification_depth)
-                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     clarification_question, is_clarification_request, clarification_depth,
+                     context_token_count, response_token_count)
+                VALUES (%s, %s, %s, %s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, chat_id, role, content, summary, ai_provider, ai_model,
                           retrieved_chunk_ids, context_token_count, response_token_count,
                           response_time_ms, finish_reason, message_index, created_at, tool_trace, follow_ups,
@@ -1244,6 +1282,7 @@ class handler(BaseHTTPRequestHandler):
                 assistant_clarifying_question,
                 bool(assistant_clarifying_question),
                 new_clarification_depth,
+                context_token_count, response_token_count,
             ))
             assistant_message = cursor.fetchone()
             if embed_text_via_lambda and write_chat_message_embedding:
@@ -1273,6 +1312,8 @@ class handler(BaseHTTPRequestHandler):
         context_material_ids = data.get('context_material_ids')
         ai_provider = data.get('ai_provider') or DEFAULT_AI_PROVIDER
         ai_model = data.get('ai_model')
+        image_attachments = data.get('image_attachments')  # list[{s3_key, filename}] or None
+        web_search_enabled = bool(data.get('web_search_enabled', False))
         if ai_provider == "openai" and not ai_model:
             ai_model = DEFAULT_AI_MODEL
 
@@ -1297,7 +1338,7 @@ class handler(BaseHTTPRequestHandler):
             cursor.execute(
                 """
                 SELECT id, chat_id, course_id, user_id, role, content, context_material_ids,
-                       message_index, ai_provider, ai_model, reply_history
+                       message_index, ai_provider, ai_model, reply_history, image_s3_keys
                 FROM chat_messages
                 WHERE id = %s AND is_deleted = FALSE
                 """,
@@ -1360,7 +1401,36 @@ class handler(BaseHTTPRequestHandler):
                 cursor.close()
                 return
 
-            chunks = retrieve_chunks(conn, content, context_material_ids)
+            chunks = []
+
+            # Compute image diff (tasks 2.2–2.5)
+            original_keys = list(msg.get('image_s3_keys') or [])
+            if image_attachments is not None:
+                final_keys = [a['s3_key'] for a in image_attachments if a.get('s3_key')]
+            else:
+                final_keys = original_keys
+
+            original_set = set(original_keys)
+            final_set = set(final_keys)
+            added_keys = final_set - original_set
+            removed_keys = original_set - final_set
+
+            if removed_keys:
+                cursor.execute(
+                    """
+                    DELETE FROM chat_image_embeddings
+                    WHERE message_id = %s AND s3_key = ANY(%s)
+                    """,
+                    (message_id, list(removed_keys))
+                )
+
+            if added_keys:
+                added_with_filenames = [
+                    (a['s3_key'], a.get('filename', ''))
+                    for a in (image_attachments or [])
+                    if a.get('s3_key') in added_keys
+                ]
+                embed_and_store_chat_images(conn, msg['chat_id'], message_id, added_with_filenames)
 
             if is_streaming:
                 send_sse_headers(self)
@@ -1393,6 +1463,9 @@ class handler(BaseHTTPRequestHandler):
                     chat_id=msg['chat_id'],
                     context_material_ids=context_material_ids,
                     on_event=on_event,
+                    image_s3_keys=list(final_keys),
+                    web_search_enabled=web_search_enabled,
+                    history_before_index=msg['message_index'],
                 )
                 logger.info(
                     "chat_synthesize_done",
@@ -1451,11 +1524,13 @@ class handler(BaseHTTPRequestHandler):
                         context_material_ids = %s,
                         ai_provider = %s,
                         ai_model = %s,
+                        image_s3_keys = %s,
                         is_edited = TRUE,
                         edited_at = NOW()
                     WHERE id = %s
                     RETURNING id, chat_id, role, content, context_material_ids, ai_provider, ai_model,
-                              is_edited, reply_history, edited_at, message_index, created_at
+                              is_edited, reply_history, edited_at, message_index, created_at,
+                              image_s3_keys
                     """,
                     (
                         new_reply_history,
@@ -1463,6 +1538,7 @@ class handler(BaseHTTPRequestHandler):
                         json.dumps(context_material_ids),
                         ai_provider,
                         ai_model,
+                        final_keys,
                         message_id,
                     )
                 )
@@ -2039,38 +2115,10 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             context_material_ids = user_msg.get('context_material_ids') or []
-            locked_chunk_ids = msg.get('retrieved_chunk_ids') or []
-            if isinstance(locked_chunk_ids, str):
-                try:
-                    locked_chunk_ids = json.loads(locked_chunk_ids)
-                except json.JSONDecodeError:
-                    locked_chunk_ids = []
-            if not isinstance(locked_chunk_ids, list):
-                locked_chunk_ids = []
-            locked_chunk_ids = [str(cid) for cid in locked_chunk_ids if cid is not None]
-
-            locked_chunks = []
-            if locked_chunk_ids:
-                hydrated_locked_chunks = _fetch_chunk_context(conn, locked_chunk_ids)
-                by_id = {str(c.get('id')): c for c in hydrated_locked_chunks}
-                ordered_hydrated = [by_id[cid] for cid in locked_chunk_ids if cid in by_id]
-                for idx, chunk in enumerate(ordered_hydrated):
-                    locked_chunks.append(
-                        {
-                            "id": chunk.get("id"),
-                            "chunk_text": chunk.get("chunk_text", ""),
-                            "chunk_type": chunk.get("chunk_type", ""),
-                            "page_number": chunk.get("page_number"),
-                            # Keep stable, deterministic ordering signal for prompt context.
-                            "similarity": max(0.0, 1.0 - (idx * 0.01)),
-                            "source_type": chunk.get("source_type", ""),
-                            "material_id": chunk.get("material_id"),
-                        }
-                    )
-
-            # Regenerate should default to the exact same grounding snapshot when available.
-            # Fall back to fresh retrieval only for legacy rows without stored chunk refs.
-            chunks = locked_chunks or retrieve_chunks(conn, user_msg['content'], context_material_ids)
+            # Regeneration goes through the PageIndex agent like a fresh turn. The
+            # legacy exact-chunk replay (hydrating vector chunk IDs from the retired
+            # chunks table) has been removed; PageIndex re-derives grounding fresh.
+            chunks = []
 
             if is_streaming:
                 send_sse_headers(self)
@@ -2103,7 +2151,7 @@ class handler(BaseHTTPRequestHandler):
                     chat_id=msg['chat_id'],
                     context_material_ids=context_material_ids,
                     on_event=on_event,
-                    force_context_only=bool(locked_chunks),
+                    history_before_index=user_msg['message_index'],
                 )
                 logger.info(
                     "chat_synthesize_done",

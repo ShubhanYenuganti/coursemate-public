@@ -1,0 +1,263 @@
+[
+  {
+    "paper_id": "transformers_nlp",
+    "title": "Transformer Architectures for Natural Language Processing",
+    "full_text": [
+      {
+        "section_name": "Abstract",
+        "paragraphs": ["We survey the transformer architecture and its application to NLP tasks. The model relies on self-attention rather than recurrence to model token relationships."]
+      },
+      {
+        "section_name": "Introduction",
+        "paragraphs": ["Neural sequence models have traditionally relied on recurrent networks. The transformer introduced by Vaswani et al. discards recurrence entirely and relies solely on attention to draw global dependencies between input and output."]
+      },
+      {
+        "section_name": "Self-Attention",
+        "paragraphs": ["Self-attention computes a weighted sum over all token representations in a sequence. Given queries Q, keys K, and values V, attention scores are computed as softmax(QK^T / sqrt(d_k)) * V. The computational cost scales quadratically with sequence length."]
+      },
+      {
+        "section_name": "Positional Encoding",
+        "paragraphs": ["Because attention is permutation-invariant, transformers require explicit positional information. Sinusoidal positional encodings are added to token embeddings before the first layer, allowing the model to distinguish token positions without recurrence."]
+      },
+      {
+        "section_name": "Encoder-Decoder Structure",
+        "paragraphs": ["The original transformer uses an encoder-decoder structure for sequence-to-sequence tasks. The encoder maps an input sequence to a continuous representation, and the decoder autoregressively generates the output sequence using cross-attention over encoder outputs."]
+      },
+      {
+        "section_name": "Multi-Head Attention",
+        "paragraphs": ["Multi-head attention projects queries, keys, and values into h subspaces and computes attention independently in each head. The outputs are concatenated and linearly projected. This allows the model to jointly attend to information from different representation subspaces at different positions."]
+      },
+      {
+        "section_name": "Feed-Forward Layers",
+        "paragraphs": ["Each transformer layer includes a position-wise feed-forward network applied identically to each position. This consists of two linear transformations with a ReLU activation between them, introducing non-linearity and position-specific processing."]
+      },
+      {
+        "section_name": "Layer Normalization",
+        "paragraphs": ["Layer normalization is applied before each sublayer in the transformer. Normalizing activations across the feature dimension reduces internal covariate shift and stabilizes gradient flow during backpropagation, enabling training of very deep networks."]
+      },
+      {
+        "section_name": "BERT and GPT",
+        "paragraphs": ["BERT uses the encoder stack and is trained with a masked language modeling objective, predicting masked tokens given full bidirectional context. GPT uses the decoder stack and is trained autoregressively to predict the next token. The key difference lies in the directionality of context during pre-training."]
+      },
+      {
+        "section_name": "Limitations",
+        "paragraphs": ["The quadratic memory and time complexity of full self-attention limits the practical sequence length to a few thousand tokens. Processing very long documents requires either truncation or more efficient attention variants that reduce this scaling bottleneck."]
+      }
+    ],
+    "qas": [
+      {
+        "question_id": "t1_q1",
+        "question": "What mathematical operation produces attention scores from queries and keys in a transformer?",
+        "answers": [{"answer": {"free_form_answer": "Softmax of QK^T divided by sqrt(d_k), applied to values V."}}],
+        "evidence": ["Given queries Q, keys K, and values V, attention scores are computed as softmax(QK^T / sqrt(d_k)) * V."]
+      },
+      {
+        "question_id": "t1_q2",
+        "question": "Why must positional information be added explicitly to transformer inputs?",
+        "answers": [{"answer": {"free_form_answer": "Attention is permutation-invariant and cannot distinguish token order without explicit encoding."}}],
+        "evidence": ["Because attention is permutation-invariant, transformers require explicit positional information. Sinusoidal positional encodings are added to token embeddings before the first layer, allowing the model to distinguish token positions without recurrence."]
+      },
+      {
+        "question_id": "t1_q3",
+        "question": "How does using multiple attention heads expand what the model can simultaneously focus on?",
+        "answers": [{"answer": {"free_form_answer": "Each head operates in a separate subspace, letting the model jointly attend to different representational aspects at once."}}],
+        "evidence": ["This allows the model to jointly attend to information from different representation subspaces at different positions."]
+      },
+      {
+        "question_id": "t1_q4",
+        "question": "How do BERT and GPT differ in the direction of context they use during pre-training?",
+        "answers": [{"answer": {"free_form_answer": "BERT uses full bidirectional context via masked LM; GPT uses left-to-right autoregressive prediction."}}],
+        "evidence": ["BERT uses the encoder stack and is trained with a masked language modeling objective, predicting masked tokens given full bidirectional context. GPT uses the decoder stack and is trained autoregressively to predict the next token. The key difference lies in the directionality of context during pre-training."]
+      },
+      {
+        "question_id": "t1_q5",
+        "question": "How does layer normalization improve the trainability of very deep transformer networks?",
+        "answers": [{"answer": {"free_form_answer": "It reduces internal covariate shift and stabilizes gradient flow during backpropagation."}}],
+        "evidence": ["Normalizing activations across the feature dimension reduces internal covariate shift and stabilizes gradient flow during backpropagation, enabling training of very deep networks."]
+      },
+      {
+        "question_id": "t1_q6",
+        "question": "What property of standard self-attention makes it impractical for very long documents?",
+        "answers": [{"answer": {"free_form_answer": "Its memory and compute cost grow quadratically with sequence length, capping usable sequence lengths."}}],
+        "evidence": [
+          "The computational cost scales quadratically with sequence length.",
+          "The quadratic memory and time complexity of full self-attention limits the practical sequence length to a few thousand tokens."
+        ]
+      }
+    ]
+  },
+  {
+    "paper_id": "efficient_attention",
+    "title": "Efficient Attention Mechanisms for Long Sequences",
+    "full_text": [
+      {
+        "section_name": "Abstract",
+        "paragraphs": ["We review efficient attention mechanisms designed to reduce the quadratic cost of standard self-attention. These methods enable transformers to process much longer sequences without prohibitive memory overhead."]
+      },
+      {
+        "section_name": "Introduction",
+        "paragraphs": ["Full self-attention has quadratic time and memory complexity in sequence length. For long documents such as books or source code files, this is prohibitive. Efficient attention variants reduce this cost while preserving modeling quality on downstream tasks."]
+      },
+      {
+        "section_name": "Sparse Attention",
+        "paragraphs": ["Sparse attention restricts each token to attend to a fixed subset of positions rather than all positions. This reduces the number of attention operations from O(n^2) to O(n * k) where k is the number of attended positions, lowering both memory and compute substantially."]
+      },
+      {
+        "section_name": "Local and Global Tokens",
+        "paragraphs": ["Longformer introduces local attention for most tokens, where each token attends to a sliding window of neighbors. A small number of special tokens are designated as global tokens and attend to all positions. This design allows information to propagate globally through global tokens while keeping the majority of operations local."]
+      },
+      {
+        "section_name": "Locality-Sensitive Hashing Attention",
+        "paragraphs": ["The Reformer uses locality-sensitive hashing (LSH) to group tokens by similarity into buckets. Attention is computed only within each bucket, so similar tokens attend to each other while dissimilar tokens are ignored. This approximation achieves sub-quadratic complexity."]
+      },
+      {
+        "section_name": "Linear Attention",
+        "paragraphs": ["Linear attention reformulates the softmax attention as a kernel function, allowing the key-value product to be computed first. This rewrite reduces complexity to O(n) and enables constant-memory inference for fixed-length recurrent processing."]
+      },
+      {
+        "section_name": "Memory Complexity Analysis",
+        "paragraphs": ["Standard attention requires O(n^2) memory to store the attention matrix. Sparse and linear variants reduce this to O(n * k) or O(n) respectively. For a sequence of 16k tokens, the savings are substantial: full attention would require gigabytes of memory for a single layer."]
+      },
+      {
+        "section_name": "Hardware Efficiency",
+        "paragraphs": ["Modern GPUs have limited high-bandwidth memory but fast compute. Attention implementations that tile computations to fit in SRAM and avoid materializing the full attention matrix, such as FlashAttention, achieve significant speedups on hardware by reducing memory bandwidth pressure."]
+      },
+      {
+        "section_name": "Benchmark Results",
+        "paragraphs": ["On the Long Range Arena benchmark, sparse attention and linear attention variants substantially outperform full attention in throughput while maintaining competitive accuracy on most tasks. LSH attention shows the largest memory reduction."]
+      },
+      {
+        "section_name": "Future Directions",
+        "paragraphs": ["Combining hardware-aware implementations with learned sparsity patterns is a promising direction. Hybrid models that apply full attention for short sequences and efficient attention for long ones may offer the best practical trade-off."]
+      }
+    ],
+    "qas": [
+      {
+        "question_id": "e1_q1",
+        "question": "How does restricting which positions each token attends to reduce attention cost?",
+        "answers": [{"answer": {"free_form_answer": "It cuts operations from O(n^2) to O(n*k) by having each token attend to only k positions."}}],
+        "evidence": ["Sparse attention restricts each token to attend to a fixed subset of positions rather than all positions. This reduces the number of attention operations from O(n^2) to O(n * k) where k is the number of attended positions, lowering both memory and compute substantially."]
+      },
+      {
+        "question_id": "e1_q2",
+        "question": "What role do the special global tokens play in Longformer's attention scheme?",
+        "answers": [{"answer": {"free_form_answer": "They attend to all positions and carry information globally while most tokens use cheap local windowed attention."}}],
+        "evidence": ["A small number of special tokens are designated as global tokens and attend to all positions. This design allows information to propagate globally through global tokens while keeping the majority of operations local."]
+      },
+      {
+        "question_id": "e1_q3",
+        "question": "How does the Reformer achieve sub-quadratic attention complexity?",
+        "answers": [{"answer": {"free_form_answer": "It uses locality-sensitive hashing to bucket similar tokens and computes attention only within each bucket."}}],
+        "evidence": ["The Reformer uses locality-sensitive hashing (LSH) to group tokens by similarity into buckets. Attention is computed only within each bucket, so similar tokens attend to each other while dissimilar tokens are ignored. This approximation achieves sub-quadratic complexity."]
+      },
+      {
+        "question_id": "e1_q4",
+        "question": "Why does FlashAttention run faster than a naive attention implementation on GPU?",
+        "answers": [{"answer": {"free_form_answer": "It tiles into SRAM and avoids writing the full attention matrix to slow memory, cutting bandwidth pressure."}}],
+        "evidence": ["Attention implementations that tile computations to fit in SRAM and avoid materializing the full attention matrix, such as FlashAttention, achieve significant speedups on hardware by reducing memory bandwidth pressure."]
+      },
+      {
+        "question_id": "e1_q5",
+        "question": "How does linear attention achieve O(n) complexity and what does that enable at inference time?",
+        "answers": [{"answer": {"free_form_answer": "Reordering key-value products avoids the n^2 softmax bottleneck, enabling constant-memory recurrent inference."}}],
+        "evidence": ["Linear attention reformulates the softmax attention as a kernel function, allowing the key-value product to be computed first. This rewrite reduces complexity to O(n) and enables constant-memory inference for fixed-length recurrent processing."]
+      },
+      {
+        "question_id": "e1_q6",
+        "question": "How much memory does full attention consume relative to sparse variants on a 16k-token sequence?",
+        "answers": [{"answer": {"free_form_answer": "Full attention needs O(n^2) and can cost gigabytes per layer; sparse drops to O(n*k)."}}],
+        "evidence": ["Standard attention requires O(n^2) memory to store the attention matrix. Sparse and linear variants reduce this to O(n * k) or O(n) respectively. For a sequence of 16k tokens, the savings are substantial: full attention would require gigabytes of memory for a single layer."]
+      }
+    ]
+  },
+  {
+    "paper_id": "rnn_sequence",
+    "title": "Recurrent Neural Networks for Sequence Modeling",
+    "full_text": [
+      {
+        "section_name": "Abstract",
+        "paragraphs": ["We review recurrent neural network architectures for sequence modeling, including LSTM and GRU variants, and discuss their advantages and limitations compared to attention-based models."]
+      },
+      {
+        "section_name": "Vanilla RNN",
+        "paragraphs": ["A vanilla RNN processes sequences by maintaining a hidden state that is updated at each step. The hidden state h_t is computed from the current input x_t and the previous hidden state h_{t-1} via a learned weight matrix and nonlinearity."]
+      },
+      {
+        "section_name": "Vanishing Gradients",
+        "paragraphs": ["Training deep RNNs with backpropagation through time causes gradients to shrink exponentially as they are propagated back through many timesteps. This vanishing gradient problem prevents the network from learning long-range dependencies."]
+      },
+      {
+        "section_name": "Long Short-Term Memory",
+        "paragraphs": ["LSTM addresses the vanishing gradient problem by introducing a cell state that persists across timesteps. Gating mechanisms control what information is added to, retained in, or removed from the cell state, allowing gradients to flow unchanged across many steps."]
+      },
+      {
+        "section_name": "Gated Recurrent Units",
+        "paragraphs": ["The GRU simplifies the LSTM by merging the cell state and hidden state and using only two gates: a reset gate and an update gate. Despite fewer parameters, GRU performance is comparable to LSTM on many benchmarks."]
+      },
+      {
+        "section_name": "Bidirectional RNNs",
+        "paragraphs": ["A bidirectional RNN runs two separate recurrent layers over the input sequence: one in the forward direction and one in reverse. Concatenating the two hidden states gives each position access to context from both sides of the sequence."]
+      },
+      {
+        "section_name": "Sequence-to-Sequence Models",
+        "paragraphs": ["Sequence-to-sequence models use an encoder RNN to compress the input into a fixed-size context vector and a decoder RNN to generate the output token by token. A bottleneck in this design is that all input information must pass through a single fixed-size vector."]
+      },
+      {
+        "section_name": "Attention in RNNs",
+        "paragraphs": ["Bahdanau attention extends seq2seq by allowing the decoder to look at all encoder hidden states at each decoding step rather than relying on a single context vector. The decoder learns a soft alignment over input positions, resolving the fixed-size bottleneck."]
+      },
+      {
+        "section_name": "Parallelism Limitations",
+        "paragraphs": ["RNNs process sequence steps sequentially: each hidden state depends on the previous one. This sequential dependency prevents parallel computation across timesteps on modern hardware, making RNN training much slower than transformer training for long sequences."]
+      },
+      {
+        "section_name": "Comparison with Transformers",
+        "paragraphs": ["Transformers replaced RNNs in most NLP applications because they parallelize training across all positions simultaneously and model long-range dependencies without degradation. However, RNNs retain advantages for streaming inference and tasks requiring strict causal ordering with low latency."]
+      }
+    ],
+    "qas": [
+      {
+        "question_id": "r1_q1",
+        "question": "What mechanism do LSTMs use to prevent gradients from vanishing over long input sequences?",
+        "answers": [{"answer": {"free_form_answer": "A persistent cell state with gating controls that let gradients flow unchanged across many timesteps."}}],
+        "evidence": [
+          "Training deep RNNs with backpropagation through time causes gradients to shrink exponentially as they are propagated back through many timesteps. This vanishing gradient problem prevents the network from learning long-range dependencies.",
+          "LSTM addresses the vanishing gradient problem by introducing a cell state that persists across timesteps. Gating mechanisms control what information is added to, retained in, or removed from the cell state, allowing gradients to flow unchanged across many steps."
+        ]
+      },
+      {
+        "question_id": "r1_q2",
+        "question": "Why is RNN training on long sequences slow compared to transformers on modern accelerators?",
+        "answers": [{"answer": {"free_form_answer": "Sequential state dependencies block parallel computation across timesteps, unlike transformers which process all positions at once."}}],
+        "evidence": ["RNNs process sequence steps sequentially: each hidden state depends on the previous one. This sequential dependency prevents parallel computation across timesteps on modern hardware, making RNN training much slower than transformer training for long sequences."]
+      },
+      {
+        "question_id": "r1_q3",
+        "question": "How does Bahdanau attention resolve the information bottleneck in encoder-decoder RNN models?",
+        "answers": [{"answer": {"free_form_answer": "The decoder attends over all encoder hidden states at every step instead of reading from a single compressed vector."}}],
+        "evidence": [
+          "A bottleneck in this design is that all input information must pass through a single fixed-size vector.",
+          "Bahdanau attention extends seq2seq by allowing the decoder to look at all encoder hidden states at each decoding step rather than relying on a single context vector."
+        ]
+      },
+      {
+        "question_id": "r1_q4",
+        "question": "How does a bidirectional RNN give each position richer context than a forward-only pass?",
+        "answers": [{"answer": {"free_form_answer": "It runs forward and reverse passes and concatenates their hidden states, giving every position both past and future context."}}],
+        "evidence": ["A bidirectional RNN runs two separate recurrent layers over the input sequence: one in the forward direction and one in reverse. Concatenating the two hidden states gives each position access to context from both sides of the sequence."]
+      },
+      {
+        "question_id": "r1_q5",
+        "question": "In what scenarios do RNNs still outperform transformers despite being largely replaced?",
+        "answers": [{"answer": {"free_form_answer": "Streaming inference and low-latency tasks with strict causal ordering requirements."}}],
+        "evidence": ["RNNs retain advantages for streaming inference and tasks requiring strict causal ordering with low latency."]
+      },
+      {
+        "question_id": "r1_q6",
+        "question": "How does GRU reduce the parameter count of LSTM while matching its performance?",
+        "answers": [{"answer": {"free_form_answer": "GRU merges cell and hidden state and uses two gates instead of three, cutting parameters with comparable benchmark results."}}],
+        "evidence": ["The GRU simplifies the LSTM by merging the cell state and hidden state and using only two gates: a reset gate and an update gate. Despite fewer parameters, GRU performance is comparable to LSTM on many benchmarks."]
+      }
+    ]
+  }
+]

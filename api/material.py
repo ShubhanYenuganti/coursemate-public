@@ -6,6 +6,7 @@
 # POST   /api/material  action="bulk_upsert_sync"   → upsert sync state for integration source point files
 # DELETE /api/material                              → delete material (server-side tombstone for synced materials)
 
+import hashlib
 import json
 import math
 import os
@@ -668,16 +669,20 @@ class handler(BaseHTTPRequestHandler):
             cursor.close()
 
         if file_type == 'application/pdf':
-            state_machine_arn = os.environ.get('STATE_MACHINE_ARN')
-            if state_machine_arn:
+            sfn = boto3.client('stepfunctions', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
+            sfn_input = json.dumps({'s3_key': s3_key, 'cursor': 0})
+            sfn_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in s3_key)[:60]
+            sfn_name += "-" + hashlib.md5(s3_key.encode()).hexdigest()[:8]
+            arn = os.environ.get('INDEX_STATE_MACHINE_ARN')
+            if arn:
                 try:
-                    sfn = boto3.client('stepfunctions', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
-                    sfn.start_execution(
-                        stateMachineArn=state_machine_arn,
-                        input=json.dumps({'s3_key': s3_key, 'cursor': 0}),
-                    )
+                    sfn.start_execution(stateMachineArn=arn, name=sfn_name, input=sfn_input)
+                except sfn.exceptions.ExecutionAlreadyExists:
+                    pass
                 except Exception as e:
-                    print(f"[material] Failed to start SFN execution for {s3_key}: {e}")
+                    print(f"[material] Failed to start INDEX_STATE_MACHINE_ARN for {s3_key}: {e}")
+            else:
+                print(f"[material] INDEX_STATE_MACHINE_ARN not set, skipping index trigger for {s3_key}")
 
         send_json(self, 201, {"material": material})
 

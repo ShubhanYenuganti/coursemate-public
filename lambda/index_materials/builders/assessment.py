@@ -1,0 +1,67 @@
+import re
+
+from builders.base import IndexNode, MaterialIndex, keywords_from_text, stable_node_id, summarize_text
+from builders.problems import _split_problems, _find_page, _PAGE_SEP_RE
+
+_H1_RE = re.compile(r'^#\s+(.+)$', re.MULTILINE)
+_ANSWER_KEY_RE = re.compile(r'\[ANSWER_KEY\]', re.IGNORECASE)
+
+
+def build_from_markdown(full_md: str, doc_type: str, page_count: int) -> MaterialIndex:
+    page_offsets = [0] + [m.start() for m in _PAGE_SEP_RE.finditer(full_md)]
+    _, problems = _split_problems(full_md)
+
+    if not problems:
+        return MaterialIndex(
+            title=doc_type,
+            doc_type=doc_type,
+            page_count=page_count,
+            nodes=[IndexNode(
+                node_id=stable_node_id("Full Assessment", 1, page_count, []),
+                title="Full Assessment",
+                start_page=1,
+                end_page=page_count,
+                summary=summarize_text(full_md),
+                nodes=[],
+                node_type="assessment",
+                parent_path=[],
+                keywords=keywords_from_text(full_md),
+                source="fallback_full_assessment",
+                confidence=0.6,
+            )],
+        )
+
+    nodes = []
+    for num, text in problems:
+        text_start = full_md.find(text)
+        start_page = _find_page(text_start if text_start >= 0 else 0, page_offsets)
+        is_answer_key = bool(_ANSWER_KEY_RE.search(text))
+        title = f"Answer Key – Question {num}" if is_answer_key else f"Question {num}"
+        nodes.append(IndexNode(
+            node_id=stable_node_id(title, start_page, start_page, []),
+            title=title,
+            start_page=start_page,
+            end_page=start_page,
+            summary=summarize_text(text),
+            nodes=[],
+            node_type="answer_key" if is_answer_key else "question",
+            parent_path=[],
+            keywords=keywords_from_text(f"{title} {text}"),
+            source="regex",
+            confidence=0.8,
+        ))
+
+    return MaterialIndex(
+        title=doc_type,
+        doc_type=doc_type,
+        page_count=page_count,
+        nodes=nodes,
+    )
+
+
+def build(pdf_path: str, full_md: str, doc_type: str = "quiz") -> MaterialIndex:
+    import fitz
+    doc = fitz.open(pdf_path)
+    page_count = len(doc)
+    doc.close()
+    return build_from_markdown(full_md, doc_type=doc_type, page_count=page_count)

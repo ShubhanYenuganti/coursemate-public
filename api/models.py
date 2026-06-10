@@ -204,6 +204,25 @@ class Material:
         """
         with get_db() as conn:
             cursor = conn.cursor()
+            # Reap stale jobs: a non-terminal status older than the threshold means
+            # the indexing/embedding execution died without writing a terminal state
+            # (hard Lambda timeout/OOM, or a lost Step Functions execution). Mark it
+            # failed so the UI shows a real outcome instead of "Queued"/"Indexing…"
+            # forever. The threshold is deliberately generous so legitimately long
+            # multi-invocation jobs are not reaped mid-flight; a job that later
+            # completes will overwrite this with 'done'.
+            cursor.execute("""
+                UPDATE material_embed_jobs j
+                SET status = 'failed',
+                    error_message = COALESCE(
+                        j.error_message,
+                        'Indexing timed out (no terminal status received)')
+                FROM materials m
+                WHERE m.id = j.material_id
+                  AND m.course_id = %s
+                  AND j.status IN ('pending', 'processing')
+                  AND COALESCE(j.started_at, j.created_at) < NOW() - INTERVAL '2 hours'
+            """, (course_id,))
             cursor.execute("""
                 SELECT m.*, j.status AS embed_status
                 FROM materials m

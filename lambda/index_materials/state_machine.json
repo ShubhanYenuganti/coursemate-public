@@ -1,0 +1,84 @@
+{
+  "Comment": "PageIndex material indexing — loops until status is done",
+  "StartAt": "IndexWorker",
+  "States": {
+    "IndexWorker": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "index_materials",
+        "Payload.$": "$"
+      },
+      "ResultSelector": { "body.$": "$.Payload" },
+      "ResultPath": "$.result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "MarkFailed"
+        }
+      ],
+      "Next": "CheckDone"
+    },
+    "CheckDone": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.result.body.status",
+          "StringEquals": "done",
+          "Next": "Done"
+        },
+        {
+          "Variable": "$.result.body.status",
+          "StringEquals": "failed",
+          "Next": "Failed"
+        }
+      ],
+      "Default": "PrepareNext"
+    },
+    "PrepareNext": {
+      "Type": "Pass",
+      "Parameters": {
+        "s3_key.$": "$.result.body.s3_key",
+        "cursor.$": "$.result.body.cursor"
+      },
+      "Next": "IndexWorker"
+    },
+    "MarkFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "index_materials",
+        "Payload": {
+          "mark_failed": true,
+          "s3_key.$": "$.s3_key",
+          "error.$": "$.error"
+        }
+      },
+      "ResultPath": "$.markResult",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "Failed"
+        }
+      ],
+      "Next": "Failed"
+    },
+    "Done": {
+      "Type": "Succeed"
+    },
+    "Failed": {
+      "Type": "Fail",
+      "Error": "IndexFailed",
+      "Cause": "Indexing failed or worker errored"
+    }
+  }
+}

@@ -313,7 +313,6 @@ def init_db():
                 chunks_created         INTEGER,
                 chunk_cursor           INTEGER      NOT NULL DEFAULT 0,
                 total_chunks_detected  INTEGER,
-                document_id            UUID REFERENCES documents(id) ON DELETE SET NULL,
                 error_message          TEXT,
                 started_at             TIMESTAMP,
                 completed_at           TIMESTAMP,
@@ -330,42 +329,6 @@ def init_db():
                 ADD CONSTRAINT material_embed_jobs_status_check
                 CHECK (status IN ('pending', 'syncing', 'processing', 'done', 'failed', 'skipped', 'up_to_date'));
         """)
-
-        # RAG schema: documents, chunks
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS documents (
-                id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                source_uri   TEXT NOT NULL,
-                modality     TEXT NOT NULL DEFAULT 'pdf',
-                raw_content  TEXT,
-                metadata     JSONB DEFAULT '{}',
-                ingested_at  TIMESTAMPTZ DEFAULT now(),
-                source_type  TEXT NOT NULL DEFAULT 'general',
-                material_id  INTEGER REFERENCES materials(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS chunks (
-                id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                document_id       UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-                content           TEXT NOT NULL,
-                retrieval_type    TEXT NOT NULL DEFAULT 'visual',
-                embedding         VECTOR(1024) NOT NULL,
-                chunk_index       INT NOT NULL,
-                modal_meta        JSONB DEFAULT '{}',
-                parent_id         UUID REFERENCES chunks(id),
-                is_parent         BOOLEAN NOT NULL DEFAULT false,
-                source_type       TEXT NOT NULL DEFAULT 'general',
-                course_id         TEXT,
-                week              INT,
-                problem_id        TEXT,
-                related_chunk_ids UUID[] NOT NULL DEFAULT '{}'
-            );
-        """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS chunks_embedding_idx ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS chunks_doc_page_type_idx ON chunks (document_id, chunk_index, retrieval_type);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS chunks_parent_idx ON chunks (parent_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS chunks_source_type_idx ON chunks (source_type);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS chunks_problem_id_idx ON chunks (problem_id);")
 
         # Add new columns to existing tables (idempotent)
         cursor.execute("ALTER TABLE materials ADD COLUMN IF NOT EXISTS doc_type TEXT NOT NULL DEFAULT 'general';")

@@ -117,23 +117,24 @@ def _validate_and_normalize_questions(questions: list) -> list:
     return result
 
 
-_MATERIAL_CHUNK_LIMIT = 80
+_MATERIAL_PAGE_LIMIT = 80
 _CONTEXT_CHAR_BUDGET = 24_000
 
 
 def _fetch_material_context(conn, material_ids: list) -> str:
-    """Fetch chunk content for given material IDs and concatenate into a context string."""
+    """Fetch indexed page text for given material IDs and concatenate into a context string."""
     if not material_ids:
         return "No course materials selected."
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT c.content
-        FROM chunks c
-        JOIN documents d ON c.document_id = d.id
-        WHERE d.material_id = ANY(%s::int[])
-        ORDER BY d.material_id, c.chunk_index
+        SELECT text_content
+        FROM material_page_text
+        WHERE material_id = ANY(%s::int[])
+          AND text_content IS NOT NULL
+          AND text_content != ''
+        ORDER BY material_id, page_number
         LIMIT %s
-    """, (material_ids, _MATERIAL_CHUNK_LIMIT))
+    """, (material_ids, _MATERIAL_PAGE_LIMIT))
     rows = cursor.fetchall()
     cursor.close()
     if not rows:
@@ -141,7 +142,7 @@ def _fetch_material_context(conn, material_ids: list) -> str:
     parts = []
     total = 0
     for row in rows:
-        content = row['content'] or ''
+        content = row['text_content'] or ''
         if total + len(content) > _CONTEXT_CHAR_BUDGET:
             remaining = _CONTEXT_CHAR_BUDGET - total
             if remaining > 200:
@@ -311,20 +312,28 @@ def _enqueue_quiz_generation_job(generation_id: int, user_id: int):
     )
 
 
+def _extract_conversation_context(body: dict) -> str | None:
+    """Optional conversation summary that grounds a chat-originated generation."""
+    val = (body.get('conversation_context') or '').strip()
+    return val or None
+
+
 def _persist_generation(conn, course_id: int, user_id: int, title: str, topic: str,
                          tf_count: int, sa_count: int, la_count: int, mcq_count: int,
                          mcq_options: int, provider: str, model_id: str,
-                         parent_generation_id) -> int:
+                         parent_generation_id, conversation_context: str | None = None) -> int:
     """Insert a quiz_generations row with status='generating'. Returns new id."""
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO quiz_generations
             (course_id, generated_by, title, topic, tf_count, sa_count, la_count,
-             mcq_count, mcq_options, provider, model_id, status, parent_generation_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'generating', %s)
+             mcq_count, mcq_options, provider, model_id, status, parent_generation_id,
+             conversation_context)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'generating', %s, %s)
         RETURNING id
     """, (course_id, user_id, title, topic, tf_count, sa_count, la_count,
-          mcq_count, mcq_options, provider, model_id, parent_generation_id or None))
+          mcq_count, mcq_options, provider, model_id, parent_generation_id or None,
+          conversation_context))
     gen_id = cursor.fetchone()['id']
     cursor.close()
     return gen_id
@@ -665,6 +674,8 @@ class handler(BaseHTTPRequestHandler):
                 send_json(self, 400, {'error': 'Invalid parent_generation_id'})
                 return
 
+        conversation_context = _extract_conversation_context(body)
+
         gen_id = None
         api_key = None
         material_context = None
@@ -738,10 +749,11 @@ class handler(BaseHTTPRequestHandler):
                             provider=%s,
                             model_id=%s,
                             parent_generation_id=%s,
+                            conversation_context=COALESCE(%s, conversation_context),
                             error=NULL
                         WHERE id=%s
                         """,
-                        (provider, model_id, parent_generation_id_int, draft_generation_id),
+                        (provider, model_id, parent_generation_id_int, conversation_context, draft_generation_id),
                     )
                     should_enqueue = True
                     current_status = 'queued'
@@ -809,6 +821,7 @@ class handler(BaseHTTPRequestHandler):
                     provider,
                     model_id,
                     parent_generation_id_int,
+                    conversation_context,
                 )
                 # Persist enough snapshot data for deep-linking and regeneration.
                 cursor.execute(

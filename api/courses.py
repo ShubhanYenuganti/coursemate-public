@@ -5,6 +5,8 @@ import json
 from typing import Optional, Dict, Any, List
 from .db import get_db
 
+_UNSET = object()  # sentinel for "field not supplied to update()"
+
 
 class Course:
     """Course model for managing courses in the database."""
@@ -138,23 +140,27 @@ class Course:
         course_id: int,
         title: Optional[str] = None,
         description: Optional[str] = None,
-        cover_image_url: Optional[str] = None
+        cover_image_url: Optional[str] = None,
+        default_ai_provider=_UNSET,
+        default_ai_model=_UNSET
     ) -> Optional[Dict[str, Any]]:
         """
         Update course basic information.
-        
+
         Args:
             course_id: ID of the course to update
             title: New title (if provided)
             description: New description (if provided)
             cover_image_url: New cover image URL (if provided)
-            
+            default_ai_provider: Default AI provider slug; pass None to clear
+            default_ai_model: Default AI model ID; pass None to clear
+
         Returns:
             Updated course record or None if not found
         """
         updates = []
         params = []
-        
+
         if title is not None:
             updates.append("title = %s")
             params.append(title)
@@ -164,6 +170,12 @@ class Course:
         if cover_image_url is not None:
             updates.append("cover_image_url = %s")
             params.append(cover_image_url)
+        if default_ai_provider is not _UNSET:
+            updates.append("default_ai_provider = %s")
+            params.append(default_ai_provider)
+        if default_ai_model is not _UNSET:
+            updates.append("default_ai_model = %s")
+            params.append(default_ai_model)
         
         if not updates:
             return Course.get_by_id(course_id)

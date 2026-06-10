@@ -27,4 +27,5 @@ PHASE_1.md
 .vscode/mcp.json
 docs/superpowers/
 exports/
+experiments/rag_page_index_eval/out/
 lambda/embed_materials/state_machine.json

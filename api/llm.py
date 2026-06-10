@@ -13,6 +13,7 @@ Phase 2 (agentic loop): Each provider's tool-calling format will extend this mod
 """
 import json
 import logging
+import mimetypes
 import os
 import re
 import time
@@ -20,14 +21,33 @@ import time
 import requests
 from uuid import UUID
 
+
+def _raise_for_status_verbose(response) -> None:
+    """Like response.raise_for_status() but includes the provider's error body."""
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as original:
+        try:
+            body = response.json()
+            err = body.get("error") or body
+            if isinstance(err, dict):
+                msg = err.get("message") or ""
+                code = err.get("code") or err.get("type") or ""
+                detail = f"{code}: {msg}" if code else msg
+            else:
+                detail = str(err)[:400]
+            if detail:
+                raise requests.HTTPError(
+                    f"{original} — {detail}", response=response
+                ) from None
+        except (ValueError, AttributeError, KeyError):
+            pass
+        raise
+
 try:
     from .crypto_utils import decrypt_api_key
 except ImportError:
     from crypto_utils import decrypt_api_key
-try:
-    from .tools import execute_rerank, execute_search_materials, execute_web_search, pull_grounding_context, resolve_references_llm
-except ImportError:
-    from tools import execute_rerank, execute_search_materials, execute_web_search, pull_grounding_context, resolve_references_llm
 
 
 def _fetch_images_as_base64(s3_keys: list) -> list:
@@ -48,11 +68,49 @@ def _fetch_images_as_base64(s3_keys: list) -> list:
         try:
             obj = client.get_object(Bucket=bucket, Key=key)
             data = obj['Body'].read()
-            mime = 'image/png' if key.endswith('.png') else 'image/jpeg'
+            mime = mimetypes.guess_type(key)[0] or "image/jpeg"
             result.append((mime, base64.standard_b64encode(data).decode('utf-8')))
         except Exception:
             logging.getLogger(__name__).warning("Failed to fetch S3 image %s", key)
     return result
+
+
+def _recall_prior_chat_images(conn, chat_id, query, exclude_s3_keys=None, top_k=3):
+    """Similarity-search this chat's prior images and return (mime, base64) tuples
+    for the best matches, so the model can "see" images discussed earlier in the
+    conversation.
+
+    Uses the embed_query Lambda + the chat_image_embeddings table — independent of
+    the retired chunk/embedding (embed_materials) pipeline. Gated on a cheap
+    existence check so chats with no stored images skip the embedding call.
+    """
+    if not chat_id or not (query or "").strip():
+        return []
+    exclude = set(exclude_s3_keys or [])
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 1 FROM chat_image_embeddings WHERE chat_id = %s LIMIT 1", (chat_id,)
+    )
+    has_images = cursor.fetchone() is not None
+    cursor.close()
+    if not has_images:
+        return []
+    try:
+        from rag import _invoke_embed_query, _search_chat_images
+    except ImportError:
+        from .rag import _invoke_embed_query, _search_chat_images
+    vis_emb, txt_emb = _invoke_embed_query(query=query)
+    emb = vis_emb or txt_emb
+    if not emb:
+        return []
+    keys = []
+    for hit in _search_chat_images(conn, emb, chat_id):
+        key = hit.get("s3_key")
+        if key and key not in exclude and key not in keys:
+            keys.append(key)
+        if len(keys) >= top_k:
+            break
+    return _fetch_images_as_base64(keys)
 
 
 _SYSTEM_PROMPT_BASE = (
@@ -142,14 +200,73 @@ _AGENTIC_JSON_FINAL_INSTRUCTION = (
 # Agentic loop: same as SYSTEM_PROMPT plus JSON final-answer requirement.
 AGENTIC_SYSTEM_PROMPT = SYSTEM_PROMPT + _AGENTIC_JSON_FINAL_INSTRUCTION
 
+_PAGEINDEX_TOOL_USE = (
+    "\n\n**Tool use**: A routing index of available course materials is provided below. "
+    "Each material includes per-page summaries — use them to identify the right pages and call "
+    "`get_page_content(material_id, pages)` directly with a page range (e.g. '3,4,5' or '3-5'). "
+    "Only call `get_material_structure(material_id)` if the routing index has no page summaries "
+    "for that material or you need sub-section detail not visible in the summaries. "
+    "If the fetched content does not fully answer the question, call `get_related_materials(material_id)` "
+    "to discover related materials and repeat. "
+    "Do NOT call any other tools — only these three are available."
+    "\n\n**High-recall retrieval policy**: Prefer recall over minimal context. Before answering, fetch "
+    "2-4 candidate evidence locations when the question is conceptual, comparative, broad, multi-part, "
+    "or when multiple routing summaries look plausible. Use `get_material_structure(material_id)` for "
+    "conceptual or broad questions before final synthesis when page summaries alone may hide sub-section "
+    "detail. When you fetch a likely page, include neighboring pages when they are likely to contain setup, "
+    "definitions, results, or continuation text. Do not stop after one small fetch unless the fetched page "
+    "fully and directly answers the question. For evaluation-style questions, prefer Recall@5 behavior: "
+    "retrieve several plausible evidence pages first, then synthesize from the best evidence."
+    "\n\n**Structure-first rule**: For broad, conceptual, comparative, multi-part, method, result, or "
+    "limitation questions, you must call `get_material_structure(material_id)` before any final answer, "
+    "then call `get_page_content` for the most plausible pages from that structure. Skip this only for "
+    "narrow fact lookup questions where one routing summary directly identifies the exact page."
+    "\n\n**Citation numbering**: Each `get_page_content` call you make becomes one numbered citation, "
+    "in the order you called it. The first `get_page_content` call is citation [1], the second is [2], "
+    "and so on. When you write the final answer, cite each fact using the bracket that matches the call "
+    "that fetched its evidence. Do not invent citation numbers that do not correspond to a "
+    "`get_page_content` call. If you fetched the same material on multiple calls, each call gets its own "
+    "citation number — do not collapse them."
+)
+
+# System prompt for the PageIndex agentic loop. Uses _SYSTEM_PROMPT_BASE for
+# citations/formatting, a pageindex-specific tool-use section (not _SYSTEM_PROMPT_TOOL_USE,
+# which references search_materials/web_search that don't exist here), and the
+# JSON final-answer schema.
+PAGEINDEX_SYSTEM_PROMPT = _SYSTEM_PROMPT_BASE + _PAGEINDEX_TOOL_USE + _AGENTIC_JSON_FINAL_INSTRUCTION
+
+_PAGEINDEX_SYNTHESIS_INSTRUCTION = (
+    "\n\n**Final synthesis mode**: Retrieval is complete. The retrieved course material "
+    "and web results, if any, are provided below as evidence. Answer the current user "
+    "message directly from that evidence and the conversation history. Do not say you "
+    "will fetch, search, inspect, retrieve, call tools, or look at course materials in "
+    "the future. If the provided evidence is insufficient, say what is missing clearly."
+)
+
+_CONVERSATION_HISTORY_NOTICE = (
+    "\n\n**Conversation history**: Prior turns, if any, are included as messages before "
+    "the current user message. Use them for follow-ups, references, corrections, and "
+    "pronouns. Respond only to the most recent user message."
+)
+
+
 _SUMMARY_MAX_LEN = 200
 
 _TIMEOUT = 60  # seconds
 DEFAULT_AGENTIC_PROVIDER = "openai"
 DEFAULT_AGENTIC_MODEL = "gpt-4o-mini"
 MAX_TOOL_ITERATIONS = 4
+NON_VISION_MODEL_IDS = {"gpt-oss-120b"}
+GENERATION_PROPOSAL_READY_MESSAGE = (
+    "I prepared a proposal for that. Review it and confirm when you're ready to generate it."
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_model_supports_images(model: str | None, image_s3_keys: list | None) -> None:
+    if image_s3_keys and (model or "").strip().lower() in NON_VISION_MODEL_IDS:
+        raise ValueError(f"Model {model} does not support image input")
 
 
 def _json_safe_chunk_id(value):
@@ -163,6 +280,14 @@ def _is_enabled(env_name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _is_pageindex_enabled() -> bool:
+    # PageIndex is now the only retrieval path. The legacy chunk/embedding
+    # pipeline (embed_materials) has been retired, so this is unconditional —
+    # the PAGEINDEX_RAG_ENABLED / PAGEINDEX_RETRIEVAL_ENABLED env toggles no
+    # longer disable it.
+    return True
 
 
 def _safe_int_env(env_name: str, default: int, low: int, high: int) -> int:
@@ -368,6 +493,160 @@ def _normalize_llm_markdown(text: str) -> str:
 
 def _char_cap_from_tokens(tokens: int) -> int:
     return max(200, int(tokens * 4))
+
+
+# --- Multi-turn chat memory: budgeting -------------------------------------
+
+_DEFAULT_CONTEXT_WINDOW = 128000
+
+# Per-model context windows (tokens). Unknown models fall back to the default.
+MODEL_CONTEXT_WINDOWS = {
+    # Claude
+    "claude-opus-4-8": 200000,
+    "claude-opus-4-7": 200000,
+    "claude-opus-4-6": 200000,
+    "claude-sonnet-4-6": 200000,
+    "claude-haiku-4-5-20251001": 200000,
+    "claude-sonnet-4-5-20250929": 200000,
+    "claude-sonnet-4-20250514": 200000,
+    "claude-opus-4-20250514": 200000,
+    # Gemini
+    "gemini-3.5-flash": 1000000,
+    "gemini-3.1-pro-preview": 1000000,
+    "gemini-3-flash-preview": 1000000,
+    "gemini-2.5-pro": 1000000,
+    "gemini-2.5-flash": 1000000,
+    "gemini-2.5-flash-lite": 1000000,
+    "gemini-2.0-flash": 1000000,
+    "gemini-2.0-flash-lite": 1000000,
+    # OpenAI
+    "gpt-5.5": 400000,
+    "gpt-5.4-mini": 400000,
+    "gpt-5.4-nano": 400000,
+    "gpt-5.2": 400000,
+    "gpt-5.1": 400000,
+    "gpt-5-mini": 400000,
+    "gpt-5-nano": 400000,
+    "gpt-4.1": 1000000,
+    "gpt-4.1-mini": 1000000,
+    "gpt-4.1-nano": 1000000,
+    "gpt-4o": 128000,
+    "gpt-4o-mini": 128000,
+    "o3": 200000,
+    "o3-mini": 200000,
+    "o3-pro": 200000,
+    "o4-mini": 200000,
+    "o1": 200000,
+    "o1-pro": 200000,
+    "gpt-oss-120b": 128000,
+}
+
+
+def _context_window_for(model: str) -> int:
+    return MODEL_CONTEXT_WINDOWS.get(model, _DEFAULT_CONTEXT_WINDOW)
+
+
+def _estimate_tokens(text: str) -> int:
+    """Canonical token estimate: ~4 chars/token, floor of 1."""
+    if not text:
+        return 1
+    return max(1, len(text) // 4)
+
+
+RESPONSE_RESERVE_TOKENS = 4096
+SAFETY_MARGIN_RATIO = 0.15
+HISTORY_CONTEXT_RATIO = 0.35
+OUTPUT_CONTEXT_RATIO = 0.05
+MIN_OUTPUT_TOKENS = 2048
+MAX_OUTPUT_TOKENS = 8192
+
+
+def _history_budget(window: int, system_text: str, current_user_text: str) -> int:
+    """Tokens left for replayed history after system prompt, response reserve,
+    current user message, and a safety margin, capped to a fixed share of the
+    model context window. Never negative."""
+    used = (
+        _estimate_tokens(system_text)
+        + RESPONSE_RESERVE_TOKENS
+        + _estimate_tokens(current_user_text)
+        + int(window * SAFETY_MARGIN_RATIO)
+    )
+    available = max(0, window - used)
+    history_cap = max(0, int(window * HISTORY_CONTEXT_RATIO))
+    return min(history_cap, available)
+
+
+def _output_token_cap(model: str) -> int:
+    window = _context_window_for(model)
+    return max(MIN_OUTPUT_TOKENS, min(MAX_OUTPUT_TOKENS, int(window * OUTPUT_CONTEXT_RATIO)))
+
+
+def _compose_history(prior_turns: list, budget_tokens: int) -> list:
+    """Return the newest prior turns that fit within budget_tokens, in
+    chronological (oldest->newest) order. Drops oldest turns first."""
+    kept_reversed = []
+    running = 0
+    for turn in reversed(prior_turns):  # newest first
+        cost = _estimate_tokens(turn.get("content", ""))
+        if running + cost > budget_tokens:
+            break
+        kept_reversed.append(turn)
+        running += cost
+    return list(reversed(kept_reversed))
+
+
+def _load_chat_history(conn, chat_id, before_index) -> list:
+    """Active-branch prior turns (user + assistant), oldest->newest, excluding
+    soft-deleted rows and anything at/after before_index. Returns
+    [{"role", "content"}]. reply_history undo blobs are intentionally ignored."""
+    if chat_id is None or before_index is None:
+        return []
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT role, content
+        FROM chat_messages
+        WHERE chat_id = %s
+          AND is_deleted = FALSE
+          AND role IN ('user', 'assistant')
+          AND message_index < %s
+        ORDER BY message_index ASC
+        """,
+        (chat_id, before_index),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    return [{"role": r["role"], "content": r["content"]} for r in rows]
+
+
+def _build_history_turns(conn, chat_id, before_index, model, system_text, current_user_text) -> list:
+    """Load active-branch history and trim it to the model's budget.
+    Returns kept turns as [{"role", "content"}] in chronological order."""
+    prior = _load_chat_history(conn, chat_id, before_index)
+    if not prior:
+        return []
+    window = _context_window_for(model)
+    budget = _history_budget(window, system_text, current_user_text)
+    return _compose_history(prior, budget)
+
+
+def _shape_history_openai(turns: list) -> list:
+    """OpenAI / Responses message shape == canonical {role, content}."""
+    return [{"role": t["role"], "content": t["content"]} for t in turns]
+
+
+def _shape_history_claude(turns: list) -> list:
+    """Claude messages use the same role names (user/assistant)."""
+    return [{"role": t["role"], "content": t["content"]} for t in turns]
+
+
+def _shape_history_gemini(turns: list) -> list:
+    """Gemini contents: role 'assistant' -> 'model', content -> parts[].text."""
+    out = []
+    for t in turns:
+        role = "model" if t["role"] == "assistant" else "user"
+        out.append({"role": role, "parts": [{"text": t["content"]}]})
+    return out
 
 
 def _chunk_previews(chunks: list, max_items: int = 3, excerpt_chars: int = 120) -> list:
@@ -584,7 +863,7 @@ def _repair_response_openai(
         json={"model": model, "messages": repair_messages, "temperature": 0.1},
         timeout=_TIMEOUT,
     )
-    response.raise_for_status()
+    _raise_for_status_verbose(response)
     return _message_text(response.json()["choices"][0]["message"]).strip()
 
 
@@ -736,12 +1015,58 @@ def _synthesize_claude(context: str, user_message: str, model: str, api_key: str
         },
         timeout=_TIMEOUT,
     )
-    response.raise_for_status()
+    _raise_for_status_verbose(response)
     return response.json()["content"][0]["text"]
+
+
+def _openai_should_use_responses_api(model: str | None) -> bool:
+    model_id = (model or "").strip().lower()
+    return model_id.startswith(("gpt-5", "o1", "o3", "o4", "gpt-oss"))
+
+
+def _openai_chat_supports_temperature(model: str | None) -> bool:
+    model_id = (model or "").strip().lower()
+    return not model_id.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
+def _openai_response_text(payload: dict) -> str:
+    if isinstance(payload.get("output_text"), str):
+        return payload["output_text"]
+    for block in payload.get("output") or []:
+        if not isinstance(block, dict):
+            continue
+        if isinstance(block.get("output_text"), str):
+            return block["output_text"]
+        for item in block.get("content") or []:
+            if isinstance(item, dict) and item.get("type") == "output_text":
+                return item.get("text", "")
+    return ""
 
 
 def _synthesize_openai(context: str, user_message: str, model: str, api_key: str, image_s3_keys: list | None = None) -> str:
     images = _fetch_images_as_base64(image_s3_keys) if image_s3_keys else []
+    system_text = f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}"
+
+    if _openai_should_use_responses_api(model):
+        if images:
+            user_content = [
+                {"type": "input_image", "image_url": f"data:{mime};base64,{data}"}
+                for mime, data in images
+            ] + [{"type": "input_text", "text": user_message}]
+        else:
+            user_content = user_message
+        response = requests.post(
+            "https://api.openai.com/v1/responses",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": model, "input": [
+                {"role": "system", "content": system_text},
+                {"role": "user", "content": user_content},
+            ]},
+            timeout=_TIMEOUT,
+        )
+        _raise_for_status_verbose(response)
+        return _openai_response_text(response.json())
+
     if images:
         user_content = [
             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
@@ -749,26 +1074,22 @@ def _synthesize_openai(context: str, user_message: str, model: str, api_key: str
         ] + [{"type": "text", "text": user_message}]
     else:
         user_content = user_message
+    req_body: dict = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_text},
+            {"role": "user", "content": user_content},
+        ],
+    }
+    if _openai_chat_supports_temperature(model):
+        req_body["temperature"] = 0.2
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": f"{_SYSTEM_PROMPT_BASE}{_JSON_SYNTHESIS_INSTRUCTION}\n\nCourse material excerpts:\n{context}",
-                },
-                {"role": "user", "content": user_content},
-            ],
-            "response_format": {"type": "json_object"},
-        },
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json=req_body,
         timeout=_TIMEOUT,
     )
-    response.raise_for_status()
+    _raise_for_status_verbose(response)
     return response.json()["choices"][0]["message"]["content"]
 
 
@@ -795,7 +1116,7 @@ def _synthesize_gemini(context: str, user_message: str, model: str, api_key: str
         },
         timeout=_TIMEOUT,
     )
-    response.raise_for_status()
+    _raise_for_status_verbose(response)
     return response.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 
@@ -815,325 +1136,1163 @@ def _emit_web_results(on_event, text: str, max_results: int = 3):
         emitted += 1
 
 
-def run_agent_openai(
-    conn,
-    user_message: str,
-    model: str,
+def _format_routing_index_block(materials: list[dict]) -> str:
+    if not materials:
+        return "<course_materials>\n(no materials available)\n</course_materials>"
+    lines = ["<course_materials>"]
+    for m in materials:
+        mid = m.get("material_id", "??")
+        title = m.get("title") or ""
+        doc_type = m.get("doc_type") or "unknown"
+        page_count = m.get("page_count")
+        pages_str = f"{page_count}p" if page_count is not None else "?p"
+        tags = ", ".join(m.get("tags") or []) or "none"
+        summary = (m.get("summary") or "").strip().replace("\n", " ")
+        if len(summary) > 240:
+            summary = summary[:237] + "..."
+        lines.append(
+            f"[{mid}] {title} | {doc_type} | {pages_str} | tags: {tags} | summary: {summary}"
+        )
+        sections = m.get("sections") or []
+        if sections:
+            snippets = []
+            for s in sections[:50]:
+                start, end = s["start_page"], s["end_page"]
+                page_ref = f"{start}-{end}" if end != start else str(start)
+                snip = s["summary"][:80].rstrip()
+                snippets.append(f"{page_ref}:{snip}")
+            if snippets:
+                lines.append(f"  pages: {' · '.join(snippets)}")
+    lines.append("</course_materials>")
+    return "\n".join(lines)
+
+
+def _build_pageindex_retrieval_system_context(
+    routing_block: str,
+    *,
+    web_search_enabled: bool,
+    clarification_depth: int,
+) -> str:
+    system_content = (
+        PAGEINDEX_SYSTEM_PROMPT
+        + "\n\n"
+        + routing_block
+        + "\n\nUse the material IDs above when calling get_material_structure or get_page_content."
+    )
+    if web_search_enabled:
+        system_content += (
+            "\n\n**Web search**: `web_search` is also available. Use it when the question "
+            "asks about something not covered in the course materials — such as current software "
+            "versions, external libraries, or real-world information. Call it with a specific query."
+        )
+    if clarification_depth >= 2:
+        system_content += (
+            "\n\n**Do not ask any further clarifying questions.** Answer the user's question "
+            "directly and completely using the available materials."
+        )
+    return system_content
+
+
+def _build_pageindex_synthesis_system_context(
+    evidence_text: str,
+    *,
+    clarification_depth: int,
+    strict: bool = False,
+) -> str:
+    system_content = (
+        _SYSTEM_PROMPT_BASE
+        + _JSON_SYNTHESIS_INSTRUCTION
+        + _PAGEINDEX_SYNTHESIS_INSTRUCTION
+        + _CONVERSATION_HISTORY_NOTICE
+    )
+    if evidence_text.strip():
+        system_content += "\n\nEvidence:\n" + evidence_text.strip()
+    else:
+        system_content += "\n\nEvidence:\nNo retrieved course material or web results were provided."
+    if clarification_depth >= 2:
+        system_content += (
+            "\n\n**Do not ask any further clarifying questions.** Answer the user's question "
+            "directly and completely using the available materials."
+        )
+    if strict:
+        system_content += (
+            "\n\n**Strict final answer retry**: Your previous response described future "
+            "retrieval instead of answering. Do not mention fetching, searching, inspecting, "
+            "retrieving, or calling tools. Answer immediately from the evidence already provided."
+        )
+    return system_content
+
+
+def _format_pageindex_evidence(course_contents: list, web_contents: list) -> str:
+    parts = []
+    if course_contents:
+        parts.append(
+            "Retrieved course material:\n"
+            + "\n\n---\n\n".join(str(c) for c in course_contents)
+        )
+    if web_contents:
+        parts.append(
+            "Web search results — use these to answer questions not covered by course materials:\n"
+            + "\n\n---\n\n".join(str(c) for c in web_contents)
+        )
+    return "\n\n".join(parts)
+
+
+def _looks_like_retrieval_preamble(text: str) -> bool:
+    prefix = (text or "").strip().lower()
+    patterns = (
+        "i'll fetch",
+        "i will fetch",
+        "i'm going to fetch",
+        "i am going to fetch",
+        "let me fetch",
+        "i'll retrieve",
+        "i will retrieve",
+        "let me retrieve",
+        "i'll inspect",
+        "i will inspect",
+        "let me inspect",
+        "i'll search",
+        "i will search",
+        "let me search",
+    )
+    return any(prefix.startswith(p) for p in patterns)
+
+
+
+class _ReplyStreamFilter:
+    """Strip <REPLY>…</REPLY><META>…</META> wrapper from a streamed response.
+
+    State machine:
+      probing    — buffer until we confirm tagged vs. plain format
+      in_reply   — emit text between <REPLY> and </REPLY>
+      passthrough — model didn't use tags; emit everything directly
+      done       — </REPLY> seen; drop remaining (META block)
+    """
+
+    _OPEN = "<REPLY>"
+    _CLOSE = "</REPLY>"
+
+    def __init__(self, emit):
+        self._emit = emit
+        self._state = "probing"
+        self._buf = ""
+
+    def feed(self, chunk: str) -> None:
+        if self._state == "done":
+            return
+        self._buf += chunk
+        if self._state == "probing":
+            stripped = self._buf.lstrip()
+            if stripped.startswith(self._OPEN):
+                self._buf = stripped[len(self._OPEN):]
+                self._state = "in_reply"
+                self._drain()
+            elif len(stripped) >= len(self._OPEN):
+                self._state = "passthrough"
+                self._emit(self._buf)
+                self._buf = ""
+        elif self._state == "in_reply":
+            self._drain()
+        else:  # passthrough
+            self._emit(self._buf)
+            self._buf = ""
+
+    def _drain(self) -> None:
+        idx = self._buf.find(self._CLOSE)
+        if idx != -1:
+            if idx > 0:
+                self._emit(self._buf[:idx])
+            self._buf = ""
+            self._state = "done"
+        else:
+            safe = len(self._buf) - len(self._CLOSE) + 1
+            if safe > 0:
+                self._emit(self._buf[:safe])
+                self._buf = self._buf[safe:]
+
+    def flush(self) -> None:
+        if self._buf and self._state != "done":
+            self._emit(self._buf)
+            self._buf = ""
+
+
+def _filtered_on_event(on_event):
+    """Wrap an on_event callback so streamed {"type":"text"} deltas pass through a
+    _ReplyStreamFilter (stripping the <REPLY>…</REPLY><META>…</META> wrapper), while
+    non-text events pass through untouched. Returns (wrapped_on_event, flush). Used by
+    the Claude/Gemini PageIndex loops to match the OpenAI streaming behavior.
+    """
+    if on_event is None:
+        return None, (lambda: None)
+    filt = _ReplyStreamFilter(lambda t: on_event({"type": "text", "chunk": t}))
+
+    def _evt(evt):
+        if evt.get("type") == "text":
+            filt.feed(evt["chunk"])
+        else:
+            on_event(evt)
+
+    return _evt, filt.flush
+
+
+def _convert_content_to_responses_format(content):
+    """Convert a Chat Completions content value to Responses API format.
+
+    Strings are returned as-is. Content arrays have their part types remapped:
+    'image_url' → 'input_image', 'text' → 'input_text'.
+    """
+    if not isinstance(content, list):
+        return content
+    out = []
+    for part in content:
+        if part.get("type") == "image_url":
+            url = part["image_url"] if isinstance(part["image_url"], str) else part["image_url"]["url"]
+            out.append({"type": "input_image", "image_url": url})
+        elif part.get("type") == "text":
+            out.append({"type": "input_text", "text": part["text"]})
+        else:
+            out.append(part)
+    return out
+
+
+def _messages_to_responses_input(messages: list) -> list:
+    """Convert Chat Completions messages list to Responses API input items."""
+    result = []
+    for msg in messages:
+        role = msg.get("role")
+        if role in ("system", "user"):
+            result.append({"role": role, "content": _convert_content_to_responses_format(msg["content"])})
+        elif role == "assistant":
+            content = msg.get("content")
+            if content:
+                result.append({"role": "assistant", "content": content})
+            for tc in msg.get("tool_calls") or []:
+                tc_id = tc["id"]
+                # Responses API requires item "id" to start with "fc_"; "call_id" stays as-is
+                item_id = "fc_" + tc_id[5:] if tc_id.startswith("call_") else tc_id
+                result.append({
+                    "type": "function_call",
+                    "id": item_id,
+                    "call_id": tc_id,
+                    "name": tc["function"]["name"],
+                    "arguments": tc["function"]["arguments"],
+                })
+        elif role == "tool":
+            result.append({
+                "type": "function_call_output",
+                "call_id": msg["tool_call_id"],
+                "output": msg["content"],
+            })
+    return result
+
+
+def _tools_to_responses_format(tools: list) -> list:
+    """Convert OpenAI Chat Completions tool dicts to Responses API function format."""
+    result = []
+    for t in tools:
+        fn = t.get("function", t)
+        result.append({
+            "type": "function",
+            "name": fn["name"],
+            "description": fn.get("description", ""),
+            "parameters": fn.get("parameters", {}),
+        })
+    return result
+
+
+def _parse_responses_api_output(payload: dict) -> tuple[str, list]:
+    """Extract text and tool calls from a Responses API response payload.
+    Returns (text, tool_calls) where tool_calls is in Chat Completions format."""
+    text_parts: list[str] = []
+    tool_calls: list[dict] = []
+    for item in payload.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "message":
+            for part in item.get("content") or []:
+                if isinstance(part, dict) and part.get("type") == "output_text":
+                    text_parts.append(part.get("text", ""))
+        elif item.get("type") == "function_call":
+            tool_calls.append({
+                "id": item.get("call_id") or item.get("id", ""),
+                "type": "function",
+                "function": {
+                    "name": item.get("name", ""),
+                    "arguments": item.get("arguments", "{}"),
+                },
+            })
+    if not text_parts and isinstance(payload.get("output_text"), str):
+        text_parts.append(payload["output_text"])
+    return "".join(text_parts), tool_calls
+
+
+def _pageindex_call_responses(
     api_key: str,
-    chunks: list,
-    chat_id: int | None,
-    context_material_ids: list,
-    selected_model_draft: str = "",
-    model_web_handoff: dict | None = None,
-    on_event=None,
-    image_s3_keys: list | None = None,
-) -> tuple[str, list, list, dict, str | None]:
-    debug = _is_enabled("AGENTIC_LOOP_DEBUG", default=False)
-    resolver_enabled = _is_enabled("GROUNDING_RESOLVER_ENABLED", default=True)
-    fusion_enabled = _is_enabled("GROUNDING_FUSION_ENABLED", default=True)
-    verifier_enabled = _is_enabled("GROUNDING_VERIFIER_ENABLED", default=True)
-    mode = "fresh"
-    resolver_result = {
-        "intent_type": "fresh",
-        "resolved_query": user_message,
-        "resolved_entities": [],
-        "carryover_chunk_ids": [],
-        "confidence": 0.0,
-        "reasoning_brief": "resolver disabled",
+    model: str,
+    messages: list,
+    tools: list | None,
+    on_event,
+) -> tuple[dict, str | None]:
+    """Responses API call for gpt-5+ models in the agentic loop.
+    Returns the same (message_dict, finish_reason) shape as _pageindex_stream_call."""
+    req_body: dict = {
+        "model": model,
+        "input": _messages_to_responses_input(messages),
+        "max_output_tokens": _output_token_cap(model),
     }
-    if resolver_enabled:
-        resolver_result = resolve_references_llm(
-            conn=conn,
-            chat_id=chat_id,
-            current_query=user_message,
-            selected_material_ids=context_material_ids,
-            api_key=api_key,
-            model=model,
-        )
-    mode = resolver_result.get("intent_type", "fresh")
-    resolved_query = resolver_result.get("resolved_query") or user_message
-    resolved_entities = resolver_result.get("resolved_entities") or []
-    required_entities = resolver_result.get("required_entities") or []
-    resolver_confidence = float(resolver_result.get("confidence", 0.0) or 0.0)
-
-    initial_search = execute_search_materials(
-        conn=conn,
-        query=resolved_query,
-        material_ids=context_material_ids,
-        top_k=10 if mode in ("followup", "mixed") else 8,
-        mode=mode if fusion_enabled else "fresh",
-        anchor_chunk_ids=resolver_result.get("carryover_chunk_ids") or [],
-        resolved_entities=resolved_entities,
-        chat_id=chat_id,
+    if tools:
+        req_body["tools"] = _tools_to_responses_format(tools)
+        req_body["tool_choice"] = "auto"
+    response = requests.post(
+        "https://api.openai.com/v1/responses",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json=req_body,
+        timeout=_TIMEOUT,
     )
-    initial_chunks = chunks or []
-    if initial_search.get("chunk_ids"):
-        initial_chunks = []
-        for cid in initial_search["chunk_ids"]:
-            initial_chunks.append(
-                {
-                    "id": cid,
-                    "chunk_type": "fused",
-                    "similarity": 0.7,
-                    "chunk_text": f"[ref:{cid}]",
-                }
-            )
+    _raise_for_status_verbose(response)
+    payload = response.json()
+    text, tool_calls_list = _parse_responses_api_output(payload)
+    if text and on_event:
+        on_event({"type": "text", "chunk": text})
+    message: dict = {"content": text}
+    if tool_calls_list:
+        message["tool_calls"] = tool_calls_list
+    finish_reason = "tool_calls" if tool_calls_list else "stop"
+    return message, finish_reason
 
-    grounding_refs = _dedupe_preserve_order(
-        [_json_safe_chunk_id(c.get("id")) for c in initial_chunks if c.get("id") is not None]
-    )
-    grounding_text = ""
-    pulled_chunk_ids = []
-    carryover_text = ""
-    fresh_text = initial_search.get("text", "")
-    carryover_count = initial_search.get("meta", {}).get("carryover_count", 0)
-    fresh_count = initial_search.get("meta", {}).get("fresh_count", len(chunks or []))
-    if chat_id is not None:
-        pulled = pull_grounding_context(conn, chat_id, user_message)
-        grounding_text = pulled.get("text", "")
-        pulled_chunk_ids = pulled.get("chunk_ids", []) or []
-        grounding_refs.extend(pulled_chunk_ids)
-        grounding_refs = _dedupe_preserve_order(grounding_refs)
-        carryover_text = grounding_text
 
-    if debug:
-        logger.info(
-            "agentic_loop_debug",
-            extra={
-                "event": "loop_start",
-                "chat_id": chat_id,
-                "model": model,
-                "seed_chunk_count": len(initial_chunks or []),
-                "seed_chunk_ids": _id_preview(
-                    [_json_safe_chunk_id(c.get("id")) for c in initial_chunks if c.get("id") is not None]
-                ),
-                "seed_chunk_previews": _chunk_previews(initial_chunks),
-                "grounding_pull_chunk_ids": _id_preview(pulled_chunk_ids),
-                "grounding_text_excerpt": _truncate_text(grounding_text, 280),
-                "resolver_intent_type": mode,
-                "resolver_confidence": resolver_confidence,
-                "resolver_entities": resolved_entities,
-                "required_entities": required_entities,
-            },
-        )
+def _pageindex_stream_call(
+    api_key: str,
+    model: str,
+    messages: list,
+    tools: list | None,
+    on_event,
+) -> tuple[dict, str | None]:
+    """Stream one OpenAI call for the pageindex loop.
 
-    handoff = _normalize_web_search_handoff(model_web_handoff)
-    handoff_conf_threshold = float(
-        os.environ.get("AGENTIC_HANDOFF_NOT_NEEDED_MIN_CONFIDENCE", "0.70") or 0.70
-    )
-    handoff_conf_threshold = max(0.0, min(1.0, handoff_conf_threshold))
-    low_conf_not_needed_override = (
-        handoff.get("web_search_recommendation") == "not_needed"
-        and float(handoff.get("confidence", 0.0) or 0.0) < handoff_conf_threshold
-    )
-    web_search_allowed_by_handoff = (
-        handoff.get("web_search_recommendation") != "not_needed"
-        or low_conf_not_needed_override
-    )
+    Emits {"type": "text", "chunk": str} via on_event when the model generates
+    text content (the final answer). Returns (message_dict, finish_reason)
+    with the same shape as a non-streaming choices[0]["message"].
+    """
+    if _openai_should_use_responses_api(model):
+        return _pageindex_call_responses(api_key, model, messages, tools, on_event)
 
-    if on_event:
-        on_event(
-            {
-                "type": "handoff_decision",
-                "recommendation": handoff.get("web_search_recommendation"),
-                "confidence": handoff.get("confidence"),
-                "threshold": handoff_conf_threshold,
-                "override": low_conf_not_needed_override,
-                "web_search_allowed": web_search_allowed_by_handoff,
-                "missing_facts": handoff.get("missing_facts", []),
-                "suggested_queries": handoff.get("suggested_queries", []),
-                "reasoning": handoff.get("reasoning", ""),
-            }
-        )
+    req_body: dict = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+        "stream": True,
+    }
+    if tools:
+        req_body["tools"] = tools
+        req_body["tool_choice"] = "auto"
 
-    conflict_notes = ""
-    if mode == "followup" and fresh_count and carryover_count == 0:
-        conflict_notes = "Followup intent detected but no carryover evidence available."
-    elif mode == "fresh" and carryover_count > 0:
-        conflict_notes = "Fresh intent selected; carryover evidence deprioritized."
-
-    messages = [
-        {
-            "role": "system",
-            "content": _build_layered_system_context(
-                task_and_policy=AGENTIC_SYSTEM_PROMPT,
-                resolver_result=resolver_result,
-                carryover_evidence_text=carryover_text,
-                fresh_evidence_text=fresh_text,
-                conflict_notes=conflict_notes,
-                user_turn=user_message,
-                required_entities=required_entities,
-                selected_model_draft=selected_model_draft,
-                model_web_handoff=handoff,
-                low_conf_not_needed_override=low_conf_not_needed_override,
-            ),
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
         },
-        {"role": "user", "content": resolved_query},
-    ]
+        json=req_body,
+        stream=True,
+        timeout=_TIMEOUT,
+    )
+    _raise_for_status_verbose(response)
 
-    # Build multimodal user content: current-message images → retrieved prior images → text.
-    all_image_blocks = []
+    content_parts: list[str] = []
+    tool_calls_acc: dict[int, dict] = {}
+    finish_reason: str | None = None
 
-    if image_s3_keys:
+    for raw_line in response.iter_lines():
+        if not raw_line:
+            continue
+        line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+        if not line.startswith("data: "):
+            continue
+        data = line[6:].strip()
+        if data == "[DONE]":
+            break
         try:
-            current_pairs = _fetch_images_as_base64(image_s3_keys)
-            all_image_blocks.extend(
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
-                for mime, data in current_pairs
-            )
-        except Exception:
-            logger.warning("Failed to inject current-message images into agentic context")
+            chunk = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if chunk.get("error"):
+            raise RuntimeError(f"OpenAI stream error: {chunk['error']}")
+        choices = chunk.get("choices") or []
+        if not choices:
+            continue
+        choice = choices[0]
+        delta = choice.get("delta", {})
+        fr = choice.get("finish_reason")
+        if fr:
+            finish_reason = fr
 
-    retrieved_chat_images = initial_search.get("chat_image_chunks") or []
-    if retrieved_chat_images:
-        prior_keys = [c["s3_key"] for c in retrieved_chat_images if c.get("s3_key")]
-        try:
-            prior_pairs = _fetch_images_as_base64(prior_keys) if prior_keys else []
-            all_image_blocks.extend(
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
-                for mime, data in prior_pairs
-            )
-        except Exception:
-            logger.warning("Failed to inject retrieved chat images into agentic context")
+        if delta.get("content"):
+            content_parts.append(delta["content"])
+            if on_event:
+                on_event({"type": "text", "chunk": delta["content"]})
 
-    if all_image_blocks:
-        messages[1]["content"] = all_image_blocks + [{"type": "text", "text": resolved_query or user_message}]
+        for tc in delta.get("tool_calls") or []:
+            idx = tc["index"]
+            if idx not in tool_calls_acc:
+                tool_calls_acc[idx] = {
+                    "id": tc.get("id", ""),
+                    "type": "function",
+                    "function": {
+                        "name": tc.get("function", {}).get("name", ""),
+                        "arguments": tc.get("function", {}).get("arguments", ""),
+                    },
+                }
+            else:
+                if tc.get("id"):
+                    tool_calls_acc[idx]["id"] = tc["id"]
+                fn = tc.get("function", {})
+                if fn.get("name"):
+                    tool_calls_acc[idx]["function"]["name"] = fn["name"]
+                tool_calls_acc[idx]["function"]["arguments"] += fn.get("arguments", "")
 
+    tool_calls_list = [tool_calls_acc[i] for i in sorted(tool_calls_acc)]
+    message: dict = {"content": "".join(content_parts)}
+    if tool_calls_list:
+        message["tool_calls"] = tool_calls_list
+    return message, finish_reason
+
+
+def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
+    """Build the tool list for the PageIndex agent loop."""
     tools = [
         {
             "type": "function",
             "function": {
-                "name": "search_materials",
+                "name": "get_material_structure",
                 "description": (
-                    "Search selected course materials for relevant chunks and return evidence."
+                    "Get the hierarchical section/problem index for one material. "
+                    "Call to see what's inside a relevant file before fetching pages."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string"},
-                        "top_k": {"type": "integer", "default": 8},
+                        "material_id": {
+                            "type": "integer",
+                            "description": "Material ID from the course materials index",
+                        },
                     },
+                    "required": ["material_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_page_content",
+                "description": (
+                    "Fetch raw text of specific pages. "
+                    "Use ranges like '5-7', comma lists like '3,8', or single pages like '12'. "
+                    "Cite answers as 'Material X, page Y'."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "material_id": {"type": "integer"},
+                        "pages": {
+                            "type": "string",
+                            "description": "Page spec: '5-7', '3,8', or '12'",
+                        },
+                    },
+                    "required": ["material_id", "pages"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_related_materials",
+                "description": (
+                    "Get materials related to a specific material via the knowledge graph. "
+                    "Use when initial material doesn't fully answer the question - "
+                    "e.g., find the lecture behind a homework problem, or a solution for a hw."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "material_id": {
+                            "type": "integer",
+                            "description": "Material ID to find neighbors for",
+                        },
+                    },
+                    "required": ["material_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "propose_generation",
+                "description": (
+                    "Propose a study artifact (quiz, flashcards, or report) for the user to "
+                    "build from this conversation. Call this ONLY when the user explicitly asks "
+                    "to create one (e.g. 'make me a quiz about X', 'turn this into flashcards'). "
+                    "Do not generate the artifact yourself — this tool shows the user a card they "
+                    "confirm. After calling it, write a short reply telling them the proposal is ready."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "generation_type": {
+                            "type": "string",
+                            "enum": ["quiz", "flashcards", "report"],
+                        },
+                        "title": {"type": "string", "description": "Short human title."},
+                        "discussion_summary": {
+                            "type": "string",
+                            "description": (
+                                "Concise distillation of the relevant conversation that should "
+                                "ground the generation. A few sentences; this is the source content."
+                            ),
+                        },
+                        "material_ids": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                            "description": "Optional; defaults to the chat's selected materials.",
+                        },
+                        "params": {
+                            "type": "object",
+                            "description": (
+                                "Type-specific generation parameters. "
+                                "Quiz: {\"tf_count\":3,\"sa_count\":2,\"la_count\":1,\"mcq_count\":5}. "
+                                "Flashcards: {\"card_count\":20}. "
+                                "Report: {\"template_id\":\"<id>\"} where id is one of "
+                                "\"study-guide\" (structured outline with key concepts), "
+                                "\"briefing\" (executive summary for quick understanding), "
+                                "\"summary\" (condensed overview of main points), "
+                                "\"custom\" (anything else — also include \"custom_prompt\":\"<specific instruction>\"). "
+                                "Choose the most fitting template; use custom only when none of the others fit."
+                            ),
+                        },
+                    },
+                    "required": ["generation_type", "title", "discussion_summary"],
+                },
+            },
+        },
+    ]
+    if web_search_enabled and os.environ.get("AGENTIC_WEB_SEARCH_ENABLED", "").lower() == "true":
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the web for current information to supplement course materials. Use when page content is insufficient.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string", "description": "Search query"}},
                     "required": ["query"],
                 },
             },
-        }
-    ]
-    if _is_enabled("AGENTIC_WEB_SEARCH_ENABLED") and web_search_allowed_by_handoff:
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "description": "Search the web for information not fully covered by course materials. Use this whenever search_materials results are vague, incomplete, or don't directly answer the question — especially for implementation details, API usage, external libraries, or concepts that need more depth.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string"},
-                        },
-                        "required": ["query"],
-                    },
-                },
-            }
-        )
-    if _is_enabled("AGENTIC_RERANK_ENABLED"):
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": "rerank_results",
-                    "description": (
-                        "Re-rank a set of retrieved chunk IDs by relevance to a query using a neural reranker. "
-                        "Call this after search_materials when the results feel noisy, loosely related, or the query "
-                        "is complex and multi-faceted. Pass the chunk_ids from the prior search call."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string"},
-                            "chunk_ids": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Chunk UUIDs to rerank, from a prior search_materials result.",
-                            },
-                            "top_n": {"type": "integer", "default": 5},
-                        },
-                        "required": ["query", "chunk_ids"],
-                    },
-                },
-            }
-        )
+        })
+    return tools
 
-    max_iterations = _safe_int_env("AGENTIC_MAX_ITERATIONS", MAX_TOOL_ITERATIONS, 1, 8)
-    tool_trace = []
-    final_text = ""
-    assistant_reply_summary = None
-    assistant_follow_ups: list = []
-    assistant_clarifying_question: str | None = None
 
-    for iteration in range(1, max_iterations + 1):
-        started = time.time()
+def _dispatch_pageindex_tool(conn, name, args, course_id, grounding_refs, on_event) -> tuple[str, dict]:
+    """Dispatch a single PageIndex tool call. Returns (tool-result text, extra trace metadata).
+    Appends to grounding_refs and emits events as a side effect."""
+    from pageindex_retrieval import get_material_structure, get_page_content
+
+    if name == "get_material_structure":
+        material_id = args.get("material_id")
+        tool_result = json.dumps(
+            get_material_structure(conn, material_id), indent=2
+        )
+    elif name == "get_page_content":
+        material_id = args.get("material_id")
+        pages_spec = args.get("pages", "")
+        rows = get_page_content(conn, material_id, pages_spec)
+        if rows:
+            parts = [
+                f"--- Page {row['page_number']} ---\n"
+                f"{row['text_content'] or '[No text extracted]'}"
+                for row in rows
+            ]
+            tool_result = "\n\n".join(parts)
+            grounding_refs.append(f"material:{material_id}")
+        else:
+            tool_result = "No content found for the requested pages."
         if on_event:
-            on_event({"type": "loop_start", "iteration": iteration, "max": max_iterations})
-        if debug:
-            logger.info(
-                "agentic_loop_debug",
-                extra={
-                    "event": "openai_request",
-                    "chat_id": chat_id,
-                    "iteration": iteration,
-                    "message_count": len(messages),
-                    "grounding_ref_count": len(grounding_refs),
-                    "grounding_ref_ids": _id_preview(grounding_refs),
-                },
+            on_event(
+                {
+                    "type": "tool_call",
+                    "tool": "get_page_content",
+                    "material_id": material_id,
+                    "pages": pages_spec,
+                }
             )
-        response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
+    elif name == "get_related_materials":
+        from pageindex_retrieval import get_material_relations
+
+        material_id = args.get("material_id")
+        relations = get_material_relations(conn, course_id, material_id)
+        if relations:
+            lines = []
+            for relation in relations:
+                score = relation.get("similarity_score")
+                score_text = f"{score:.2f}" if score is not None else "?"
+                shared_tags = ", ".join(relation.get("shared_tags") or []) or "none"
+                lines.append(
+                    f"  [{relation['other_material_id']}] "
+                    f"{relation['relation_type']} (confidence: {score_text})"
+                    f" | shared topics: {shared_tags}"
+                )
+            tool_result = f"Related materials for {material_id}:\n" + "\n".join(lines)
+        else:
+            tool_result = f"No known relations for material {material_id}."
+        if on_event:
+            on_event(
+                {
+                    "type": "tool_call",
+                    "tool": "get_related_materials",
+                    "material_id": material_id,
+                }
+            )
+    elif name == "web_search":
+        from tools import execute_web_search
+        if on_event:
+            on_event({"type": "web_search_start", "query": args.get("query", "")})
+        result = execute_web_search(conn, args.get("query", ""))
+        tool_result = result.get("text", "")
+        urls = []
+        for url_info in (result.get("meta") or {}).get("urls") or []:
+            url = url_info.get("url", "")
+            title = url_info.get("title") or url
+            if url:
+                if on_event:
+                    on_event({"type": "web_url_view", "url": url, "title": title})
+                grounding_refs.append(f"web:{url}\t{title}")
+                urls.append({"url": url, "title": title})
+        return str(tool_result), {"urls": urls} if urls else {}
+    else:
+        tool_result = f"Unknown tool: {name}"
+
+    return str(tool_result), {}
+
+
+def _pageindex_tools_anthropic(tools: list) -> list:
+    """Convert OpenAI-format tool dicts to Anthropic format."""
+    result = []
+    for t in tools:
+        fn = t.get("function", t)
+        result.append({
+            "name": fn["name"],
+            "description": fn.get("description", ""),
+            "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+        })
+    return result
+
+
+def _pageindex_stream_call_claude(api_key, model, system, messages, tools, on_event):
+    """One streaming Anthropic messages call. Returns (content_blocks, stop_reason).
+    Emits {"type":"text","chunk":...} for text delta events."""
+    body = {
+        "model": model,
+        "max_tokens": _output_token_cap(model),
+        "system": system,
+        "messages": messages,
+        "stream": True,
+    }
+    if tools:
+        body["tools"] = _pageindex_tools_anthropic(tools)
+    resp = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json=body,
+        stream=True,
+        timeout=_TIMEOUT,
+    )
+    _raise_for_status_verbose(resp)
+    blocks = {}  # index -> {"type","id","name","input_json","text"}
+    stop_reason = None
+    for raw in resp.iter_lines():
+        if not raw:
+            continue
+        line = raw.decode() if isinstance(raw, bytes) else raw
+        if not line.startswith("data: "):
+            continue
+        evt = json.loads(line[6:])
+        t = evt.get("type")
+        if t == "content_block_start":
+            cb = evt["content_block"]
+            idx = evt["index"]
+            blocks[idx] = {
+                "type": cb["type"],
+                "id": cb.get("id"),
+                "name": cb.get("name"),
+                "input_json": "",
+                "text": "",
+            }
+        elif t == "content_block_delta":
+            idx = evt["index"]
+            d = evt.get("delta", {})
+            if d.get("type") == "input_json_delta":
+                blocks[idx]["input_json"] += d.get("partial_json", "")
+            elif d.get("type") == "text_delta":
+                blocks[idx]["text"] += d["text"]
+                if on_event:
+                    on_event({"type": "text", "chunk": d["text"]})
+        elif t == "message_delta":
+            stop_reason = evt.get("delta", {}).get("stop_reason", stop_reason)
+        elif t == "error":
+            raise RuntimeError(f"Anthropic stream error: {evt}")
+        # ping, message_start, content_block_stop, message_stop → no-op
+    ordered = [blocks[i] for i in sorted(blocks)]
+    return ordered, stop_reason
+
+
+def _pageindex_tools_gemini(tools: list) -> list:
+    """Convert OpenAI-format tool dicts to Gemini functionDeclarations format."""
+    declarations = []
+    for t in tools:
+        fn = t.get("function", t)
+        declarations.append({
+            "name": fn["name"],
+            "description": fn.get("description", ""),
+            "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
+        })
+    return [{"functionDeclarations": declarations}]
+
+
+def _pageindex_stream_call_gemini(api_key, model, system, contents, tools, on_event):
+    """One streaming Gemini generateContent call. Returns (parts, has_function_call).
+    Emits {"type":"text","chunk":...} for text parts."""
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model}:streamGenerateContent?alt=sse&key={api_key}"
+    )
+    body = {
+        "system_instruction": {"parts": [{"text": system}]},
+        "contents": contents,
+        "generationConfig": {"maxOutputTokens": _output_token_cap(model)},
+    }
+    if tools:
+        body["tools"] = _pageindex_tools_gemini(tools)
+    resp = requests.post(url, json=body, stream=True, timeout=_TIMEOUT)
+    _raise_for_status_verbose(resp)
+    all_parts = []
+    has_function_call = False
+    for raw in resp.iter_lines():
+        if not raw:
+            continue
+        line = raw.decode() if isinstance(raw, bytes) else raw
+        if not line.startswith("data: "):
+            continue
+        try:
+            evt = json.loads(line[6:])
+        except json.JSONDecodeError:
+            continue
+        if evt.get("error"):
+            raise RuntimeError(f"Gemini stream error: {evt['error']}")
+        for candidate in evt.get("candidates", []):
+            for part in candidate.get("content", {}).get("parts", []):
+                all_parts.append(part)
+                if "functionCall" in part:
+                    has_function_call = True
+                elif "text" in part:
+                    if on_event:
+                        on_event({"type": "text", "chunk": part["text"]})
+    return all_parts, has_function_call
+
+
+def run_agent_pageindex(
+    conn,
+    user_message: str,
+    model: str,
+    api_key: str,
+    chat_id: int | None,
+    course_id: int | None,
+    context_material_ids: list,
+    on_event=None,
+    provider: str = "openai",
+    web_search_enabled: bool = False,
+    image_s3_keys: list | None = None,
+    history_before_index: int | None = None,
+    clarification_depth: int = 0,
+) -> tuple:
+    from pageindex_retrieval import get_course_routing_index
+
+    _validate_model_supports_images(model, image_s3_keys)
+
+    # Image-only messages have no text query; give the retrieval model something to work with.
+    if not user_message.strip() and image_s3_keys:
+        user_message = "Please analyze this image and find any related course material."
+
+    tools = _pageindex_tool_list(web_search_enabled=web_search_enabled)
+
+    routing_materials = get_course_routing_index(
+        conn, course_id, context_material_ids or None
+    )
+    routing_block = _format_routing_index_block(routing_materials)
+    system_content = _build_pageindex_retrieval_system_context(
+        routing_block,
+        web_search_enabled=web_search_enabled,
+        clarification_depth=clarification_depth,
+    )
+
+    history_system_content = system_content + _CONVERSATION_HISTORY_NOTICE
+
+    _history_turns = _build_history_turns(
+        conn=conn,
+        chat_id=chat_id,
+        before_index=history_before_index,
+        model=model,
+        system_text=history_system_content,
+        current_user_text=user_message,
+    )
+
+    system_content = history_system_content
+
+    # Attached images travel with the first user turn. Each provider has its own
+    # multimodal content shape (mirrors _synthesize_claude/openai/gemini). Prior
+    # images discussed earlier in the chat are recalled by similarity and prepended
+    # so the model retains cross-turn visual context.
+    current_images = _fetch_images_as_base64(image_s3_keys) if image_s3_keys else []
+    recalled_images = _recall_prior_chat_images(
+        conn, chat_id, user_message, exclude_s3_keys=image_s3_keys
+    )
+    request_images = recalled_images + current_images
+
+    if request_images:
+        openai_user_content = [
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
+            for mime, data in request_images
+        ] + [{"type": "text", "text": user_message}]
+    else:
+        openai_user_content = user_message
+
+    current_user_message = {"role": "user", "content": openai_user_content}
+    openai_history_messages = _shape_history_openai(_history_turns)
+    messages = (
+        [{"role": "system", "content": system_content}]
+        + openai_history_messages
+        + [current_user_message]
+    )
+    grounding_refs: list = []
+    tool_trace: list = []
+    final_text = ""
+    proposal_emitted = False
+    assistant_follow_ups: list = []
+    assistant_clarifying_question = None
+    assistant_reply_summary = None
+    repair_invoked = False
+    course_evidence: list[str] = []
+    web_evidence: list[str] = []
+
+    def _record_evidence(tool_name: str, tool_result: str) -> None:
+        if tool_name == "get_page_content":
+            course_evidence.append(str(tool_result))
+        elif tool_name == "web_search":
+            web_evidence.append(str(tool_result))
+
+    # Retrieval always uses gpt-4o-mini; synthesis always uses the user-selected model.
+    retrieval_model = DEFAULT_AGENTIC_MODEL
+
+    def _retrieval_call(msgs, tls):
+        """Tool-calling loop: always gpt-4o-mini, non-text events pass through."""
+        def _non_text_evt(evt):
+            if on_event and evt.get("type") != "text":
+                on_event(evt)
+        return _pageindex_stream_call(api_key, retrieval_model, msgs, tls, _non_text_evt if on_event else None)
+
+    def _synthesis_call(msgs):
+        """Final answer: user-selected model with full text streaming."""
+        if on_event is None:
+            return _pageindex_stream_call(api_key, model, msgs, None, None)
+        filt = _ReplyStreamFilter(lambda t: on_event({"type": "text", "chunk": t}))
+        def _evt(evt):
+            if evt.get("type") == "text":
+                filt.feed(evt["chunk"])
+            else:
+                on_event(evt)
+        result = _pageindex_stream_call(api_key, model, msgs, None, _evt)
+        filt.flush()
+        return result
+
+    def _non_text_event(evt):
+        if on_event and evt.get("type") != "text":
+            on_event(evt)
+
+    if provider == "claude":
+        if request_images:
+            claude_user_content = [
+                {"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}}
+                for mime, data in request_images
+            ] + [{"type": "text", "text": user_message}]
+        else:
+            claude_user_content = user_message
+        claude_messages = _shape_history_claude(_history_turns) + [
+            {"role": "user", "content": claude_user_content}
+        ]
+        for iteration in range(MAX_TOOL_ITERATIONS):
+            blocks, stop_reason = _pageindex_stream_call_claude(
+                api_key, model, system_content, claude_messages, tools, _non_text_event if on_event else None
+            )
+            tool_use_blocks = [b for b in blocks if b["type"] == "tool_use"]
+            if not tool_use_blocks or stop_reason != "tool_use":
+                break
+            # Append assistant turn
+            assistant_content = []
+            for b in blocks:
+                if b["type"] == "tool_use":
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": b["id"],
+                        "name": b["name"],
+                        "input": json.loads(b["input_json"]) if b["input_json"] else {},
+                    })
+                elif b["type"] == "text" and b["text"]:
+                    assistant_content.append({"type": "text", "text": b["text"]})
+            claude_messages.append({"role": "assistant", "content": assistant_content})
+            # Dispatch each tool call and collect results
+            tool_results = []
+            for b in tool_use_blocks:
+                args = json.loads(b["input_json"]) if b["input_json"] else {}
+                _tmeta = {}
+                if b["name"] == "propose_generation":
+                    proposal = {
+                        "type": "generation_proposal",
+                        "generation_type": args.get("generation_type") or "",
+                        "title": args.get("title") or "",
+                        "discussion_summary": args.get("discussion_summary") or "",
+                        "material_ids": args.get("material_ids") or list(context_material_ids or []),
+                        "params": args.get("params") or {},
+                    }
+                    if on_event:
+                        on_event(proposal)
+                    proposal_emitted = True
+                    result_text = ""
+                else:
+                    result_text, _tmeta = _dispatch_pageindex_tool(
+                        conn=conn,
+                        name=b["name"],
+                        args=args,
+                        course_id=course_id,
+                        grounding_refs=grounding_refs,
+                        on_event=on_event,
+                    )
+                    _record_evidence(b["name"], result_text)
+                _te = {"tool": b["name"], "args": args, "iteration": iteration}
+                if _tmeta.get("urls"):
+                    _te["urls"] = _tmeta["urls"]
+                tool_trace.append(_te)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": b["id"],
+                    "content": result_text,
+                })
+            if proposal_emitted:
+                final_text = GENERATION_PROPOSAL_READY_MESSAGE
+                break
+            claude_messages.append({"role": "user", "content": tool_results})
+
+        if not proposal_emitted:
+            evt_cb, flush = _filtered_on_event(on_event)
+            synthesis_system_content = _build_pageindex_synthesis_system_context(
+                _format_pageindex_evidence(course_evidence, web_evidence),
+                clarification_depth=clarification_depth,
+            )
+            synthesis_messages = _shape_history_claude(_history_turns) + [
+                {"role": "user", "content": claude_user_content}
+            ]
+            blocks, _ = _pageindex_stream_call_claude(
+                api_key, model, synthesis_system_content, synthesis_messages, [], evt_cb
+            )
+            flush()
+            full_text = "".join(b["text"] for b in blocks if b["type"] == "text")
+            raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+            (
+                reply_body,
+                assistant_reply_summary,
+                assistant_follow_ups,
+                assistant_clarifying_question,
+            ) = _parse_synthesis_json(raw_final)
+            final_text = reply_body if (reply_body or "").strip() else raw_final
+            if _looks_like_retrieval_preamble(final_text):
+                repair_invoked = True
+                strict_system_content = _build_pageindex_synthesis_system_context(
+                    _format_pageindex_evidence(course_evidence, web_evidence),
+                    clarification_depth=clarification_depth,
+                    strict=True,
+                )
+                blocks, _ = _pageindex_stream_call_claude(
+                    api_key, model, strict_system_content, synthesis_messages, [], evt_cb
+                )
+                flush()
+                full_text = "".join(b["text"] for b in blocks if b["type"] == "text")
+                raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+                (
+                    reply_body,
+                    assistant_reply_summary,
+                    assistant_follow_ups,
+                    assistant_clarifying_question,
+                ) = _parse_synthesis_json(raw_final)
+                final_text = reply_body if (reply_body or "").strip() else raw_final
+            tool_trace.append({"phase": "synthesis"})
+
+        if not final_text and not proposal_emitted:
+            final_text = "I could not find relevant content in the course materials."
+
+        return (
+            final_text,
+            grounding_refs,
+            tool_trace,
+            {
+                "intent_type": "pageindex",
+                "verifier_passed": True,
+                "repair_invoked": repair_invoked,
+                "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+                "history_turn_count": len(_history_turns),
             },
-            json={
-                "model": model,
-                "messages": messages,
-                "tools": tools,
-                "tool_choice": "auto",
-                "temperature": 0.2,
-            },
-            timeout=_TIMEOUT,
+            assistant_reply_summary,
+            assistant_follow_ups or [],
+            assistant_clarifying_question,
         )
-        response.raise_for_status()
-        payload = response.json()
-        choice = payload["choices"][0]
-        message = choice.get("message", {})
-        tool_calls = message.get("tool_calls") or []
-        if debug:
-            logger.info(
-                "agentic_loop_debug",
-                extra={
-                    "event": "openai_response",
-                    "chat_id": chat_id,
-                    "iteration": iteration,
-                    "finish_reason": choice.get("finish_reason"),
-                    "tool_call_count": len(tool_calls),
-                    "assistant_excerpt": _truncate_text(_message_text(message), 240),
-                },
+
+    if provider == "gemini":
+        if request_images:
+            gemini_user_parts = [
+                {"inline_data": {"mime_type": mime, "data": data}}
+                for mime, data in request_images
+            ] + [{"text": user_message}]
+        else:
+            gemini_user_parts = [{"text": user_message}]
+        contents = _shape_history_gemini(_history_turns) + [{"role": "user", "parts": gemini_user_parts}]
+        for iteration in range(MAX_TOOL_ITERATIONS):
+            parts, has_fc = _pageindex_stream_call_gemini(
+                api_key, model, system_content, contents, tools, _non_text_event if on_event else None
             )
+            if not has_fc:
+                break
+            # Append model turn
+            contents.append({"role": "model", "parts": parts})
+            # Dispatch function calls and collect responses
+            fn_responses = []
+            for p in parts:
+                if "functionCall" in p:
+                    fc = p["functionCall"]
+                    args = fc.get("args", {})
+                    _tmeta = {}
+                    if fc["name"] == "propose_generation":
+                        proposal = {
+                            "type": "generation_proposal",
+                            "generation_type": args.get("generation_type") or "",
+                            "title": args.get("title") or "",
+                            "discussion_summary": args.get("discussion_summary") or "",
+                            "material_ids": args.get("material_ids") or list(context_material_ids or []),
+                            "params": args.get("params") or {},
+                        }
+                        if on_event:
+                            on_event(proposal)
+                        proposal_emitted = True
+                        result_text = ""
+                    else:
+                        result_text, _tmeta = _dispatch_pageindex_tool(
+                            conn=conn,
+                            name=fc["name"],
+                            args=args,
+                            course_id=course_id,
+                            grounding_refs=grounding_refs,
+                            on_event=on_event,
+                        )
+                        _record_evidence(fc["name"], result_text)
+                    _te = {"tool": fc["name"], "args": args, "iteration": iteration}
+                    if _tmeta.get("urls"):
+                        _te["urls"] = _tmeta["urls"]
+                    tool_trace.append(_te)
+                    function_response = {
+                        "name": fc["name"],
+                        "response": {"content": result_text},
+                    }
+                    if fc.get("id"):
+                        function_response["id"] = fc["id"]
+                    fn_responses.append({"functionResponse": function_response})
+            if proposal_emitted:
+                final_text = GENERATION_PROPOSAL_READY_MESSAGE
+                break
+            contents.append({"role": "user", "parts": fn_responses})
+
+        if not proposal_emitted:
+            evt_cb, flush = _filtered_on_event(on_event)
+            synthesis_system_content = _build_pageindex_synthesis_system_context(
+                _format_pageindex_evidence(course_evidence, web_evidence),
+                clarification_depth=clarification_depth,
+            )
+            synthesis_contents = _shape_history_gemini(_history_turns) + [
+                {"role": "user", "parts": gemini_user_parts}
+            ]
+            parts, _ = _pageindex_stream_call_gemini(
+                api_key, model, synthesis_system_content, synthesis_contents, [], evt_cb
+            )
+            flush()
+            full_text = "".join(p.get("text", "") for p in parts if "text" in p)
+            raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+            (
+                reply_body,
+                assistant_reply_summary,
+                assistant_follow_ups,
+                assistant_clarifying_question,
+            ) = _parse_synthesis_json(raw_final)
+            final_text = reply_body if (reply_body or "").strip() else raw_final
+            if _looks_like_retrieval_preamble(final_text):
+                repair_invoked = True
+                strict_system_content = _build_pageindex_synthesis_system_context(
+                    _format_pageindex_evidence(course_evidence, web_evidence),
+                    clarification_depth=clarification_depth,
+                    strict=True,
+                )
+                parts, _ = _pageindex_stream_call_gemini(
+                    api_key, model, strict_system_content, synthesis_contents, [], evt_cb
+                )
+                flush()
+                full_text = "".join(p.get("text", "") for p in parts if "text" in p)
+                raw_final = full_text.strip() or "I could not find relevant content in the course materials."
+                (
+                    reply_body,
+                    assistant_reply_summary,
+                    assistant_follow_ups,
+                    assistant_clarifying_question,
+                ) = _parse_synthesis_json(raw_final)
+                final_text = reply_body if (reply_body or "").strip() else raw_final
+            tool_trace.append({"phase": "synthesis"})
+
+        if not final_text and not proposal_emitted:
+            final_text = "I could not find relevant content in the course materials."
+
+        return (
+            final_text,
+            grounding_refs,
+            tool_trace,
+            {
+                "intent_type": "pageindex",
+                "verifier_passed": True,
+                "repair_invoked": repair_invoked,
+                "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+                "history_turn_count": len(_history_turns),
+            },
+            assistant_reply_summary,
+            assistant_follow_ups or [],
+            assistant_clarifying_question,
+        )
+
+    for iteration in range(MAX_TOOL_ITERATIONS):
+        started = time.time()
+        message, finish_reason = _retrieval_call(messages, tools)
+        tool_calls = message.get("tool_calls") or []
 
         if not tool_calls:
-            raw_final = _message_text(message).strip()
-            if not raw_final:
-                raw_final = "I could not synthesize a response from the available context."
-            reply_body, assistant_reply_summary, assistant_follow_ups, assistant_clarifying_question = _parse_synthesis_json(raw_final)
-            if not (reply_body or "").strip():
-                reply_body = raw_final
-                assistant_reply_summary = None
-                assistant_follow_ups = []
-                assistant_clarifying_question = None
-            final_text = reply_body
             tool_trace.append(
                 {
                     "iteration": iteration,
-                    "finish_reason": choice.get("finish_reason"),
+                    "finish_reason": finish_reason,
                     "tool_calls": 0,
                     "latency_ms": int((time.time() - started) * 1000),
                 }
@@ -1155,165 +2314,135 @@ def run_agent_openai(
                 args = json.loads(raw_args)
             except json.JSONDecodeError:
                 args = {}
-            if debug:
-                logger.info(
-                    "agentic_loop_debug",
-                    extra={
-                        "event": "tool_dispatch",
-                        "chat_id": chat_id,
-                        "iteration": iteration,
-                        "tool_name": name,
-                        "tool_args": args,
-                    },
-                )
 
-            if name == "search_materials":
-                result = execute_search_materials(
-                    conn=conn,
-                    query=args.get("query", ""),
-                    material_ids=context_material_ids,
-                    top_k=args.get("top_k", 8),
-                    mode=mode if fusion_enabled else "fresh",
-                    anchor_chunk_ids=grounding_refs,
-                    resolved_entities=resolved_entities,
-                )
-                if on_event:
-                    found_count = len(result.get("chunk_ids", []))
-                    on_event({"type": "sources_found", "chunks": result.get("chunks", []), "result_count": found_count})
-            elif name == "web_search":
-                if on_event:
-                    on_event({"type": "web_search_start", "query": args.get("query", "")})
-                result = execute_web_search(conn, args.get("query", ""))
-                if on_event:
-                    _emit_web_results(on_event, result.get("text", ""))
-            elif name == "rerank_results":
-                result = execute_rerank(conn, args.get("query", ""), args.get("chunk_ids", []), args.get("top_n", 5))
-                if on_event:
-                    meta = result.get("meta", {})
-                    on_event({
-                        "type": "rerank",
-                        "input_count": meta.get("input_count", len(args.get("chunk_ids", []))),
-                        "output_count": meta.get("output_count", len(result.get("chunk_ids", []))),
-                    })
-            else:
-                result = {
-                    "text": f"Unsupported tool: {name}",
-                    "chunk_ids": [],
-                    "meta": {"tool": name or "unknown", "error": "unsupported_tool"},
+            _tmeta = {}
+            if name == "propose_generation":
+                proposal = {
+                    "type": "generation_proposal",
+                    "generation_type": args.get("generation_type") or "",
+                    "title": args.get("title") or "",
+                    "discussion_summary": args.get("discussion_summary") or "",
+                    "material_ids": args.get("material_ids") or list(context_material_ids or []),
+                    "params": args.get("params") or {},
                 }
-
-            grounding_refs.extend(result.get("chunk_ids", []))
-            grounding_refs = _dedupe_preserve_order(grounding_refs)
-            if debug:
-                logger.info(
-                    "agentic_loop_debug",
-                    extra={
-                        "event": "tool_result",
-                        "chat_id": chat_id,
-                        "iteration": iteration,
-                        "tool_name": name,
-                        "result_chunk_count": len(result.get("chunk_ids", []) or []),
-                        "result_chunk_ids": _id_preview(result.get("chunk_ids", []) or []),
-                        "result_excerpt": _truncate_text(result.get("text", ""), 280),
-                        "grounding_ref_count": len(grounding_refs),
-                        "grounding_ref_ids": _id_preview(grounding_refs),
-                    },
+                if on_event:
+                    on_event(proposal)
+                proposal_emitted = True
+                tool_result = ""
+            else:
+                tool_result, _tmeta = _dispatch_pageindex_tool(
+                    conn=conn,
+                    name=name,
+                    args=args,
+                    course_id=course_id,
+                    grounding_refs=grounding_refs,
+                    on_event=on_event,
                 )
+                _record_evidence(name, tool_result)
+
+            _te = {"tool": name, "args": args, "iteration": iteration}
+            if _tmeta.get("urls"):
+                _te["urls"] = _tmeta["urls"]
+            tool_trace.append(_te)
             messages.append(
                 {
                     "role": "tool",
-                    "tool_call_id": call.get("id"),
+                    "tool_call_id": call["id"],
                     "name": name,
-                    "content": result.get("text", ""),
+                    "content": str(tool_result),
                 }
             )
-            trace_entry = {
-                "iteration": iteration,
-                "tool": name,
-                "latency_ms": result.get("meta", {}).get("latency_ms"),
-                "result_count": result.get("meta", {}).get("result_count"),
-                "mode": result.get("meta", {}).get("mode"),
-            }
-            if name == "web_search":
-                trace_entry["urls"] = result.get("meta", {}).get("urls") or []
-            tool_trace.append(trace_entry)
-        tool_trace.append(
+
+        if proposal_emitted:
+            break
+
+    # Synthesis: always the user-selected model, always a separate call from retrieval.
+    if proposal_emitted:
+        return (
+            GENERATION_PROPOSAL_READY_MESSAGE,
+            grounding_refs,
+            tool_trace,
             {
-                "iteration": iteration,
-                "finish_reason": choice.get("finish_reason"),
-                "tool_calls": len(tool_calls),
-                "latency_ms": int((time.time() - started) * 1000),
-            }
-        )
-
-    if not final_text:
-        final_text = (
-            "I ran out of tool-call iterations before finishing. "
-            "Please ask a narrower follow-up."
-        )
-
-    verifier_result = {
-        "passed": True,
-        "missing_entities": [],
-        "has_citation": False,
-        "looks_generic": False,
-    }
-    repair_invoked = False
-    if verifier_enabled:
-        verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
-        if not verifier_result["passed"]:
-            repair_invoked = True
-            raw_repair = _repair_response_openai(
-                api_key=api_key,
-                model=model,
-                messages=messages,
-                verifier_result=verifier_result,
-                grounding_refs=grounding_refs,
-                required_entities=required_entities,
-            )
-            # Repair calls inherit the JSON system prompt, so parse its output too
-            repaired_reply, _, _, _ = _parse_synthesis_json(raw_repair)
-            final_text = repaired_reply if (repaired_reply or "").strip() else raw_repair
-            verifier_result = _verify_grounding(final_text, resolver_result, grounding_refs)
-
-    final_text = _normalize_llm_markdown(final_text)
-
-    if on_event:
-        on_event({"type": "text", "content": final_text})
-
-    if debug:
-        logger.info(
-            "agentic_loop_debug",
-            extra={
-                "event": "loop_end",
-                "chat_id": chat_id,
-                "max_iterations": max_iterations,
-                "trace_entries": len(tool_trace),
-                "tool_call_entries": len([t for t in tool_trace if t.get("tool")]),
-                "grounding_ref_count": len(grounding_refs),
-                "grounding_ref_ids": _id_preview(grounding_refs),
-                "final_excerpt": _truncate_text(final_text, 280),
-                "verifier_passed": verifier_result.get("passed", True),
+                "intent_type": "pageindex",
+                "verifier_passed": True,
                 "repair_invoked": repair_invoked,
+                "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+                "history_turn_count": len(_history_turns),
             },
+            None,
+            [],
+            None,
         )
-    metadata = {
-        "intent_type": mode,
-        "resolver_confidence": resolver_confidence,
-        "resolver_entities": resolved_entities,
-        "required_entities": required_entities,
-        "verifier_passed": verifier_result.get("passed", True),
-        "verifier_missing_required": verifier_result.get("missing_required") or [],
-        "repair_invoked": repair_invoked,
-        "carryover_ref_count": carryover_count,
-        "fresh_ref_count": fresh_count,
-        "resolver_reasoning": resolver_result.get("reasoning_brief"),
-        "web_handoff": handoff,
-        "web_handoff_not_needed_conf_threshold": handoff_conf_threshold,
-        "web_handoff_low_conf_override": low_conf_not_needed_override,
-        "web_search_allowed_by_handoff": web_search_allowed_by_handoff,
-    }
-    return final_text, grounding_refs, tool_trace, metadata, assistant_reply_summary, assistant_follow_ups, assistant_clarifying_question
+    started = time.time()
+    evidence_text = _format_pageindex_evidence(course_evidence, web_evidence)
+    synthesis_system_content = _build_pageindex_synthesis_system_context(
+        evidence_text,
+        clarification_depth=clarification_depth,
+    )
+    synthesis_msgs = [
+        {"role": "system", "content": synthesis_system_content},
+    ] + openai_history_messages + [current_user_message]
+    synthesis_message, _ = _synthesis_call(synthesis_msgs)
+    raw_final = (
+        _message_text(synthesis_message).strip()
+        or "I could not find relevant content in the course materials."
+    )
+    (
+        reply_body,
+        assistant_reply_summary,
+        assistant_follow_ups,
+        assistant_clarifying_question,
+    ) = _parse_synthesis_json(raw_final)
+    final_text = reply_body if (reply_body or "").strip() else raw_final
+    if _looks_like_retrieval_preamble(final_text):
+        repair_invoked = True
+        strict_system_content = _build_pageindex_synthesis_system_context(
+            evidence_text,
+            clarification_depth=clarification_depth,
+            strict=True,
+        )
+        strict_msgs = [
+            {"role": "system", "content": strict_system_content},
+        ] + openai_history_messages + [current_user_message]
+        synthesis_message, _ = _synthesis_call(strict_msgs)
+        raw_final = (
+            _message_text(synthesis_message).strip()
+            or "I could not find relevant content in the course materials."
+        )
+        (
+            reply_body,
+            assistant_reply_summary,
+            assistant_follow_ups,
+            assistant_clarifying_question,
+        ) = _parse_synthesis_json(raw_final)
+        final_text = reply_body if (reply_body or "").strip() else raw_final
+    import re as _re
+    # Always strip [WN] markers; also strip plain [N] markers when web search was used
+    # (model may renumber web results as [1], [2] without page chunks to back them up)
+    has_web_refs = any(r.startswith("web:") for r in grounding_refs)
+    has_page_refs = any(r.startswith("material:") for r in grounding_refs)
+    if has_web_refs and not has_page_refs:
+        final_text = _re.sub(r'\s*\[\d+\]', '', final_text or "").strip()
+    final_text = _re.sub(r'\s*\[W\d+\]', '', final_text or "").strip()
+    tool_trace.append(
+        {"phase": "synthesis", "latency_ms": int((time.time() - started) * 1000)}
+    )
+
+    return (
+        final_text or "I could not find relevant content in the course materials.",
+        grounding_refs,
+        tool_trace,
+        {
+            "intent_type": "pageindex",
+            "verifier_passed": True,
+            "repair_invoked": repair_invoked,
+            "history_token_estimate": sum(_estimate_tokens(t["content"]) for t in _history_turns),
+            "history_turn_count": len(_history_turns),
+        },
+        assistant_reply_summary,
+        assistant_follow_ups or [],
+        assistant_clarifying_question,
+    )
 
 
 _TITLE_MODEL = "gpt-4o-mini"
@@ -1387,7 +2516,7 @@ def suggest_chat_title(
             },
             timeout=8,
         )
-        resp.raise_for_status()
+        _raise_for_status_verbose(resp)
         parsed = json.loads(resp.json()["choices"][0]["message"]["content"])
         title = str(parsed.get("title", "")).strip()
         if title:
@@ -1417,6 +2546,9 @@ def synthesize(
     on_event=None,
     force_context_only: bool = False,
     image_s3_keys: list | None = None,
+    web_search_enabled: bool = False,
+    history_before_index: int | None = None,
+    clarification_depth: int = 0,
 ) -> tuple:
     """
     Synthesize an LLM response using the user's chosen provider and model.
@@ -1432,159 +2564,57 @@ def synthesize(
     if ai_provider not in _PROVIDERS:
         raise ValueError(f"Unsupported provider: {ai_provider}")
 
-    selected_provider_api_key = _get_api_key(conn, user_id, ai_provider)
+    # PageIndex is the only retrieval path. `chunks` and `force_context_only`
+    # remain in the signature for caller compatibility but are no longer used.
     material_scope = context_material_ids if isinstance(context_material_ids, list) else []
-    use_agentic = _is_enabled("AGENTIC_LOOP_ENABLED", default=False)
-    if force_context_only:
-        use_agentic = False
-
-    if use_agentic:
-        context = _format_context(chunks)
-        fn = _PROVIDERS[ai_provider]
-        selected_model_draft = fn(context, user_message, ai_model, selected_provider_api_key)
-        draft_reply, _, _, _ = _parse_synthesis_json(selected_model_draft)
-        if draft_reply and str(draft_reply).strip():
-            selected_model_draft = draft_reply
-        web_handoff_enabled = _is_enabled("AGENTIC_WEB_HANDOFF_ENABLED", default=True)
-        selected_model_handoff = None
-        if web_handoff_enabled:
-            selected_model_handoff = _assess_web_search_handoff(
-                synthesis_fn=fn,
-                model=ai_model,
-                api_key=selected_provider_api_key,
-                user_message=user_message,
-                selected_model_draft=selected_model_draft,
-            )
-        agentic_api_key = _get_api_key(conn, user_id, DEFAULT_AGENTIC_PROVIDER)
-        text, grounding_refs, tool_trace, metadata, msg_summary, follow_ups, clarifying_question = run_agent_openai(
-            conn=conn,
-            user_message=user_message,
-            model=DEFAULT_AGENTIC_MODEL,
-            api_key=agentic_api_key,
-            chunks=chunks,
-            chat_id=chat_id,
-            context_material_ids=material_scope,
-            selected_model_draft=selected_model_draft,
-            model_web_handoff=selected_model_handoff,
-            on_event=on_event,
-            image_s3_keys=image_s3_keys,
+    agentic_api_key = _get_api_key(conn, user_id, ai_provider)
+    pageindex_course_id = None
+    if context_material_ids:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT course_id FROM materials WHERE id = %s",
+            (context_material_ids[0],),
         )
-        logger.info(
-            "agentic_loop_trace",
-            extra={
-                "chat_id": chat_id,
-                "provider": ai_provider,
-                "model": ai_model,
-                "agentic_provider": DEFAULT_AGENTIC_PROVIDER,
-                "agentic_model": DEFAULT_AGENTIC_MODEL,
-                "iterations": len([t for t in tool_trace if "tool_calls" in t]),
-                "tool_calls": len([t for t in tool_trace if t.get("tool")]),
-                "intent_type": metadata.get("intent_type"),
-                "resolver_confidence": metadata.get("resolver_confidence"),
-                "verifier_passed": metadata.get("verifier_passed"),
-                "repair_invoked": metadata.get("repair_invoked"),
-                "web_handoff_recommendation": (metadata.get("web_handoff") or {}).get("web_search_recommendation"),
-                "web_handoff_confidence": (metadata.get("web_handoff") or {}).get("confidence"),
-                "web_handoff_low_conf_override": metadata.get("web_handoff_low_conf_override"),
-                "web_search_allowed_by_handoff": metadata.get("web_search_allowed_by_handoff"),
-            },
-        )
-        return text, grounding_refs, metadata, tool_trace, msg_summary, follow_ups, clarifying_question
-
-    context = _format_context(chunks)
-    fn = _PROVIDERS[ai_provider]
-    raw = fn(context, user_message, ai_model, selected_provider_api_key, image_s3_keys=image_s3_keys)
-    reply, msg_summary, follow_ups, clarifying_question = _parse_synthesis_json(raw)
-    reply = _normalize_llm_markdown(reply)
-    chunk_ids = [
-        _json_safe_chunk_id(c.get("id"))
-        for c in chunks
-        if c.get("id") is not None
-    ]
-    return reply, chunk_ids, {
-        "intent_type": "fresh",
-        "resolver_confidence": 0.0,
-        "verifier_passed": True,
-        "repair_invoked": False,
-        "carryover_ref_count": 0,
-        "fresh_ref_count": len(chunk_ids),
-    }, [], msg_summary, follow_ups, clarifying_question
-
-
-# Depth-aware prompt pressure for clarification rounds.
-_CLARIFICATION_DEPTH_INSTRUCTION = {
-    0: (
-        "Only emit `clarifying_question` if you cannot provide a useful answer without knowing this "
-        "one specific thing. Most prompts should have `clarifying_question: null`."
-    ),
-    1: (
-        "You have already asked one clarifying question. Only ask another if the answer would be "
-        "fundamentally different across possible interpretations and you have no reasonable default. "
-        "Prefer `clarifying_question: null`."
-    ),
-}
-
-
-def synthesize_with_clarification(
-    conn,
-    user_id: int,
-    ai_provider: str | None,
-    ai_model: str | None,
-    original_prompt: str,
-    prior_reply: str,
-    clarifying_question: str,
-    user_clarification: str,
-    clarification_depth: int,
-    chunks: list,
-    chat_id: int | None = None,
-    context_material_ids: list | None = None,
-    on_event=None,
-    image_s3_keys: list | None = None,
-) -> tuple:
-    """
-    Synthesize a refined answer (R2+) using the full clarification context bundle.
-
-    Constructs a structured prompt: original question + prior answer + clarifying question
-    + user's clarification, then calls the normal synthesis path.
-
-    Returns the same 7-tuple as synthesize():
-        (text, chunk_ids_or_grounding_refs, metadata, tool_trace, summary, follow_ups, clarifying_question)
-
-    The returned clarifying_question is hard-capped to None when clarification_depth >= 2.
-    """
-    depth_note = _CLARIFICATION_DEPTH_INSTRUCTION.get(
-        clarification_depth,
-        _CLARIFICATION_DEPTH_INSTRUCTION[1],
-    )
-
-    structured_prompt = (
-        f"## Original Question\n{original_prompt}\n\n"
-        f"## Your Prior Answer\n{prior_reply}\n\n"
-        f"## Clarifying Question You Asked\n{clarifying_question}\n\n"
-        f"## User's Clarification\n{user_clarification}\n\n"
-        "---\n"
-        "Using the original question, your prior answer, and the user's clarification above, "
-        "write a complete, cohesive final answer. Incorporate the clarification fully — do not "
-        "just append to the prior answer. "
-        f"{depth_note}"
-    )
-
-    result = synthesize(
+        row = cursor.fetchone()
+        cursor.close()
+        if row:
+            pageindex_course_id = row["course_id"]
+    if pageindex_course_id is None and chat_id is not None:
+        cursor = conn.cursor()
+        cursor.execute("SELECT course_id FROM chats WHERE id = %s", (chat_id,))
+        row = cursor.fetchone()
+        cursor.close()
+        if row:
+            pageindex_course_id = row["course_id"]
+    (
+        text,
+        grounding_refs,
+        tool_trace,
+        metadata,
+        msg_summary,
+        follow_ups,
+        clarifying_question,
+    ) = run_agent_pageindex(
         conn=conn,
-        user_id=user_id,
-        ai_provider=ai_provider,
-        ai_model=ai_model,
-        user_message=structured_prompt,
-        chunks=chunks,
+        user_message=user_message,
+        model=ai_model,
+        api_key=agentic_api_key,
+        provider=ai_provider,
         chat_id=chat_id,
-        context_material_ids=context_material_ids,
+        course_id=pageindex_course_id,
+        context_material_ids=material_scope,
         on_event=on_event,
+        web_search_enabled=web_search_enabled,
         image_s3_keys=image_s3_keys,
+        history_before_index=history_before_index,
+        clarification_depth=clarification_depth,
     )
-
-    # Hard-cap: force clarifying_question to None once depth reaches 2.
-    text, chunk_ids, metadata, tool_trace, msg_summary, follow_ups, new_clarifying_question = result
-    if clarification_depth >= 2:
-        new_clarifying_question = None
-
-    return text, chunk_ids, metadata, tool_trace, msg_summary, follow_ups, new_clarifying_question
+    return (
+        text,
+        grounding_refs,
+        metadata,
+        tool_trace,
+        msg_summary,
+        follow_ups,
+        clarifying_question,
+    )

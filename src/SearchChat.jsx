@@ -23,12 +23,29 @@ function SectionLabel({ label }) {
   );
 }
 
-function ResultRow({ chat, onSelectChat, onClose }) {
+function Snippet({ text }) {
+  if (!text) return null;
+  const parts = text.split(/(<mark>|<\/mark>)/g);
+  let on = false;
+  return (
+    <span className="block text-[12px] text-gray-500 truncate mt-0.5">
+      {parts.map((p, i) => {
+        if (p === '<mark>') { on = true; return null; }
+        if (p === '</mark>') { on = false; return null; }
+        return on
+          ? <mark key={i} className="bg-yellow-100 text-gray-800 rounded px-0.5">{p}</mark>
+          : <span key={i}>{p}</span>;
+      })}
+    </span>
+  );
+}
+
+function ResultRow({ chat, snippet, target, onSelectChat, onClose }) {
   return (
     <button
       type="button"
       className="w-full px-4 py-2.5 flex items-center gap-3 hover:bg-indigo-50 cursor-pointer text-left"
-      onClick={() => { onSelectChat(chat.id); onClose(); }}
+      onClick={() => { onSelectChat(chat.id, target); onClose(); }}
     >
       <span className="text-gray-400 flex-shrink-0">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
@@ -36,7 +53,10 @@ function ResultRow({ chat, onSelectChat, onClose }) {
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
       </span>
-      <span className="text-sm text-gray-800 truncate flex-1">{chat.title || 'Untitled'}</span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm text-gray-800 truncate">{chat.title || 'Untitled'}</span>
+        {snippet && <Snippet text={snippet} />}
+      </span>
       <span className="text-[11px] text-gray-400 flex-shrink-0">
         {formatRelative(chat.last_message_at)}
       </span>
@@ -157,7 +177,14 @@ export default function SearchChat({ courseId, chats, onSelectChat, onClose }) {
                 <>
                   <SectionLabel label="In Conversation" />
                   {results.content_matches.map(chat => (
-                    <ResultRow key={chat.id} chat={chat} onSelectChat={onSelectChat} onClose={onClose} />
+                    <ResultRow
+                      key={chat.id}
+                      chat={chat}
+                      snippet={chat.snippet}
+                      target={{ messageId: chat.message_id, messageIndex: chat.message_index }}
+                      onSelectChat={onSelectChat}
+                      onClose={onClose}
+                    />
                   ))}
                 </>
               )}

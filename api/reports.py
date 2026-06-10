@@ -47,7 +47,7 @@ except ImportError:
 _REPORTS_QUEUE_URL = os.environ.get("REPORTS_GENERATION_QUEUE_URL")
 _AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 
-_MATERIAL_CHUNK_LIMIT = 300
+_MATERIAL_PAGE_LIMIT = 300
 _CONTEXT_CHAR_BUDGET = 80_000
 _MAX_REQUEST_BODY_BYTES = 1_000_000
 
@@ -78,80 +78,37 @@ def _fetch_material_context(conn, material_ids: list[int]) -> str:
 
     cursor = conn.cursor()
 
-    # Pass 1: documents.raw_content — clean pre-chunking text, no visual-chunk artifacts
+    # material_page_text holds the clean per-page text produced by the PageIndex
+    # indexer — the canonical material source now that the embedding/chunk pipeline
+    # is retired. Pages are concatenated in reading order up to the char budget.
     cursor.execute(
         """
-        SELECT d.raw_content, d.id
-        FROM documents d
-        WHERE d.material_id = ANY(%s::int[])
-          AND d.raw_content IS NOT NULL
-          AND d.raw_content != ''
-        ORDER BY d.material_id
+        SELECT text_content
+        FROM material_page_text
+        WHERE material_id = ANY(%s::int[])
+          AND text_content IS NOT NULL
+          AND text_content != ''
+        ORDER BY material_id, page_number
+        LIMIT %s
         """,
-        (material_ids,),
+        (material_ids, _MATERIAL_PAGE_LIMIT),
     )
-    doc_rows = cursor.fetchall()
+    page_rows = cursor.fetchall()
+    cursor.close()
 
     parts = []
     total = 0
-    covered_doc_ids = []
-
-    for row in doc_rows:
-        text = (row.get("raw_content") or "").strip()
+    for row in page_rows:
+        text = (row.get("text_content") or "").strip()
         if not text:
             continue
-        covered_doc_ids.append(str(row["id"]))
         if total + len(text) > _CONTEXT_CHAR_BUDGET:
             remaining = _CONTEXT_CHAR_BUDGET - total
             if remaining > 500:
                 parts.append(text[:remaining])
-            total = _CONTEXT_CHAR_BUDGET
             break
         parts.append(text)
         total += len(text)
-
-    # Pass 2: text chunks for documents without raw_content
-    if total < _CONTEXT_CHAR_BUDGET:
-        if covered_doc_ids:
-            cursor.execute(
-                """
-                SELECT c.content
-                FROM chunks c
-                JOIN documents d ON c.document_id = d.id
-                WHERE d.material_id = ANY(%s::int[])
-                  AND c.retrieval_type != 'visual'
-                  AND c.document_id != ALL(%s::uuid[])
-                ORDER BY d.material_id, c.chunk_index
-                LIMIT %s
-                """,
-                (material_ids, covered_doc_ids, _MATERIAL_CHUNK_LIMIT),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT c.content
-                FROM chunks c
-                JOIN documents d ON c.document_id = d.id
-                WHERE d.material_id = ANY(%s::int[])
-                  AND c.retrieval_type != 'visual'
-                ORDER BY d.material_id, c.chunk_index
-                LIMIT %s
-                """,
-                (material_ids, _MATERIAL_CHUNK_LIMIT),
-            )
-        for row in cursor.fetchall():
-            content = (row.get("content") or "").strip()
-            if not content:
-                continue
-            if total + len(content) > _CONTEXT_CHAR_BUDGET:
-                remaining = _CONTEXT_CHAR_BUDGET - total
-                if remaining > 200:
-                    parts.append(content[:remaining])
-                break
-            parts.append(content)
-            total += len(content)
-
-    cursor.close()
 
     if not parts:
         return "No indexed content found for the selected materials."
@@ -235,6 +192,12 @@ def _run_generation_locally(generation_id: int) -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _extract_conversation_context(body: dict):
+    """Optional conversation summary that grounds a chat-originated generation."""
+    val = (body.get("conversation_context") or "").strip()
+    return val or None
+
+
 def _enqueue_reports_generation_job(generation_id: int, user_id: int):
     if not _REPORTS_QUEUE_URL:
         _run_generation_locally(generation_id)
@@ -269,6 +232,7 @@ def _persist_draft(
     est_tl: int,
     est_th: int,
     parent_generation_id=None,
+    conversation_context=None,
 ) -> int:
     cursor = conn.cursor()
     cursor.execute(
@@ -278,9 +242,9 @@ def _persist_draft(
              provider, model_id, status, parent_generation_id,
              selected_material_ids, prompt_text, generation_settings,
              estimated_prompt_tokens_low, estimated_prompt_tokens_high,
-             estimated_total_tokens_low, estimated_total_tokens_high)
+             estimated_total_tokens_low, estimated_total_tokens_high, conversation_context)
         VALUES
-            (%s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s)
+            (%s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -298,6 +262,7 @@ def _persist_draft(
             est_ph,
             est_tl,
             est_th,
+            conversation_context,
         ),
     )
     generation_id = cursor.fetchone()["id"]
@@ -715,6 +680,7 @@ class handler(BaseHTTPRequestHandler):
         model_id = str(body.get("model_id") or "gpt-4o-mini").strip() or "gpt-4o-mini"
         material_ids = _as_int_list(body.get("material_ids") or [])
         parent_generation_id = _as_int(body.get("parent_generation_id"))
+        conversation_context = _extract_conversation_context(body)
 
         if not Course.verify_access(course_id, user["id"]):
             send_json(self, 403, {"error": "Access denied to this course"})
@@ -754,6 +720,7 @@ class handler(BaseHTTPRequestHandler):
                 est_tl=estimate["estimated_total_tokens_low"],
                 est_th=estimate["estimated_total_tokens_high"],
                 parent_generation_id=parent_generation_id,
+                conversation_context=conversation_context,
             )
 
         send_json(
@@ -776,6 +743,7 @@ class handler(BaseHTTPRequestHandler):
 
         provider_override = body.get("provider")
         model_id_override = body.get("model_id")
+        conversation_context = _extract_conversation_context(body)
 
         should_enqueue = False
         status_response = None
@@ -818,6 +786,8 @@ class handler(BaseHTTPRequestHandler):
             if model_id_override:
                 update_fields.append("model_id=%s")
                 update_values.append(model_id_override)
+            update_fields.append("conversation_context=COALESCE(%s, conversation_context)")
+            update_values.append(conversation_context)
             update_values.extend([gen_id, user["id"]])
 
             cursor.execute(
