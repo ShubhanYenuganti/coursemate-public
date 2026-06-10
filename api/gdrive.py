@@ -39,6 +39,7 @@ try:
         handle_options,
         send_json,
     )
+    from .courses import Course
     from .models import User
     from .services.providers.gdrive import (
         flashcard_to_doc_requests,
@@ -55,6 +56,7 @@ except ImportError:
         handle_options,
         send_json,
     )
+    from courses import Course
     from models import User
     from services.providers.gdrive import (
         flashcard_to_doc_requests,
@@ -985,6 +987,9 @@ def _handle_add_source_point(handler_self, user_id: int, body: dict):
         return
     if not external_id:
         send_json(handler_self, 400, {"error": "external_id must be a valid Drive folder ID or URL"})
+        return
+    if not Course.verify_access(int(course_id), user_id):
+        send_json(handler_self, 403, {"error": "Access denied to this course"})
         return
 
     # Validate folder is accessible

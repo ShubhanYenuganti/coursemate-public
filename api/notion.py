@@ -37,6 +37,7 @@ try:
         handle_options,
         send_json,
     )
+    from .courses import Course
     from .models import User
     from .services.export_blocks import (
         flashcard_to_notion_toggle_block,
@@ -53,6 +54,7 @@ except ImportError:
         handle_options,
         send_json,
     )
+    from courses import Course
     from models import User
     from services.export_blocks import (
         flashcard_to_notion_toggle_block,
@@ -1221,6 +1223,9 @@ def _handle_add_source_point(handler_self, user_id: int, body: dict):
 
     if not course_id or not external_id:
         send_json(handler_self, 400, {"error": "course_id and external_id required"})
+        return
+    if not Course.verify_access(int(course_id), user_id):
+        send_json(handler_self, 403, {"error": "Access denied to this course"})
         return
 
     resolved_id = _resolve_notion_data_source_id(external_id, token)
