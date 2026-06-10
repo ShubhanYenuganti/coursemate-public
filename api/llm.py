@@ -597,15 +597,61 @@ def _retrieval_budget_for(model: str, expanded: bool = False) -> dict:
     }
 
 
-def _history_budget(window: int, system_text: str, current_user_text: str) -> int:
+_RETRIEVAL_SCOPE_PROMPT = (
+    "Classify the user's course-material retrieval need as exactly one word: broad or specific.\n"
+    "Use broad for questions that likely need coverage across many sections, comparisons, surveys, "
+    "overviews, or cross-material synthesis.\n"
+    "Use specific for narrow lookups, single definitions, page-specific questions, or questions likely "
+    "answerable from a small number of pages.\n"
+    'Return JSON only: {"scope":"broad"} or {"scope":"specific"}.'
+)
+
+
+def _parse_retrieval_scope(text: str) -> str:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return "specific"
+    parsed = _extract_json_object(normalized)
+    if isinstance(parsed, dict):
+        normalized = str(parsed.get("scope") or "").strip().lower()
+    if "broad" in normalized:
+        return "broad"
+    return "specific"
+
+
+def _retrieval_budget_for_scope(model: str, scope: str) -> dict:
+    return _retrieval_budget_for(model, expanded=_parse_retrieval_scope(scope) == "broad")
+
+
+def _classify_retrieval_scope(provider: str, model: str, api_key: str, user_message: str) -> str:
+    prompt = f"{_RETRIEVAL_SCOPE_PROMPT}\n\nUser message:\n{user_message}"
+    try:
+        if provider == "claude":
+            raw = _synthesize_claude("", prompt, model, api_key)
+        elif provider == "gemini":
+            raw = _synthesize_gemini("", prompt, model, api_key)
+        else:
+            raw = _synthesize_openai("", prompt, model, api_key)
+    except Exception:
+        return "specific"
+    return _parse_retrieval_scope(raw)
+
+
+def _history_budget(
+    window: int,
+    system_text: str,
+    current_user_text: str,
+    reserved_retrieval_tokens: int = 0,
+) -> int:
     """Tokens left for replayed history after system prompt, response reserve,
-    current user message, and a safety margin, capped to a fixed share of the
-    model context window. Never negative."""
+    current user message, retrieval reserve, and a safety margin, capped to a fixed
+    share of the model context window. Never negative."""
     used = (
         _estimate_tokens(system_text)
         + RESPONSE_RESERVE_TOKENS
         + _estimate_tokens(current_user_text)
         + int(window * SAFETY_MARGIN_RATIO)
+        + max(0, int(reserved_retrieval_tokens or 0))
     )
     available = max(0, window - used)
     history_cap = max(0, int(window * HISTORY_CONTEXT_RATIO))
@@ -655,14 +701,27 @@ def _load_chat_history(conn, chat_id, before_index) -> list:
     return [{"role": r["role"], "content": r["content"]} for r in rows]
 
 
-def _build_history_turns(conn, chat_id, before_index, model, system_text, current_user_text) -> list:
+def _build_history_turns(
+    conn,
+    chat_id,
+    before_index,
+    model,
+    system_text,
+    current_user_text,
+    reserved_retrieval_tokens: int = 0,
+) -> list:
     """Load active-branch history and trim it to the model's budget.
     Returns kept turns as [{"role", "content"}] in chronological order."""
     prior = _load_chat_history(conn, chat_id, before_index)
     if not prior:
         return []
     window = _context_window_for(model)
-    budget = _history_budget(window, system_text, current_user_text)
+    budget = _history_budget(
+        window,
+        system_text,
+        current_user_text,
+        reserved_retrieval_tokens=reserved_retrieval_tokens,
+    )
     return _compose_history(prior, budget)
 
 
@@ -1976,6 +2035,9 @@ def run_agent_pageindex(
 
     history_system_content = system_content + _CONVERSATION_HISTORY_NOTICE
 
+    retrieval_scope = _classify_retrieval_scope(provider, model, api_key, user_message)
+    retrieval_budget = _retrieval_budget_for_scope(model, retrieval_scope)
+
     _history_turns = _build_history_turns(
         conn=conn,
         chat_id=chat_id,
@@ -1983,6 +2045,7 @@ def run_agent_pageindex(
         model=model,
         system_text=history_system_content,
         current_user_text=user_message,
+        reserved_retrieval_tokens=retrieval_budget["active_tokens"],
     )
 
     system_content = history_system_content

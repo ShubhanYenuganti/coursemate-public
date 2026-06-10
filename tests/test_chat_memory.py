@@ -771,3 +771,36 @@ def test_retrieval_budget_can_expand_for_broad_questions():
 
     assert budget["base_tokens"] == 15360
     assert budget["active_tokens"] == 32000
+
+
+def test_parse_retrieval_scope_accepts_agent_outputs():
+    assert llm._parse_retrieval_scope("broad") == "broad"
+    assert llm._parse_retrieval_scope('{"scope":"broad"}') == "broad"
+    assert llm._parse_retrieval_scope("This is specific.") == "specific"
+
+
+def test_retrieval_budget_uses_scope_to_choose_base_or_max_slice():
+    specific = llm._retrieval_budget_for_scope("gpt-4o-mini", "specific")
+    broad = llm._retrieval_budget_for_scope("gpt-4o-mini", "broad")
+
+    assert specific["active_tokens"] == specific["base_tokens"]
+    assert broad["active_tokens"] == broad["max_tokens"]
+
+
+def test_history_budget_subtracts_reserved_retrieval_tokens():
+    budget = llm._history_budget(
+        window=10000,
+        system_text="s" * 400,
+        current_user_text="u" * 400,
+        reserved_retrieval_tokens=1000,
+    )
+
+    expected_without_history_cap = (
+        10000
+        - 100
+        - llm.RESPONSE_RESERVE_TOKENS
+        - 100
+        - int(10000 * llm.SAFETY_MARGIN_RATIO)
+        - 1000
+    )
+    assert budget == min(int(10000 * llm.HISTORY_CONTEXT_RATIO), expected_without_history_cap)
