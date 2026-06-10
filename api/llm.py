@@ -1985,6 +1985,10 @@ def run_agent_pageindex(
         filt.flush()
         return result
 
+    def _non_text_event(evt):
+        if on_event and evt.get("type") != "text":
+            on_event(evt)
+
     if provider == "claude":
         if request_images:
             claude_user_content = [
@@ -1997,11 +2001,9 @@ def run_agent_pageindex(
             {"role": "user", "content": claude_user_content}
         ]
         for iteration in range(MAX_TOOL_ITERATIONS):
-            evt_cb, flush = _filtered_on_event(on_event)
             blocks, stop_reason = _pageindex_stream_call_claude(
-                api_key, model, system_content, claude_messages, tools, evt_cb
+                api_key, model, system_content, claude_messages, tools, _non_text_event if on_event else None
             )
-            flush()
             tool_use_blocks = [b for b in blocks if b["type"] == "tool_use"]
             if not tool_use_blocks or stop_reason != "tool_use":
                 break
@@ -2113,11 +2115,9 @@ def run_agent_pageindex(
             gemini_user_parts = [{"text": user_message}]
         contents = _shape_history_gemini(_history_turns) + [{"role": "user", "parts": gemini_user_parts}]
         for iteration in range(MAX_TOOL_ITERATIONS):
-            evt_cb, flush = _filtered_on_event(on_event)
             parts, has_fc = _pageindex_stream_call_gemini(
-                api_key, model, system_content, contents, tools, evt_cb
+                api_key, model, system_content, contents, tools, _non_text_event if on_event else None
             )
-            flush()
             if not has_fc:
                 break
             # Append model turn

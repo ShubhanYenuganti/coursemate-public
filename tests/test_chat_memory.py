@@ -524,3 +524,81 @@ def test_run_agent_gemini_synthesis_uses_clean_prompt(monkeypatch):
         for item in final_call["contents"]
         if item["role"] in ("user", "model")
     ] == ["earlier question", "earlier answer", "current follow-up"]
+
+
+def test_claude_retrieval_text_is_not_streamed(monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.setattr(llm, "_fetch_images_as_base64", lambda keys: [])
+    monkeypatch.setattr(llm, "_recall_prior_chat_images", lambda *a, **k: [])
+    monkeypatch.setattr(llm, "_load_chat_history", lambda c, cid, bi: [])
+    monkeypatch.setattr(llm, "_dispatch_pageindex_tool", lambda **kwargs: ("retrieved page content", {}))
+    events = []
+
+    def fake_claude(api_key, model, system, messages, tools, on_event):
+        if tools:
+            if on_event:
+                on_event({"type": "text", "chunk": "retrieval preamble"})
+            return ([{"type": "tool_use", "id": "tool_1", "name": "get_page_content", "input_json": '{"material_id": 10, "pages": "1"}', "text": ""}], "tool_use")
+        if on_event:
+            on_event({"type": "text", "chunk": "final answer"})
+        return ([{"type": "text", "text": "final answer"}], "end_turn")
+
+    monkeypatch.setattr(llm, "_pageindex_stream_call_claude", fake_claude)
+    pageindex_mock = MagicMock()
+    pageindex_mock.get_course_routing_index.return_value = []
+    with patch.dict(sys.modules, {"pageindex_retrieval": pageindex_mock}):
+        llm.run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="question",
+            model="claude-sonnet-4-6",
+            api_key="sk-test",
+            chat_id=1,
+            course_id=2,
+            context_material_ids=[],
+            provider="claude",
+            on_event=events.append,
+        )
+
+    streamed_text = "".join(e["chunk"] for e in events if e.get("type") == "text")
+    assert "retrieval preamble" not in streamed_text
+    assert "final answer" in streamed_text
+
+
+def test_gemini_retrieval_text_is_not_streamed(monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.setattr(llm, "_fetch_images_as_base64", lambda keys: [])
+    monkeypatch.setattr(llm, "_recall_prior_chat_images", lambda *a, **k: [])
+    monkeypatch.setattr(llm, "_load_chat_history", lambda c, cid, bi: [])
+    monkeypatch.setattr(llm, "_dispatch_pageindex_tool", lambda **kwargs: ("retrieved page content", {}))
+    events = []
+
+    def fake_gemini(api_key, model, system, contents, tools, on_event):
+        if tools:
+            if on_event:
+                on_event({"type": "text", "chunk": "retrieval preamble"})
+            return ([{"functionCall": {"name": "get_page_content", "args": {"material_id": 10, "pages": "1"}, "id": "fc1"}}], True)
+        if on_event:
+            on_event({"type": "text", "chunk": "final answer"})
+        return ([{"text": "final answer"}], False)
+
+    monkeypatch.setattr(llm, "_pageindex_stream_call_gemini", fake_gemini)
+    pageindex_mock = MagicMock()
+    pageindex_mock.get_course_routing_index.return_value = []
+    with patch.dict(sys.modules, {"pageindex_retrieval": pageindex_mock}):
+        llm.run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="question",
+            model="gemini-2.5-flash",
+            api_key="gm-test",
+            chat_id=1,
+            course_id=2,
+            context_material_ids=[],
+            provider="gemini",
+            on_event=events.append,
+        )
+
+    streamed_text = "".join(e["chunk"] for e in events if e.get("type") == "text")
+    assert "retrieval preamble" not in streamed_text
+    assert "final answer" in streamed_text
