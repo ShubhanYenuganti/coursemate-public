@@ -1031,3 +1031,27 @@ def test_synthesis_prompt_distinguishes_raw_and_summary_evidence():
 
     assert "Raw material is direct evidence" in prompt
     assert "Candidate coverage summaries" in prompt
+
+
+def test_retrieval_budget_trace_contains_candidate_counts():
+    trace = llm._candidate_frontier_trace(
+        iteration=2,
+        args={"candidates": [{"material_id": 742, "pages": "1-3"}]},
+        meta={
+            "candidate_count": 3,
+            "dropped_candidates": 0,
+            "raw_pages": 2,
+            "raw_tokens": 1500,
+            "summary_pages": 1,
+            "summary_tokens": 200,
+            "omitted_summary_pages": 0,
+        },
+        budget={"active_tokens": 15360, "raw_tokens": 9984, "summary_tokens": 5376},
+    )
+
+    assert trace["tool"] == "select_page_candidates"
+    assert trace["candidate_count"] == 3
+    assert trace["raw_pages"] == 2
+    assert trace["raw_tokens"] == 1500
+    assert trace["summary_pages"] == 1
+    assert trace["retrieval_budget_tokens"] == 15360

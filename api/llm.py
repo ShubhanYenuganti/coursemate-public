@@ -2102,6 +2102,24 @@ def _pageindex_tool_list(web_search_enabled: bool = False) -> list:
     return tools
 
 
+def _candidate_frontier_trace(iteration: int, args: dict, meta: dict, budget: dict) -> dict:
+    return {
+        "tool": "select_page_candidates",
+        "args": args,
+        "iteration": iteration,
+        "candidate_count": meta.get("candidate_count", 0),
+        "dropped_candidates": meta.get("dropped_candidates", 0),
+        "raw_pages": meta.get("raw_pages", 0),
+        "raw_tokens": meta.get("raw_tokens", 0),
+        "summary_pages": meta.get("summary_pages", 0),
+        "summary_tokens": meta.get("summary_tokens", 0),
+        "omitted_summary_pages": meta.get("omitted_summary_pages", 0),
+        "retrieval_budget_tokens": budget.get("active_tokens", 0),
+        "raw_budget_tokens": budget.get("raw_tokens", 0),
+        "summary_budget_tokens": budget.get("summary_tokens", 0),
+    }
+
+
 def _dispatch_candidate_frontier(
     conn, args: dict, budget: dict, grounding_refs: list
 ) -> tuple[str, dict]:
@@ -2559,9 +2577,12 @@ def run_agent_pageindex(
                         on_event=on_event,
                     )
                     _record_evidence(b["name"], result_text)
-                _te = {"tool": b["name"], "args": args, "iteration": iteration}
-                if _tmeta.get("urls"):
-                    _te["urls"] = _tmeta["urls"]
+                if b["name"] == "select_page_candidates":
+                    _te = _candidate_frontier_trace(iteration, args, _tmeta, retrieval_budget)
+                else:
+                    _te = {"tool": b["name"], "args": args, "iteration": iteration}
+                    if _tmeta.get("urls"):
+                        _te["urls"] = _tmeta["urls"]
                 tool_trace.append(_te)
                 tool_results.append(
                     {
@@ -2715,9 +2736,12 @@ def run_agent_pageindex(
                             on_event=on_event,
                         )
                         _record_evidence(fc["name"], result_text)
-                    _te = {"tool": fc["name"], "args": args, "iteration": iteration}
-                    if _tmeta.get("urls"):
-                        _te["urls"] = _tmeta["urls"]
+                    if fc["name"] == "select_page_candidates":
+                        _te = _candidate_frontier_trace(iteration, args, _tmeta, retrieval_budget)
+                    else:
+                        _te = {"tool": fc["name"], "args": args, "iteration": iteration}
+                        if _tmeta.get("urls"):
+                            _te["urls"] = _tmeta["urls"]
                     tool_trace.append(_te)
                     function_response = {
                         "name": fc["name"],
@@ -2874,9 +2898,12 @@ def run_agent_pageindex(
                 )
                 _record_evidence(name, tool_result)
 
-            _te = {"tool": name, "args": args, "iteration": iteration}
-            if _tmeta.get("urls"):
-                _te["urls"] = _tmeta["urls"]
+            if name == "select_page_candidates":
+                _te = _candidate_frontier_trace(iteration, args, _tmeta, retrieval_budget)
+            else:
+                _te = {"tool": name, "args": args, "iteration": iteration}
+                if _tmeta.get("urls"):
+                    _te["urls"] = _tmeta["urls"]
             tool_trace.append(_te)
             messages.append(
                 {
