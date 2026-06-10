@@ -602,3 +602,104 @@ def test_gemini_retrieval_text_is_not_streamed(monkeypatch):
     streamed_text = "".join(e["chunk"] for e in events if e.get("type") == "text")
     assert "retrieval preamble" not in streamed_text
     assert "final answer" in streamed_text
+
+
+def test_openai_propose_generation_returns_non_empty_message(monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.setattr(llm, "_fetch_images_as_base64", lambda keys: [])
+    monkeypatch.setattr(llm, "_recall_prior_chat_images", lambda *a, **k: [])
+
+    def fake_stream(api_key, model, msgs, tools, on_event):
+        return ({
+            "content": "",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "propose_generation",
+                    "arguments": '{"generation_type": "quiz", "title": "Quiz", "discussion_summary": "Summary"}',
+                },
+            }],
+        }, "tool_calls")
+
+    monkeypatch.setattr(llm, "_pageindex_stream_call", fake_stream)
+    pageindex_mock = MagicMock()
+    pageindex_mock.get_course_routing_index.return_value = []
+    with patch.dict(sys.modules, {"pageindex_retrieval": pageindex_mock}):
+        result = llm.run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="make a quiz",
+            model="gpt-4o-mini",
+            api_key="sk-test",
+            chat_id=1,
+            course_id=2,
+            context_material_ids=[],
+            provider="openai",
+        )
+
+    assert result[0] == llm.GENERATION_PROPOSAL_READY_MESSAGE
+
+
+def test_claude_propose_generation_returns_non_empty_message(monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.setattr(llm, "_fetch_images_as_base64", lambda keys: [])
+    monkeypatch.setattr(llm, "_recall_prior_chat_images", lambda *a, **k: [])
+
+    def fake_claude(api_key, model, system, messages, tools, on_event):
+        return ([{
+            "type": "tool_use",
+            "id": "tool_1",
+            "name": "propose_generation",
+            "input_json": '{"generation_type": "quiz", "title": "Quiz", "discussion_summary": "Summary"}',
+            "text": "",
+        }], "tool_use")
+
+    monkeypatch.setattr(llm, "_pageindex_stream_call_claude", fake_claude)
+    pageindex_mock = MagicMock()
+    pageindex_mock.get_course_routing_index.return_value = []
+    with patch.dict(sys.modules, {"pageindex_retrieval": pageindex_mock}):
+        result = llm.run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="make a quiz",
+            model="claude-sonnet-4-6",
+            api_key="sk-test",
+            chat_id=1,
+            course_id=2,
+            context_material_ids=[],
+            provider="claude",
+        )
+
+    assert result[0] == llm.GENERATION_PROPOSAL_READY_MESSAGE
+
+
+def test_gemini_propose_generation_returns_non_empty_message(monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.setattr(llm, "_fetch_images_as_base64", lambda keys: [])
+    monkeypatch.setattr(llm, "_recall_prior_chat_images", lambda *a, **k: [])
+
+    def fake_gemini(api_key, model, system, contents, tools, on_event):
+        return ([{"functionCall": {
+            "name": "propose_generation",
+            "args": {"generation_type": "quiz", "title": "Quiz", "discussion_summary": "Summary"},
+            "id": "fc1",
+        }}], True)
+
+    monkeypatch.setattr(llm, "_pageindex_stream_call_gemini", fake_gemini)
+    pageindex_mock = MagicMock()
+    pageindex_mock.get_course_routing_index.return_value = []
+    with patch.dict(sys.modules, {"pageindex_retrieval": pageindex_mock}):
+        result = llm.run_agent_pageindex(
+            conn=MagicMock(),
+            user_message="make a quiz",
+            model="gemini-2.5-flash",
+            api_key="gm-test",
+            chat_id=1,
+            course_id=2,
+            context_material_ids=[],
+            provider="gemini",
+        )
+
+    assert result[0] == llm.GENERATION_PROPOSAL_READY_MESSAGE

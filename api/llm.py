@@ -257,6 +257,9 @@ DEFAULT_AGENTIC_PROVIDER = "openai"
 DEFAULT_AGENTIC_MODEL = "gpt-4o-mini"
 MAX_TOOL_ITERATIONS = 4
 NON_VISION_MODEL_IDS = {"gpt-oss-120b"}
+GENERATION_PROPOSAL_READY_MESSAGE = (
+    "I prepared a proposal for that. Review it and confirm when you're ready to generate it."
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2058,7 +2061,7 @@ def run_agent_pageindex(
                     "content": result_text,
                 })
             if proposal_emitted:
-                final_text = ""
+                final_text = GENERATION_PROPOSAL_READY_MESSAGE
                 break
             claude_messages.append({"role": "user", "content": tool_results})
 
@@ -2164,7 +2167,7 @@ def run_agent_pageindex(
                         function_response["id"] = fc["id"]
                     fn_responses.append({"functionResponse": function_response})
             if proposal_emitted:
-                final_text = ""
+                final_text = GENERATION_PROPOSAL_READY_MESSAGE
                 break
             contents.append({"role": "user", "parts": fn_responses})
 
@@ -2287,7 +2290,7 @@ def run_agent_pageindex(
     # Synthesis: always the user-selected model, always a separate call from retrieval.
     if proposal_emitted:
         return (
-            "",
+            GENERATION_PROPOSAL_READY_MESSAGE,
             grounding_refs,
             tool_trace,
             {
