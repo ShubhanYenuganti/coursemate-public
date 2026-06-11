@@ -301,6 +301,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
   // Shuffle questions once per quiz load, preserving originalIndex for backend submission.
   const questions = useMemo(() => {
     const raw = quiz?.questions || (Array.isArray(quiz) ? quiz : []);
+    // eslint-disable-next-line react-hooks/purity -- existing behavior intentionally shuffles once per quiz load.
     return [...raw].map((q, i) => ({ ...q, originalIndex: i })).sort(() => Math.random() - 0.5);
   }, [quiz?.generation_id]); // eslint-disable-line react-hooks/exhaustive-deps
   const total = questions.length;
@@ -405,7 +406,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
       const allRevealed = {};
       questions.forEach((_, i) => { allRevealed[i] = true; });
       setRevealed(allRevealed);
-    } catch (e) {
+    } catch {
       setAttemptResult(null);
       setAttemptStatus('error');
     }
@@ -431,7 +432,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
       a.remove();
       URL.revokeObjectURL(url);
       setExportStatus('idle');
-    } catch (e) {
+    } catch {
       setExportStatus('error');
     }
   }
