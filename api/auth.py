@@ -11,10 +11,10 @@ from google.auth.transport import requests
 from datetime import datetime, timedelta
 
 try:
-    from .models import User, Session
+    from .models import User, Session, PendingInvite
     from .middleware import send_json, handle_options, check_rate_limit, authenticate_request, generate_csrf_token, set_session_cookie
 except ImportError:
-    from models import User, Session
+    from models import User, Session, PendingInvite
     from middleware import send_json, handle_options, check_rate_limit, authenticate_request, generate_csrf_token, set_session_cookie
 
 
@@ -33,6 +33,13 @@ def _build_user_response(user):
         "created_at": user.get("created_at").isoformat() if user.get("created_at") else None,
         "updated_at": user.get("updated_at").isoformat() if user.get("updated_at") else None,
     }
+
+
+def claim_pending_invites(user: dict) -> None:
+    try:
+        PendingInvite.claim_for(user)
+    except Exception:
+        pass
 
 
 class handler(BaseHTTPRequestHandler):
@@ -138,6 +145,7 @@ class handler(BaseHTTPRequestHandler):
                     google_id_token=token,
                     token_expires_at=token_expires_at,
                 )
+                claim_pending_invites(user)
 
                 session    = Session.create(google_id=google_id)
                 csrf_token = generate_csrf_token(session['session_token'])
