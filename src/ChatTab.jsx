@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { formatDateTime, parseUTC } from './utils/dateUtils';
 import { getMaterialUrl } from './utils/materialUtils';
+import { composerGateState } from './utils/composerGate';
 import { PROVIDER_MODELS, NON_VISION_MODEL_IDS } from './modelCatalog.js';
 import SearchChat from './SearchChat';
 import GenerationProposalCard from './components/GenerationProposalCard';
@@ -1375,6 +1377,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   }
   const [selectedModel, setSelectedModel] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
+  const gate = composerGateState(availableModels);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState(null);
   const [modelListDropdownOpen, setModelListDropdownOpen] = useState(false);
@@ -3241,6 +3244,14 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                 }}
                 onClose={() => setPromptLibOpen(false)}
               />
+            )}
+            {gate.bannerText && (
+              <div className="mx-3 mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {gate.bannerText}{' '}
+                <Link to="/profile" className="font-medium text-amber-900 underline hover:text-amber-950">
+                  Open Profile
+                </Link>
+              </div>
             )}
             <textarea
               ref={textareaRef}
