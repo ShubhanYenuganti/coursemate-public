@@ -232,7 +232,7 @@ export default function SharingAccessModal({ courseId, csrfToken, isOwner }) {
         )}
       </div>
 
-      {pending.length > 0 && (
+      {isOwner && pending.length > 0 && (
         <div>
           <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Pending</h4>
           {pending.map((p) => (
