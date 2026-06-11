@@ -1872,7 +1872,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   }
 
   function handleKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && gate.canSend) {
       e.preventDefault();
       handleSend();
     }
@@ -2184,6 +2184,8 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   }
 
   async function handleSend() {
+    if (!gate.canSend) return;
+
     const text = input.trim();
     const hasImages = images.length > 0;
     if ((!text && !hasImages) || sending || !selectedModel) return;
@@ -3370,7 +3372,8 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                 <button
                   type="button"
                   onClick={handleSend}
-                  disabled={(!input.trim() && images.length === 0) || sending || !selectedModel}
+                  disabled={!gate.canSend || (!input.trim() && images.length === 0) || sending || !selectedModel}
+                  title={gate.disabledReason || undefined}
                   className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
                 >
                   <SendIcon />
