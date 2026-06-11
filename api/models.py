@@ -5,6 +5,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from .db import get_db
+from .courses import Course
 
 
 class User:
@@ -154,6 +155,83 @@ class User:
             result = cursor.fetchone()
             cursor.close()
             return result is not None
+
+
+class PendingInvite:
+    """Pending course invite for an email address without a user account yet."""
+
+    @staticmethod
+    def create(course_id: int, email: str, invited_by_id: int) -> bool:
+        email = (email or "").lower().strip()
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO pending_invites (course_id, email, invited_by_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (course_id, email) DO NOTHING
+                RETURNING id
+                """,
+                (course_id, email, invited_by_id),
+            )
+            cursor.close()
+        return True
+
+    @staticmethod
+    def list_for_course(course_id: int) -> list:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT email, invited_by_id, created_at
+                FROM pending_invites
+                WHERE course_id = %s
+                ORDER BY created_at ASC
+                """,
+                (course_id,),
+            )
+            rows = cursor.fetchall()
+            cursor.close()
+            return [dict(row) for row in rows]
+
+    @staticmethod
+    def claim_for(user: dict) -> int:
+        email = (user.get("email") or "").lower().strip()
+        if not email:
+            return 0
+
+        claimed = 0
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT course_id, invited_by_id FROM pending_invites WHERE email = %s",
+                (email,),
+            )
+            rows = cursor.fetchall()
+            cursor.close()
+
+            for row in rows:
+                if Course.add_member(row["course_id"], user["id"], row["invited_by_id"]):
+                    claimed += 1
+                delete_cursor = conn.cursor()
+                delete_cursor.execute(
+                    "DELETE FROM pending_invites WHERE course_id = %s AND email = %s",
+                    (row["course_id"], email),
+                )
+                delete_cursor.close()
+        return claimed
+
+    @staticmethod
+    def revoke(course_id: int, email: str) -> bool:
+        email = (email or "").lower().strip()
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM pending_invites WHERE course_id = %s AND email = %s",
+                (course_id, email),
+            )
+            cursor.close()
+        return True
 
 
 class Material:
