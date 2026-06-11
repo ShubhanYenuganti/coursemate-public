@@ -10,11 +10,11 @@ from urllib.parse import urlparse, parse_qs
 try:
     from .middleware import send_json, handle_options, authenticate_request, sanitize_string
     from .courses import Course
-    from .models import User
+    from .models import User, PendingInvite
 except ImportError:
     from middleware import send_json, handle_options, authenticate_request, sanitize_string
     from courses import Course
-    from models import User
+    from models import User, PendingInvite
 
 
 def _serialize_member(m: dict) -> dict:
@@ -26,6 +26,41 @@ def _serialize_member(m: dict) -> dict:
         "role": m["role"],
         "joined_at": m["joined_at"].isoformat() if m.get("joined_at") else None,
         "invited_by_name": m.get("invited_by_name"),
+    }
+
+
+def invite_member(google_id: str, course_id: int, email: str):
+    email = (email or "").lower().strip()
+    inviter = User.get_by_google_id(google_id)
+    if not inviter:
+        return 404, {"error": "User not found"}
+
+    course = Course.get_by_id(course_id)
+    if not course:
+        return 404, {"error": "Course not found"}
+
+    if course["primary_creator"] != inviter["id"]:
+        return 403, {"error": "Only the course owner can invite collaborators"}
+
+    invitee = User.get_by_email(email)
+    if invitee is None:
+        PendingInvite.create(course_id, email, inviter["id"])
+        return 200, {
+            "members": [_serialize_member(m) for m in Course.get_members(course_id)],
+            "pending": PendingInvite.list_for_course(course_id),
+            "status": "pending",
+        }
+
+    if invitee["id"] == inviter["id"]:
+        return 400, {"error": "You cannot invite yourself"}
+
+    if not Course.add_member(course_id, invitee["id"], inviter["id"]):
+        return 409, {"error": "User is already a collaborator on this course"}
+
+    return 200, {
+        "members": [_serialize_member(m) for m in Course.get_members(course_id)],
+        "pending": PendingInvite.list_for_course(course_id),
+        "status": "added",
     }
 
 
@@ -57,7 +92,10 @@ class handler(BaseHTTPRequestHandler):
             return
 
         members = Course.get_members(course_id)
-        send_json(self, 200, {"members": [_serialize_member(m) for m in members]})
+        send_json(self, 200, {
+            "members": [_serialize_member(m) for m in members],
+            "pending": PendingInvite.list_for_course(course_id),
+        })
 
     # ----------------------------------------------------------------- POST --
     def do_POST(self):
@@ -81,34 +119,8 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 400, {"error": "course_id and email are required"})
             return
 
-        inviter = User.get_by_google_id(google_id)
-        if not inviter:
-            send_json(self, 404, {"error": "User not found"})
-            return
-
-        course = Course.get_by_id(course_id)
-        if not course:
-            send_json(self, 404, {"error": "Course not found"})
-            return
-
-        if course["primary_creator"] != inviter["id"]:
-            send_json(self, 403, {"error": "Only the course owner can invite collaborators"})
-            return
-
-        invitee = User.get_by_email(email)
-        if not invitee:
-            send_json(self, 404, {"error": "No user found with that email address"})
-            return
-
-        if invitee["id"] == inviter["id"]:
-            send_json(self, 400, {"error": "You cannot invite yourself"})
-            return
-
-        if not Course.add_member(course_id, invitee["id"], inviter["id"]):
-            send_json(self, 409, {"error": "User is already a collaborator on this course"})
-            return
-        members = Course.get_members(course_id)
-        send_json(self, 200, {"members": [_serialize_member(m) for m in members]})
+        status, payload = invite_member(google_id, course_id, email)
+        send_json(self, status, payload)
 
     # --------------------------------------------------------------- DELETE --
     def do_DELETE(self):
@@ -127,9 +139,10 @@ class handler(BaseHTTPRequestHandler):
 
         course_id = data.get("course_id")
         user_id = data.get("user_id")
+        email = sanitize_string(data.get("email", ""), max_length=320).lower().strip()
 
-        if not isinstance(course_id, int) or not isinstance(user_id, int):
-            send_json(self, 400, {"error": "course_id and user_id are required"})
+        if not isinstance(course_id, int) or (not isinstance(user_id, int) and not email):
+            send_json(self, 400, {"error": "course_id and user_id or email are required"})
             return
 
         requester = User.get_by_google_id(google_id)
@@ -146,6 +159,12 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 403, {"error": "Only the course owner can remove collaborators"})
             return
 
-        Course.remove_member(course_id, user_id)
+        if email:
+            PendingInvite.revoke(course_id, email)
+        else:
+            Course.remove_member(course_id, user_id)
         members = Course.get_members(course_id)
-        send_json(self, 200, {"members": [_serialize_member(m) for m in members]})
+        send_json(self, 200, {
+            "members": [_serialize_member(m) for m in members],
+            "pending": PendingInvite.list_for_course(course_id),
+        })
