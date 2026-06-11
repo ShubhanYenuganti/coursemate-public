@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 /**
  * NotionTargetPicker
  *
- * Lets the user pick an existing Notion database and enter a name for the
+ * Lets the user pick an existing Notion data source and enter a name for the
  * new page that will be created inside it on export.
  *
  * Props:
@@ -55,15 +55,16 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
   function sourcePointToTarget(sp) {
     const meta = parseMetadata(sp?.metadata);
     const urlDerivedId = extractNotionIdFromUrl(meta.database_url || meta.notion_url || meta.url);
-    const databaseId = normalizeNotionId(urlDerivedId || sp?.external_id || "");
+    const databaseId = normalizeNotionId(sp?.external_id || urlDerivedId || "");
     return {
       id: databaseId,
       title: sp?.external_title || "Untitled",
-      type: "database",
+      type: "data_source",
     };
   }
 
   function mapSearchDbToCandidateId(db) {
+    if (db?.type === "data_source") return normalizeNotionId(db?.id || "");
     const urlDerivedId = extractNotionIdFromUrl(db?.url);
     return normalizeNotionId(urlDerivedId || db?.id || "");
   }
@@ -99,7 +100,7 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
       .then((r) => r.json())
       .then((data) => {
         const t = data.target;
-        if (t && t.type === "database") {
+        if (t && (t.type === "database" || t.type === "data_source")) {
           setSelected({ ...t, id: normalizeNotionId(t.id) });
         }
       })
@@ -175,7 +176,7 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
     setSelected({
       id: candidateId,
       title: db?.title || "Untitled",
-      type: "database",
+      type: db?.type || "data_source",
     });
     setSearchQuery("");
     setSearchResults([]);
@@ -199,7 +200,7 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
             provider: "notion",
             target_id: databaseId,
             target_title: selected.title,
-            target_type: "database",
+            target_type: selected.type || "data_source",
           }),
         });
       }

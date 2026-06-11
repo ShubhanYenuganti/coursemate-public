@@ -183,6 +183,8 @@ class handler(BaseHTTPRequestHandler):
                 self._set_selection(google_id, data)
             elif action == 'bulk_upsert_sync':
                 self._bulk_upsert_sync(google_id, data)
+            elif action == 'cancel_sync_jobs':
+                self._cancel_sync_jobs(google_id, data)
             else:
                 send_json(self, 400, {"error": f"Unknown action '{action}'"})
         except Exception as exc:
@@ -309,6 +311,68 @@ class handler(BaseHTTPRequestHandler):
         _trigger_poller(source_point_id, user['id'], course_id, external_ids=external_ids)
 
         send_json(self, 200, {"upserted": upserted})
+
+    # ------------------------------------------------------- cancel_sync_jobs --
+
+    def _cancel_sync_jobs(self, google_id: str, data: dict):
+        """Mark active embed jobs for source-backed materials as skipped."""
+        user = User.get_by_google_id(google_id)
+        if not user:
+            send_json(self, 404, {"error": "User not found"})
+            return
+
+        course_id = data.get('course_id')
+        source_type = data.get('source_type')
+        external_ids = data.get('external_ids', [])
+
+        if not course_id or not source_type:
+            send_json(self, 400, {"error": "course_id and source_type are required"})
+            return
+        if source_type not in ('gdrive', 'notion'):
+            send_json(self, 400, {"error": "source_type must be 'gdrive' or 'notion'"})
+            return
+        if not isinstance(external_ids, list) or not external_ids:
+            send_json(self, 400, {"error": "external_ids must be a non-empty array"})
+            return
+
+        clean_external_ids = [str(x) for x in external_ids if x]
+        if not clean_external_ids:
+            send_json(self, 400, {"error": "external_ids must include at least one id"})
+            return
+
+        if not Course.verify_access(int(course_id), user['id']):
+            send_json(self, 403, {"error": "Access denied to this course"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE material_embed_jobs j
+                SET status = 'skipped',
+                    completed_at = CURRENT_TIMESTAMP,
+                    error_message = COALESCE(j.error_message, 'Cancelled by user')
+                FROM materials m
+                WHERE j.material_id = m.id
+                  AND m.course_id = %s
+                  AND m.source_type = %s
+                  AND m.external_id = ANY(%s)
+                  AND j.status NOT IN ('done', 'failed', 'skipped', 'up_to_date')
+                RETURNING m.external_id
+                """,
+                (int(course_id), source_type, clean_external_ids),
+            )
+            rows = cursor.fetchall()
+            cursor.close()
+
+        send_json(
+            self,
+            200,
+            {
+                "cancelled": len(rows),
+                "external_ids": [r["external_id"] for r in rows],
+            },
+        )
 
     # --------------------------------------------------------------- DELETE --
     def do_DELETE(self):

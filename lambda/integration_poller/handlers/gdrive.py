@@ -26,6 +26,8 @@ GOOGLE_DOC_MIME = 'application/vnd.google-apps.document'
 GOOGLE_SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
 GOOGLE_SLIDES_MIME = 'application/vnd.google-apps.presentation'
 GOOGLE_NATIVE_TYPES = frozenset([GOOGLE_DOC_MIME, GOOGLE_SHEET_MIME, GOOGLE_SLIDES_MIME])
+PDF_MIME = 'application/pdf'
+SUPPORTED_EXPORT_MIME_TYPES = GOOGLE_NATIVE_TYPES | frozenset([PDF_MIME])
 
 s3 = boto3.client('s3', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
 sfn = boto3.client('stepfunctions', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
@@ -93,6 +95,10 @@ def _list_all_folder_files(folder_id: str, token: str) -> list[dict]:
     return files
 
 
+def _is_supported_drive_file(file_info: dict) -> bool:
+    return file_info.get('mimeType') in SUPPORTED_EXPORT_MIME_TYPES
+
+
 def _get_drive_file_as_pdf(file_id, mime_type, token):
     """
     Export or download a Drive file as PDF bytes.
@@ -106,13 +112,15 @@ def _get_drive_file_as_pdf(file_id, mime_type, token):
             params={'mimeType': 'application/pdf'},
             stream=True,
         )
-    else:
+    elif mime_type == PDF_MIME:
         resp = _drive_get(
             f'files/{file_id}',
             token,
             params={'alt': 'media'},
             stream=True,
         )
+    else:
+        raise ValueError(f'Unsupported Drive file type: {mime_type or "unknown"}')
 
     content = resp.content
     if len(content) > MAX_FILE_SIZE_BYTES:
@@ -147,6 +155,26 @@ def _register_new_material(
         print(f'[gdrive_handler] Discovered new file file_id={file_id} name={file_name!r} → material_id={row["id"]}')
         return row['id']
     return None
+
+
+def _mark_missing_materials_unsynced(source_point_id: int, missing_ids: set[str]):
+    if not missing_ids:
+        return
+    ordered_ids = sorted(missing_ids)
+    with get_db() as db:
+        result = db.execute(
+            """
+            UPDATE materials
+            SET sync = FALSE, updated_at = CURRENT_TIMESTAMP
+            WHERE integration_source_point_id = %s
+              AND external_id = ANY(%s)
+            """,
+            (source_point_id, ordered_ids),
+        )
+    print(
+        f'[gdrive_handler] Reconciled {getattr(result, "rowcount", 0)} missing remote file(s) '
+        f'as unsynced source_point_id={source_point_id}'
+    )
 
 
 def _upsert_material(
@@ -248,11 +276,20 @@ def _update_material_after_upload(material_id, s3_key, modified_time):
 def _enqueue_embed_job(material_id):
     with get_db() as db:
         cur = db.execute(
-            "INSERT INTO material_embed_jobs (material_id) VALUES (%s) ON CONFLICT DO NOTHING",
+            """
+            INSERT INTO material_embed_jobs (material_id, status)
+            VALUES (%s, 'pending')
+            ON CONFLICT (material_id) DO UPDATE
+            SET status = 'pending',
+                started_at = NULL,
+                completed_at = NULL,
+                error_message = NULL,
+                chunks_created = NULL
+            """,
             (material_id,)
         )
-    inserted = cur.rowcount == 1
-    print(f'[gdrive_handler] material_embed_jobs upsert material_id={material_id} inserted={inserted}')
+    queued = cur.rowcount == 1
+    print(f'[gdrive_handler] material_embed_jobs queued material_id={material_id} queued={queued}')
 
 
 def _trigger_index(s3_key):
@@ -297,7 +334,10 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
         # ── Discovery sweep: find files in the folder not yet in the DB ────────
         folder_id = source_point['external_id']
         print(f'[gdrive_handler] Discovery sweep: listing folder_id={folder_id}')
-        remote_files = _list_all_folder_files(folder_id, token)
+        remote_files = [
+            f for f in _list_all_folder_files(folder_id, token)
+            if _is_supported_drive_file(f)
+        ]
         remote_ids = {f['id'] for f in remote_files}
 
         with get_db() as db:
@@ -306,6 +346,8 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
                 (source_point_id,),
             ).fetchall()
         known_ids = {r['external_id'] for r in known_rows}
+
+        _mark_missing_materials_unsynced(source_point_id, known_ids - remote_ids)
 
         new_file_ids = remote_ids - known_ids
         if new_file_ids:
@@ -343,9 +385,8 @@ def sync_source_point(source_point: dict, token: str, force_full_sync: bool = Fa
         mime_type = file_info.get('mimeType', '')
         modified_time = file_info.get('modifiedTime', '')
 
-        # Skip subfolders
-        if mime_type == 'application/vnd.google-apps.folder':
-            print(f'[gdrive_handler] Skipping subfolder file_id={file_id} name={file_name!r}')
+        if not _is_supported_drive_file(file_info):
+            print(f'[gdrive_handler] Skipping unsupported file_id={file_id} name={file_name!r} mime={mime_type!r}')
             continue
 
         try:
