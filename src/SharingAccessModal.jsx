@@ -65,6 +65,7 @@ function MemberRow({ member, isOwner, onRemove, removing }) {
 
 export default function SharingAccessModal({ courseId, csrfToken, isOwner }) {
   const [members, setMembers] = useState([]);
+  const [pending, setPending] = useState([]);
   const [loadingMembers, setLoadingMembers] = useState(true);
   const [email, setEmail] = useState("");
   const [inviting, setInviting] = useState(false);
@@ -77,7 +78,10 @@ export default function SharingAccessModal({ courseId, csrfToken, isOwner }) {
     setLoadingMembers(true);
     fetch(`/api/sharing?course_id=${courseId}`, { credentials: "include" })
       .then((r) => r.json())
-      .then((data) => setMembers(data.members || []))
+      .then((data) => {
+        setMembers(data.members || []);
+        setPending(data.pending || []);
+      })
       .catch(() => {})
       .finally(() => setLoadingMembers(false));
   }, [courseId]);
@@ -102,8 +106,13 @@ export default function SharingAccessModal({ courseId, csrfToken, isOwner }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
       setMembers(data.members || []);
+      setPending(data.pending || []);
       setEmail("");
-      setSuccess(`${trimmed} added as a collaborator.`);
+      setSuccess(
+        data.status === "pending"
+          ? "Invited - they'll join when they sign in."
+          : `${trimmed} added as a collaborator.`
+      );
       setTimeout(() => setSuccess(""), 3000);
     } catch (err) {
       setError(err.message);
@@ -128,10 +137,32 @@ export default function SharingAccessModal({ courseId, csrfToken, isOwner }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
       setMembers(data.members || []);
+      setPending(data.pending || []);
     } catch (err) {
       setError(err.message);
     } finally {
       setRemovingId(null);
+    }
+  }
+
+  async function cancelPending(emailAddress) {
+    setError("");
+    try {
+      const res = await fetch("/api/sharing", {
+        method: "DELETE",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+        },
+        body: JSON.stringify({ course_id: courseId, email: emailAddress }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      setMembers(data.members || []);
+      setPending(data.pending || []);
+    } catch (err) {
+      setError(err.message);
     }
   }
 
@@ -200,6 +231,26 @@ export default function SharingAccessModal({ courseId, csrfToken, isOwner }) {
           </div>
         )}
       </div>
+
+      {pending.length > 0 && (
+        <div>
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Pending</h4>
+          {pending.map((p) => (
+            <div key={p.email} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+              <span className="text-gray-700 truncate">
+                {p.email} <span className="text-gray-400">- joins on sign-in</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => cancelPending(p.email)}
+                className="text-xs text-red-500 hover:text-red-600 flex-shrink-0"
+              >
+                Cancel
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
