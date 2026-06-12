@@ -17,7 +17,7 @@
 **Files:**
 - Create: `tests/test_no_legacy_rag_in_production.py`
 
-- [ ] **Step 1: Write the failing-if-violated test**
+- [x] **Step 1: Write the failing-if-violated test**
 
 ```python
 # tests/test_no_legacy_rag_in_production.py
@@ -40,13 +40,13 @@ def test_no_production_module_references_retrieve_chunks():
     )
 ```
 
-- [ ] **Step 2: Run the test (should already pass — it documents the invariant)**
+- [x] **Step 2: Run the test (should already pass — it documents the invariant)**
 
 Run: `pytest tests/test_no_legacy_rag_in_production.py -v`
 Expected: PASS (no production module currently references it). If it FAILS, a production caller
 exists — STOP and reassess the spec's finding before proceeding.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/test_no_legacy_rag_in_production.py
