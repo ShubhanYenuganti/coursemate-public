@@ -97,13 +97,13 @@ git commit -m "docs: mark retrieve_chunks as eval-only legacy baseline"
 **Files:**
 - Modify: `api/chat.py` (~line 2119 comment "legacy exact-chunk replay")
 
-- [ ] **Step 1: Inspect the branch**
+- [x] **Step 1: Inspect the branch**
 
 Read `api/chat.py` around lines 2110–2140. Determine whether the "legacy exact-chunk replay" branch
 is reachable — specifically whether it hydrates IDs from a table retired by
 `migrations/002_retire_legacy_chat_rag_tables.sql`.
 
-- [ ] **Step 2: Decide and act**
+- [x] **Step 2: Decide and act**
 
 - **If unreachable** (reads a retired table / guarded by a condition that is always false): remove
   the dead branch and its comment. Keep the surrounding live logic intact.
@@ -111,12 +111,12 @@ is reachable — specifically whether it hydrates IDs from a table retired by
   deferred, see 2026-06-10-legacy-rag-retirement plan` and note the finding in the commit message.
   Do not guess or force-remove.
 
-- [ ] **Step 3: Run the chat test suite**
+- [x] **Step 3: Run the chat test suite**
 
 Run: `pytest tests/test_chat_citations.py tests/test_chat_memory.py tests/test_chat_search_snippets.py -v`
 Expected: PASS (no behavioral regression).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add api/chat.py

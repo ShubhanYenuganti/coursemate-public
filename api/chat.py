@@ -2115,9 +2115,7 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             context_material_ids = user_msg.get('context_material_ids') or []
-            # Regeneration goes through the PageIndex agent like a fresh turn. The
-            # legacy exact-chunk replay (hydrating vector chunk IDs from the retired
-            # chunks table) has been removed; PageIndex re-derives grounding fresh.
+            # Regeneration goes through the PageIndex agent like a fresh turn.
             chunks = []
 
             if is_streaming:
