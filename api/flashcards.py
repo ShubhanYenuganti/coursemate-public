@@ -131,6 +131,17 @@ def compute_next_review(prev: dict, rating: str) -> dict:
     return {'repetitions': nxt.repetitions, 'interval_days': nxt.interval_days, 'ease': nxt.ease}
 
 
+def due_summary_sql() -> str:
+    # Joins reviews to generations for a deep link to the most-due generation.
+    return (
+        "SELECT r.generation_id, g.course_id, COUNT(*) OVER () AS due_count "
+        "FROM flashcard_reviews r "
+        "JOIN flashcard_generations g ON g.id = r.generation_id "
+        "WHERE r.user_id = %s AND r.due_at <= now() "
+        "ORDER BY r.due_at ASC LIMIT 1"
+    )
+
+
 def _enqueue_flashcards_generation_job(generation_id: int, user_id: int):
     if not _FLASHCARDS_QUEUE_URL:
         raise ValueError('FLASHCARDS_GENERATION_QUEUE_URL env var is not set')
@@ -289,6 +300,10 @@ class handler(BaseHTTPRequestHandler):
             self._list_generations(params, user)
         elif action == 'export_pdf':
             self._export_pdf(params, user)
+        elif action == 'due':
+            self._due(params, user)
+        elif action == 'ratings':
+            self._ratings(params, user)
         else:
             send_json(self, 400, {'error': f'Unknown action: {action}'})
 
@@ -341,6 +356,39 @@ class handler(BaseHTTPRequestHandler):
             return
 
         send_json(self, 200, {'deleted': gen_id})
+
+    def _due(self, params: dict, user: dict):
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(due_summary_sql(), (user['id'],))
+            row = cursor.fetchone()
+            cursor.close()
+
+        if not row:
+            send_json(self, 200, {"due_count": 0, "next": None})
+            return
+        send_json(self, 200, {
+            "due_count": row["due_count"],
+            "next": {"generation_id": row["generation_id"], "course_id": row["course_id"]},
+        })
+
+    def _ratings(self, params: dict, user: dict):
+        gen_id_raw = params.get('generation_id', [None])[0]
+        if not gen_id_raw or not str(gen_id_raw).isdigit():
+            send_json(self, 400, {'error': 'generation_id required'})
+            return
+
+        generation_id = int(gen_id_raw)
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT card_index, last_rating FROM flashcard_reviews WHERE user_id=%s AND generation_id=%s",
+                (user['id'], generation_id),
+            )
+            rows = cursor.fetchall()
+            cursor.close()
+
+        send_json(self, 200, {"ratings": {str(r["card_index"]): r["last_rating"] for r in rows}})
 
     # --- POST -----------------------------------------------------------------
 
