@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import CardViewer from "./CardViewer.jsx";
 import CreateCourseModal from "./CreateCourseModal.jsx";
+import DueTodayWidget from "./components/DueTodayWidget.jsx";
 
 function SignOutIcon() {
   return (
@@ -58,6 +59,7 @@ export default function Dashboard({ userData, onSignOut }) {
 
       {/* Dashboard body */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <DueTodayWidget />
         <CardViewer onCreateNew={() => createModalRef.current?.open()} />
       </main>
     </div>
