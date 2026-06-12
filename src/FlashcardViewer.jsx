@@ -155,6 +155,10 @@ function ToolbarItem({ icon, label, onClick }) {
   );
 }
 
+export function getFlashcardRatingKey(card) {
+  return String(card.card_index);
+}
+
 // ─── FlashcardViewer ───────────────────────────────────────────────────────────
 
 export default function FlashcardViewer({
@@ -250,6 +254,7 @@ export default function FlashcardViewer({
 
   const total = displayCards.length;
   const card = displayCards[currentIndex] || {};
+  const ratingKey = getFlashcardRatingKey(card);
   const front = card.front || card.term || card.question || '';
   const back = card.back || card.definition || card.answer || '';
   const hint = card.hint || (back ? back.split(' ').slice(0, 4).join(' ') + '…' : '');
@@ -284,7 +289,7 @@ export default function FlashcardViewer({
   }
 
   function rateCard(value) {
-    const key = String(currentIndex);
+    const key = getFlashcardRatingKey(card);
     const next = ratings[key] === value ? null : value;
     setRatings((prev) => ({ ...prev, [key]: next }));
     if (next == null) return;
@@ -292,7 +297,7 @@ export default function FlashcardViewer({
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'rate', generation_id: generationId, card_index: currentIndex, rating: next }),
+      body: JSON.stringify({ action: 'rate', generation_id: generationId, card_index: card.card_index, rating: next }),
     }).catch(() => {});
   }
 
@@ -607,7 +612,7 @@ export default function FlashcardViewer({
                     type="button"
                     aria-label="Thumb up"
                     onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[currentIndex] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
+                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
                   >
                     <ThumbUpIcon />
                   </button>
@@ -615,7 +620,7 @@ export default function FlashcardViewer({
                     type="button"
                     aria-label="Thumb down"
                     onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[currentIndex] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
+                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
                   >
                     <ThumbDownIcon />
                   </button>
@@ -661,7 +666,7 @@ export default function FlashcardViewer({
                     type="button"
                     aria-label="Thumb up"
                     onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[currentIndex] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
+                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
                   >
                     <ThumbUpIcon />
                   </button>
@@ -669,7 +674,7 @@ export default function FlashcardViewer({
                     type="button"
                     aria-label="Thumb down"
                     onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[currentIndex] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
+                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
                   >
                     <ThumbDownIcon />
                   </button>
