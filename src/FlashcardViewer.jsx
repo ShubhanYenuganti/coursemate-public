@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import NotionTargetPicker from './components/NotionTargetPicker';
 import GDriveTargetPicker from './components/GDriveTargetPicker';
-import { loadRatings, setRating } from './utils/flashcardRatings';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -182,7 +181,7 @@ export default function FlashcardViewer({
   const [shuffled, setShuffled] = useState(false);
   const [seen, setSeen] = useState(new Set());
   const [showHint, setShowHint] = useState(false);
-  const [ratings, setRatings] = useState(() => loadRatings(generationId));
+  const [ratings, setRatings] = useState({});
   const [saveStatus, setSaveStatus] = useState(data?.artifact_material_id ? 'saved' : 'idle');
   const [exportStatus, setExportStatus] = useState('idle');
   const [resolving, setResolving] = useState(false);
@@ -204,6 +203,17 @@ export default function FlashcardViewer({
   useEffect(() => {
     setSaveStatus(data?.artifact_material_id ? 'saved' : 'idle');
   }, [data?.artifact_material_id, data?.generation_id]);
+
+  useEffect(() => {
+    if (!generationId) {
+      setRatings({});
+      return;
+    }
+    fetch(`/api/flashcards?action=ratings&generation_id=${generationId}`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((data) => setRatings(data.ratings || {}))
+      .catch(() => {});
+  }, [generationId]);
 
   const displayCards = useMemo(() => {
     if (!shuffled) return cards;
@@ -274,14 +284,16 @@ export default function FlashcardViewer({
   }
 
   function rateCard(value) {
-    const next = ratings[currentIndex] === value ? null : value;
-    setRating(generationId, currentIndex, next);
-    setRatings((prev) => {
-      const copy = { ...prev };
-      if (next == null) delete copy[currentIndex];
-      else copy[currentIndex] = next;
-      return copy;
-    });
+    const key = String(currentIndex);
+    const next = ratings[key] === value ? null : value;
+    setRatings((prev) => ({ ...prev, [key]: next }));
+    if (next == null) return;
+    fetch('/api/flashcards', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'rate', generation_id: generationId, card_index: currentIndex, rating: next }),
+    }).catch(() => {});
   }
 
   function toggleShuffle() {
