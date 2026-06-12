@@ -123,17 +123,12 @@ def _search_chat_images(conn, emb: list, chat_id: int, exclude_message_id: int =
 def retrieve_chunks(conn, query: str, material_ids: list, top_k: int = TOP_K,
                     chat_id: int = None, image_s3_keys: list = None,
                     current_message_id: int = None) -> list:
-    """
-    Hybrid dual-embedding search over the `chunks` table filtered to `material_ids`.
+    """EVAL-ONLY legacy hybrid chunk/vector search.
 
-    - Text query: embedded via Lambda for dual (visual + text) hybrid search.
-    - Attached images: each image is embedded and run as an additional visual search
-      pass; results are merged with the text search pool before the top-K slice.
-    - Chat image history: searched by cosine similarity, excluding the current
-      message's images to avoid self-matches (current_message_id).
-
-    Returns dicts compatible with api/llm.py _format_context(). Chat image rows
-    carry chunk_type='chat_image' with s3_key and filename instead of chunk_text.
+    No production caller exists (PageIndex is the only live retrieval path; see api/llm.py:315).
+    This function is retained solely as the comparison baseline in
+    tests/pageindex_eval/eval_runner.py. Do not call it from api/ production modules -- a regression
+    guard (tests/test_no_legacy_rag_in_production.py) enforces this.
     """
     # Deprecated: the chunk/embedding (embed_materials) retrieval path has been
     # retired in favour of PageIndex, and prior-image recall now lives in

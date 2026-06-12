@@ -60,7 +60,7 @@ git commit -m "test: guard against legacy retrieve_chunks in production code"
 **Files:**
 - Modify: `api/rag.py:123` (docstring on `retrieve_chunks`)
 
-- [ ] **Step 1: Update the docstring**
+- [x] **Step 1: Update the docstring**
 
 Replace the opening of `retrieve_chunks` (line 123) so the first docstring line reads:
 
@@ -78,12 +78,12 @@ def retrieve_chunks(conn, query: str, material_ids: list, top_k: int = TOP_K,
 
 Preserve the existing parameter list exactly; only the docstring changes.
 
-- [ ] **Step 2: Run the eval-import smoke check**
+- [x] **Step 2: Run the eval-import smoke check**
 
 Run: `python -c "import sys; sys.path.insert(0,'api'); import rag; assert hasattr(rag,'retrieve_chunks')"`
 Expected: no output, exit 0 (function still importable for the eval).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add api/rag.py
