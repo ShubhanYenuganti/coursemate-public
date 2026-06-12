@@ -19,6 +19,7 @@ try:
     from .db import get_db
     from .services.flashcards_token_estimator import estimate_flashcards_token_ranges
     from .services.flashcards_pdf_builder import build_flashcards_pdf_bytes
+    from .services.spaced_repetition import schedule, ReviewState, INITIAL, THUMB_TO_QUALITY
 except ImportError:
     from middleware import send_json, handle_options, authenticate_request, get_cors_headers
     from models import User
@@ -26,6 +27,7 @@ except ImportError:
     from db import get_db
     from services.flashcards_token_estimator import estimate_flashcards_token_ranges
     from services.flashcards_pdf_builder import build_flashcards_pdf_bytes
+    from services.spaced_repetition import schedule, ReviewState, INITIAL, THUMB_TO_QUALITY
 
 _FLASHCARDS_QUEUE_URL = os.environ.get('FLASHCARDS_GENERATION_QUEUE_URL')
 _AWS_REGION = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
@@ -116,6 +118,17 @@ def _extract_conversation_context(body: dict):
     """Optional conversation summary that grounds a chat-originated generation."""
     val = (body.get('conversation_context') or '').strip()
     return val or None
+
+
+def compute_next_review(prev: dict, rating: str) -> dict:
+    state = ReviewState(
+        repetitions=prev.get('repetitions', 0),
+        interval_days=prev.get('interval_days', 0),
+        ease=prev.get('ease', 2.5),
+    ) if prev else INITIAL
+    quality = THUMB_TO_QUALITY.get(rating, 4)
+    nxt = schedule(state, quality)
+    return {'repetitions': nxt.repetitions, 'interval_days': nxt.interval_days, 'ease': nxt.ease}
 
 
 def _enqueue_flashcards_generation_job(generation_id: int, user_id: int):
@@ -358,8 +371,44 @@ class handler(BaseHTTPRequestHandler):
             self._save_artifact(body, user)
         elif action == 'resolve_regeneration':
             self._resolve_regeneration(body, user)
+        elif action == 'rate':
+            self._rate(body, user)
         else:
             send_json(self, 400, {'error': f'Unknown action: {action}'})
+
+    def _rate(self, body: dict, user: dict):
+        generation_id = body.get('generation_id')
+        card_index = body.get('card_index')
+        rating = body.get('rating')
+        if not isinstance(generation_id, int) or not isinstance(card_index, int) or rating not in ('up', 'down'):
+            send_json(self, 400, {"error": "generation_id, card_index, rating required"})
+            return
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT repetitions, interval_days, ease FROM flashcard_reviews
+                   WHERE user_id=%s AND generation_id=%s AND card_index=%s""",
+                (user['id'], generation_id, card_index),
+            )
+            prev = cursor.fetchone()
+            nxt = compute_next_review(prev, rating)
+            cursor.execute(
+                """INSERT INTO flashcard_reviews
+                     (user_id, generation_id, card_index, last_rating, repetitions, interval_days, ease, due_at, updated_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s, now() + (%s || ' days')::interval, now())
+                   ON CONFLICT (user_id, generation_id, card_index) DO UPDATE SET
+                     last_rating=EXCLUDED.last_rating, repetitions=EXCLUDED.repetitions,
+                     interval_days=EXCLUDED.interval_days, ease=EXCLUDED.ease,
+                     due_at=EXCLUDED.due_at, updated_at=now()
+                   RETURNING due_at""",
+                (user['id'], generation_id, card_index, rating,
+                 nxt['repetitions'], nxt['interval_days'], nxt['ease'], nxt['interval_days']),
+            )
+            due_at = cursor.fetchone()['due_at']
+            cursor.close()
+
+        send_json(self, 200, {**nxt, "due_at": due_at.isoformat()})
 
     # --- estimate -------------------------------------------------------------
 
