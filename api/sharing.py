@@ -91,10 +91,12 @@ class handler(BaseHTTPRequestHandler):
             send_json(self, 403, {"error": "Access denied"})
             return
 
+        course = Course.get_by_id(course_id)
+        is_owner = bool(course and course.get("primary_creator") == user["id"])
         members = Course.get_members(course_id)
         send_json(self, 200, {
             "members": [_serialize_member(m) for m in members],
-            "pending": PendingInvite.list_for_course(course_id),
+            "pending": PendingInvite.list_for_course(course_id) if is_owner else [],
         })
 
     # ----------------------------------------------------------------- POST --
