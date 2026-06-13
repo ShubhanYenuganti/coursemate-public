@@ -8,6 +8,8 @@ import ProfilePage from "./ProfilePage.jsx";
 import QuizViewerRoute from "./QuizViewerRoute.jsx";
 import FlashcardViewerRoute from "./FlashcardViewerRoute.jsx";
 import ReportViewerRoute from "./ReportViewerRoute.jsx";
+import PrivacyPolicy from "./PrivacyPolicy.jsx";
+import TermsOfService from "./TermsOfService.jsx";
 import "./App.css";
 
 function CourseRoute({ userData, csrfToken, onSignOut, onUserUpdate }) {
@@ -257,6 +259,8 @@ export default function App() {
           )
         }
       />
+      <Route path="/privacy" element={<PrivacyPolicy />} />
+      <Route path="/terms" element={<TermsOfService />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
