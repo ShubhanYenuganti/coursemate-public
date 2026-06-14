@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import NotionTargetPicker from './components/NotionTargetPicker';
 import GDriveTargetPicker from './components/GDriveTargetPicker';
-import { loadRatings, setRating } from './utils/flashcardRatings';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -156,6 +155,10 @@ function ToolbarItem({ icon, label, onClick }) {
   );
 }
 
+export function getFlashcardRatingKey(card) {
+  return String(card.card_index);
+}
+
 // ─── FlashcardViewer ───────────────────────────────────────────────────────────
 
 export default function FlashcardViewer({
@@ -182,7 +185,7 @@ export default function FlashcardViewer({
   const [shuffled, setShuffled] = useState(false);
   const [seen, setSeen] = useState(new Set());
   const [showHint, setShowHint] = useState(false);
-  const [ratings, setRatings] = useState(() => loadRatings(generationId));
+  const [ratings, setRatings] = useState({});
   const [saveStatus, setSaveStatus] = useState(data?.artifact_material_id ? 'saved' : 'idle');
   const [exportStatus, setExportStatus] = useState('idle');
   const [resolving, setResolving] = useState(false);
@@ -204,6 +207,12 @@ export default function FlashcardViewer({
   useEffect(() => {
     setSaveStatus(data?.artifact_material_id ? 'saved' : 'idle');
   }, [data?.artifact_material_id, data?.generation_id]);
+
+  // Start each review with toggles cleared so a single thumb click re-rates
+  // the card and advances its due_at (no deselect step needed).
+  useEffect(() => {
+    setRatings({});
+  }, [generationId]);
 
   const displayCards = useMemo(() => {
     if (!shuffled) return cards;
@@ -240,6 +249,7 @@ export default function FlashcardViewer({
 
   const total = displayCards.length;
   const card = displayCards[currentIndex] || {};
+  const ratingKey = getFlashcardRatingKey(card);
   const front = card.front || card.term || card.question || '';
   const back = card.back || card.definition || card.answer || '';
   const hint = card.hint || (back ? back.split(' ').slice(0, 4).join(' ') + '…' : '');
@@ -274,14 +284,20 @@ export default function FlashcardViewer({
   }
 
   function rateCard(value) {
-    const next = ratings[currentIndex] === value ? null : value;
-    setRating(generationId, currentIndex, next);
+    const key = getFlashcardRatingKey(card);
+    const next = ratings[key] === value ? null : value;
     setRatings((prev) => {
       const copy = { ...prev };
-      if (next == null) delete copy[currentIndex];
-      else copy[currentIndex] = next;
+      if (next == null) delete copy[key];
+      else copy[key] = next;
       return copy;
     });
+    fetch('/api/flashcards', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'rate', generation_id: generationId, card_index: card.card_index, rating: next }),
+    }).catch(() => {});
   }
 
   function toggleShuffle() {
@@ -593,17 +609,19 @@ export default function FlashcardViewer({
                   </button>
                   <button
                     type="button"
-                    aria-label="Thumb up"
+                    aria-label="I knew this — schedule it for a later review"
+                    title="I knew this — schedules the card to return later (spaced repetition)"
                     onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[currentIndex] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
+                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
                   >
                     <ThumbUpIcon />
                   </button>
                   <button
                     type="button"
-                    aria-label="Thumb down"
+                    aria-label="Needs review — bring this card back soon"
+                    title="Needs review — brings this card back tomorrow (spaced repetition)"
                     onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[currentIndex] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
+                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
                   >
                     <ThumbDownIcon />
                   </button>
@@ -647,17 +665,19 @@ export default function FlashcardViewer({
                   </button>
                   <button
                     type="button"
-                    aria-label="Thumb up"
+                    aria-label="I knew this — schedule it for a later review"
+                    title="I knew this — schedules the card to return later (spaced repetition)"
                     onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[currentIndex] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
+                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
                   >
                     <ThumbUpIcon />
                   </button>
                   <button
                     type="button"
-                    aria-label="Thumb down"
+                    aria-label="Needs review — bring this card back soon"
+                    title="Needs review — brings this card back tomorrow (spaced repetition)"
                     onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[currentIndex] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
+                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
                   >
                     <ThumbDownIcon />
                   </button>
@@ -674,6 +694,12 @@ export default function FlashcardViewer({
               </div>
             </div>
           </div>
+
+          {/* Spaced-repetition hint — tells users that rating schedules reviews */}
+          <p className="mt-5 text-center text-xs text-gray-400">
+            Rate each card with <span className="font-medium text-green-600">👍</span> /{' '}
+            <span className="font-medium text-red-500">👎</span> — we’ll schedule it to come back for review using spaced repetition.
+          </p>
         </div>
       </main>
 

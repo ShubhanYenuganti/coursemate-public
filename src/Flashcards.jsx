@@ -3,6 +3,7 @@ import { formatDateTime } from './utils/dateUtils';
 import { getMaterialUrl } from './utils/materialUtils';
 import FlashcardViewer from './FlashcardViewer';
 import GenerationConfirmModal from './components/GenerationConfirmModal.jsx';
+import DueTodayWidget from './components/DueTodayWidget.jsx';
 import { PROVIDER_MODELS } from './modelCatalog.js';
 
 function ExternalLinkIcon() {
@@ -668,6 +669,7 @@ export default function Flashcards({ course, onAddSource }) {
   }
 
   return (
+    <>
     <div className="flex gap-4 items-start">
       <div className="w-[220px] flex-shrink-0 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden" style={{ minHeight: '520px' }}>
         <div className="px-4 py-3">
@@ -1037,5 +1039,9 @@ export default function Flashcards({ course, onAddSource }) {
         )}
       </div>
     </div>
+      <div className="mt-4">
+        <DueTodayWidget courseId={course?.id} />
+      </div>
+    </>
   );
 }
