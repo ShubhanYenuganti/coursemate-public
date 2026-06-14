@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { formatDateTime, parseUTC } from './utils/dateUtils';
 import { getMaterialUrl } from './utils/materialUtils';
+import { composerGateState } from './utils/composerGate';
 import { PROVIDER_MODELS, NON_VISION_MODEL_IDS } from './modelCatalog.js';
 import SearchChat from './SearchChat';
 import GenerationProposalCard from './components/GenerationProposalCard';
@@ -1375,6 +1377,8 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   }
   const [selectedModel, setSelectedModel] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
+  const [keysLoaded, setKeysLoaded] = useState(false);
+  const gate = composerGateState(availableModels, keysLoaded);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState(null);
   const [modelListDropdownOpen, setModelListDropdownOpen] = useState(false);
@@ -1576,7 +1580,8 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
           setSelectedModelId(modelId);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setKeysLoaded(true));
   }, [course?.default_ai_provider, course?.default_ai_model]);
 
   useEffect(() => {
@@ -1869,7 +1874,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   }
 
   function handleKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && gate.canSend) {
       e.preventDefault();
       handleSend();
     }
@@ -2181,6 +2186,8 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   }
 
   async function handleSend() {
+    if (!gate.canSend) return;
+
     const text = input.trim();
     const hasImages = images.length > 0;
     if ((!text && !hasImages) || sending || !selectedModel) return;
@@ -3232,6 +3239,15 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
             onChange={handleFileInputChange}
           />
 
+          {gate.bannerText && (
+            <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {gate.bannerText}{' '}
+              <Link to="/profile" className="font-medium text-amber-900 underline hover:text-amber-950">
+                Open Profile
+              </Link>
+            </div>
+          )}
+
           <div className="relative flex flex-col rounded-2xl border border-gray-200 bg-white hover:shadow-lg focus-within:border-indigo-300 focus-within:shadow-lg transition-all" style={{ boxShadow: '0 4px 24px 0 rgba(0,0,0,0.13)' }}>
             {promptLibOpen && (
               <PromptLibrary
@@ -3359,7 +3375,8 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                 <button
                   type="button"
                   onClick={handleSend}
-                  disabled={(!input.trim() && images.length === 0) || sending || !selectedModel}
+                  disabled={!gate.canSend || (!input.trim() && images.length === 0) || sending || !selectedModel}
+                  title={gate.disabledReason || undefined}
                   className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
                 >
                   <SendIcon />
