@@ -208,15 +208,10 @@ export default function FlashcardViewer({
     setSaveStatus(data?.artifact_material_id ? 'saved' : 'idle');
   }, [data?.artifact_material_id, data?.generation_id]);
 
+  // Start each review with toggles cleared so a single thumb click re-rates
+  // the card and advances its due_at (no deselect step needed).
   useEffect(() => {
-    if (!generationId) {
-      setRatings({});
-      return;
-    }
-    fetch(`/api/flashcards?action=ratings&generation_id=${generationId}`, { credentials: 'include' })
-      .then((r) => r.json())
-      .then((data) => setRatings(data.ratings || {}))
-      .catch(() => {});
+    setRatings({});
   }, [generationId]);
 
   const displayCards = useMemo(() => {
@@ -291,8 +286,12 @@ export default function FlashcardViewer({
   function rateCard(value) {
     const key = getFlashcardRatingKey(card);
     const next = ratings[key] === value ? null : value;
-    setRatings((prev) => ({ ...prev, [key]: next }));
-    if (next == null) return;
+    setRatings((prev) => {
+      const copy = { ...prev };
+      if (next == null) delete copy[key];
+      else copy[key] = next;
+      return copy;
+    });
     fetch('/api/flashcards', {
       method: 'POST',
       credentials: 'include',
@@ -610,7 +609,8 @@ export default function FlashcardViewer({
                   </button>
                   <button
                     type="button"
-                    aria-label="Thumb up"
+                    aria-label="I knew this — schedule it for a later review"
+                    title="I knew this — schedules the card to return later (spaced repetition)"
                     onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
                     className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
                   >
@@ -618,7 +618,8 @@ export default function FlashcardViewer({
                   </button>
                   <button
                     type="button"
-                    aria-label="Thumb down"
+                    aria-label="Needs review — bring this card back soon"
+                    title="Needs review — brings this card back tomorrow (spaced repetition)"
                     onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
                     className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
                   >
@@ -664,7 +665,8 @@ export default function FlashcardViewer({
                   </button>
                   <button
                     type="button"
-                    aria-label="Thumb up"
+                    aria-label="I knew this — schedule it for a later review"
+                    title="I knew this — schedules the card to return later (spaced repetition)"
                     onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
                     className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
                   >
@@ -672,7 +674,8 @@ export default function FlashcardViewer({
                   </button>
                   <button
                     type="button"
-                    aria-label="Thumb down"
+                    aria-label="Needs review — bring this card back soon"
+                    title="Needs review — brings this card back tomorrow (spaced repetition)"
                     onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
                     className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
                   >
@@ -691,6 +694,12 @@ export default function FlashcardViewer({
               </div>
             </div>
           </div>
+
+          {/* Spaced-repetition hint — tells users that rating schedules reviews */}
+          <p className="mt-5 text-center text-xs text-gray-400">
+            Rate each card with <span className="font-medium text-green-600">👍</span> /{' '}
+            <span className="font-medium text-red-500">👎</span> — we’ll schedule it to come back for review using spaced repetition.
+          </p>
         </div>
       </main>
 

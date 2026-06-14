@@ -137,7 +137,7 @@ def due_summary_sql() -> str:
         "SELECT r.generation_id, g.course_id, COUNT(*) OVER () AS due_count "
         "FROM flashcard_reviews r "
         "JOIN flashcard_generations g ON g.id = r.generation_id "
-        "WHERE r.user_id = %s AND r.due_at <= now() "
+        "WHERE r.user_id = %s AND g.course_id = %s AND r.due_at <= now() "
         "ORDER BY r.due_at ASC LIMIT 1"
     )
 
@@ -302,8 +302,6 @@ class handler(BaseHTTPRequestHandler):
             self._export_pdf(params, user)
         elif action == 'due':
             self._due(params, user)
-        elif action == 'ratings':
-            self._ratings(params, user)
         else:
             send_json(self, 400, {'error': f'Unknown action: {action}'})
 
@@ -358,9 +356,15 @@ class handler(BaseHTTPRequestHandler):
         send_json(self, 200, {'deleted': gen_id})
 
     def _due(self, params: dict, user: dict):
+        course_id_raw = params.get('course_id', [None])[0]
+        if not course_id_raw or not str(course_id_raw).isdigit():
+            send_json(self, 400, {'error': 'course_id required'})
+            return
+        course_id = int(course_id_raw)
+
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute(due_summary_sql(), (user['id'],))
+            cursor.execute(due_summary_sql(), (user['id'], course_id))
             row = cursor.fetchone()
             cursor.close()
 
@@ -371,24 +375,6 @@ class handler(BaseHTTPRequestHandler):
             "due_count": row["due_count"],
             "next": {"generation_id": row["generation_id"], "course_id": row["course_id"]},
         })
-
-    def _ratings(self, params: dict, user: dict):
-        gen_id_raw = params.get('generation_id', [None])[0]
-        if not gen_id_raw or not str(gen_id_raw).isdigit():
-            send_json(self, 400, {'error': 'generation_id required'})
-            return
-
-        generation_id = int(gen_id_raw)
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT card_index, last_rating FROM flashcard_reviews WHERE user_id=%s AND generation_id=%s",
-                (user['id'], generation_id),
-            )
-            rows = cursor.fetchall()
-            cursor.close()
-
-        send_json(self, 200, {"ratings": {str(r["card_index"]): r["last_rating"] for r in rows}})
 
     # --- POST -----------------------------------------------------------------
 
@@ -428,8 +414,19 @@ class handler(BaseHTTPRequestHandler):
         generation_id = body.get('generation_id')
         card_index = body.get('card_index')
         rating = body.get('rating')
-        if not isinstance(generation_id, int) or not isinstance(card_index, int) or rating not in ('up', 'down'):
+        if not isinstance(generation_id, int) or not isinstance(card_index, int) or rating not in ('up', 'down', None):
             send_json(self, 400, {"error": "generation_id, card_index, rating required"})
+            return
+
+        if rating is None:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM flashcard_reviews WHERE user_id=%s AND generation_id=%s AND card_index=%s",
+                    (user['id'], generation_id, card_index),
+                )
+                cursor.close()
+            send_json(self, 200, {"cleared": True})
             return
 
         with get_db() as conn:
