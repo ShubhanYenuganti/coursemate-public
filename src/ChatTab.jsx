@@ -1377,7 +1377,8 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
   }
   const [selectedModel, setSelectedModel] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
-  const gate = composerGateState(availableModels);
+  const [keysLoaded, setKeysLoaded] = useState(false);
+  const gate = composerGateState(availableModels, keysLoaded);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState(null);
   const [modelListDropdownOpen, setModelListDropdownOpen] = useState(false);
@@ -1579,7 +1580,8 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
           setSelectedModelId(modelId);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setKeysLoaded(true));
   }, [course?.default_ai_provider, course?.default_ai_model]);
 
   useEffect(() => {

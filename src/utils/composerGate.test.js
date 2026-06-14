@@ -19,4 +19,17 @@ describe('composerGateState', () => {
     const gate = composerGateState(undefined);
     expect(gate.canSend).toBe(false);
   });
+
+  it('stays silent before key status has loaded', () => {
+    const gate = composerGateState([], false);
+    expect(gate.canSend).toBe(false);
+    expect(gate.bannerText).toBeNull();
+    expect(gate.disabledReason).toBeNull();
+  });
+
+  it('shows the banner once loaded with no keys', () => {
+    const gate = composerGateState([], true);
+    expect(gate.canSend).toBe(false);
+    expect(gate.bannerText).toMatch(/Profile/);
+  });
 });
