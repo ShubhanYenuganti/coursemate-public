@@ -115,4 +115,3 @@ def test_partition_locked_chunk_ids_drops_material_refs():
     raw = ["123", "material:624", "456", "material:625", "789"]
     integer_refs = [r for r in raw if not (isinstance(r, str) and r.startswith("material:"))]
     assert integer_refs == ["123", "456", "789"]
-
