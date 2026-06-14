@@ -42,15 +42,6 @@ function ChevronDownIcon() {
   );
 }
 
-function SettingsIcon() { // removed soon
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
 function XIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -310,6 +301,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
   // Shuffle questions once per quiz load, preserving originalIndex for backend submission.
   const questions = useMemo(() => {
     const raw = quiz?.questions || (Array.isArray(quiz) ? quiz : []);
+    // eslint-disable-next-line react-hooks/purity -- existing behavior intentionally shuffles once per quiz load.
     return [...raw].map((q, i) => ({ ...q, originalIndex: i })).sort(() => Math.random() - 0.5);
   }, [quiz?.generation_id]); // eslint-disable-line react-hooks/exhaustive-deps
   const total = questions.length;
@@ -414,7 +406,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
       const allRevealed = {};
       questions.forEach((_, i) => { allRevealed[i] = true; });
       setRevealed(allRevealed);
-    } catch (e) {
+    } catch {
       setAttemptResult(null);
       setAttemptStatus('error');
     }
@@ -440,7 +432,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
       a.remove();
       URL.revokeObjectURL(url);
       setExportStatus('idle');
-    } catch (e) {
+    } catch {
       setExportStatus('error');
     }
   }
