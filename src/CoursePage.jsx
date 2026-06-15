@@ -6,6 +6,7 @@ import MaterialsPage from './MaterialsPage.jsx';
 import ChatTab, { PROVIDER_MODELS } from './ChatTab.jsx';
 import Generations from './Generations.jsx';
 import CourseStatsWidget from './components/CourseStatsWidget';
+import { Button } from '@/components/ui/button';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -205,14 +206,14 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
       <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={() => navigate('/')}
-              className="p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
               title="Back to home"
             >
               <BackIcon />
-            </button>
+            </Button>
             <span className="text-xl font-bold text-gray-900">{course?.title || 'Course'}</span>
           </div>
 
@@ -221,7 +222,7 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
               <button
                 type="button"
                 onClick={() => navigate('/profile')}
-                className="rounded-full focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="rounded-full focus:outline-none focus:ring-2 focus:ring-ring"
                 title="View profile"
               >
                 <img
@@ -232,14 +233,14 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
               </button>
             )}
             <CreateCourseModal />
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={onSignOut}
-              className="p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
               title="Sign out"
             >
               <SignOutIcon />
-            </button>
+            </Button>
           </div>
         </div>
       </header>
