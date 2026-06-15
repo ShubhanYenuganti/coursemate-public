@@ -378,62 +378,73 @@ function NotionConnectionSection({ pending = false }) {
 
   if (status === null) {
     return (
-      <div className="px-8 py-6">
-        <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-1">Connected Apps</h2>
-        <p className="text-sm text-gray-400">Loading…</p>
-      </div>
+      <Card className="rounded-none border-0 border-t border-border shadow-none">
+        <CardHeader className="px-8 pt-6 pb-1">
+          <CardTitle className="text-sm font-semibold text-foreground uppercase tracking-wide">Connected Apps</CardTitle>
+        </CardHeader>
+        <CardContent className="px-8 pb-6">
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <div className="px-8 py-6">
-      <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-1">Connected Apps</h2>
-      <p className="text-xs text-gray-500 mb-4">Connect third-party apps to import and export course content.</p>
+    <Card className="rounded-none border-0 border-t border-border shadow-none">
+      <CardHeader className="px-8 pt-6 pb-1">
+        <CardTitle className="text-sm font-semibold text-foreground uppercase tracking-wide">Connected Apps</CardTitle>
+        <CardDescription className="text-xs text-muted-foreground">Connect third-party apps to import and export course content.</CardDescription>
+      </CardHeader>
+      <CardContent className="px-8 pb-6">
+        <div className="border border-border rounded-xl overflow-hidden">
+          <div className="flex items-center gap-3 px-4 py-3 bg-background">
+            {/* Notion logo */}
+            <div className="w-8 h-8 rounded-lg bg-foreground flex items-center justify-center shrink-0">
+              <svg width="16" height="16" viewBox="0 0 100 100" fill="white" xmlns="http://www.w3.org/2000/svg">
+                <path d="M6 7.6C9.7 10.6 11 10.4 18.2 9.9L88.2 5.6C89.6 5.6 88.5 4.2 87.9 4L77.1 0.4C74.8 -0.3 72.1 0.1 69.7 0.4L2.4 5.7C0.3 6 0 7.3 1.1 8.2L6 7.6ZM8.5 18.1V91.6C8.5 95.4 10.5 96.7 14.9 96.4L91.5 92C95.9 91.7 96.4 89.3 96.4 86.3V13.1C96.4 10 95 8.4 92 8.7L12.1 13C9 13.3 8.5 14.9 8.5 18.1ZM84.5 21.4C85 23.9 84.5 26.4 82 26.7L77.5 27.4V87.5L82 87.2C84.5 87 85 84.5 85 82V21.4ZM22.3 29.3C22.3 26.8 20.7 25.9 18.5 26.1L14.5 26.4V86.2C14.5 88.7 16.5 90.1 18.8 89.9L22.3 89.6V29.3ZM67 22.7L35.5 24.4C33.5 24.5 33 25.5 33 27.2V88.1C33 89.8 33.8 90.8 35.5 90.7L67.5 88.9C69.3 88.8 70 87.8 70 86.1V25.2C70 23.5 69 22.6 67 22.7Z" />
+              </svg>
+            </div>
 
-      <div className="border border-gray-100 rounded-xl overflow-hidden">
-        <div className="flex items-center gap-3 px-4 py-3 bg-white">
-          {/* Notion logo */}
-          <div className="w-8 h-8 rounded-lg bg-gray-900 flex items-center justify-center shrink-0">
-            <svg width="16" height="16" viewBox="0 0 100 100" fill="white" xmlns="http://www.w3.org/2000/svg">
-              <path d="M6 7.6C9.7 10.6 11 10.4 18.2 9.9L88.2 5.6C89.6 5.6 88.5 4.2 87.9 4L77.1 0.4C74.8 -0.3 72.1 0.1 69.7 0.4L2.4 5.7C0.3 6 0 7.3 1.1 8.2L6 7.6ZM8.5 18.1V91.6C8.5 95.4 10.5 96.7 14.9 96.4L91.5 92C95.9 91.7 96.4 89.3 96.4 86.3V13.1C96.4 10 95 8.4 92 8.7L12.1 13C9 13.3 8.5 14.9 8.5 18.1ZM84.5 21.4C85 23.9 84.5 26.4 82 26.7L77.5 27.4V87.5L82 87.2C84.5 87 85 84.5 85 82V21.4ZM22.3 29.3C22.3 26.8 20.7 25.9 18.5 26.1L14.5 26.4V86.2C14.5 88.7 16.5 90.1 18.8 89.9L22.3 89.6V29.3ZM67 22.7L35.5 24.4C33.5 24.5 33 25.5 33 27.2V88.1C33 89.8 33.8 90.8 35.5 90.7L67.5 88.9C69.3 88.8 70 87.8 70 86.1V25.2C70 23.5 69 22.6 67 22.7Z" />
-            </svg>
-          </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-foreground">Notion</p>
+              {status.connected ? (
+                <p className="text-xs text-muted-foreground truncate">
+                  {status.workspace_icon && (
+                    <span className="mr-1">{status.workspace_icon}</span>
+                  )}
+                  {status.workspace_name || "Connected"}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">Not connected</p>
+              )}
+            </div>
 
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-gray-900">Notion</p>
             {status.connected ? (
-              <p className="text-xs text-gray-500 truncate">
-                {status.workspace_icon && (
-                  <span className="mr-1">{status.workspace_icon}</span>
-                )}
-                {status.workspace_name || "Connected"}
-              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleDisconnect}
+                disabled={revoking}
+                className="shrink-0 disabled:opacity-40"
+              >
+                {revoking ? "Disconnecting…" : "Disconnect"}
+              </Button>
             ) : (
-              <p className="text-xs text-gray-400">Not connected</p>
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                onClick={handleConnect}
+                className="shrink-0"
+              >
+                Connect
+              </Button>
             )}
           </div>
-
-          {status.connected ? (
-            <button
-              type="button"
-              onClick={handleDisconnect}
-              disabled={revoking}
-              className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors shrink-0"
-            >
-              {revoking ? "Disconnecting…" : "Disconnect"}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleConnect}
-              className="px-3 py-1.5 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-700 transition-colors shrink-0"
-            >
-              Connect
-            </button>
-          )}
         </div>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -474,18 +485,18 @@ function GDriveConnectionSection({ pending = false }) {
 
   if (status === null) {
     return (
-      <div className="px-8 py-6">
-        <p className="text-sm text-gray-400">Loading…</p>
+      <div className="px-8 pb-6">
+        <p className="text-sm text-muted-foreground">Loading…</p>
       </div>
     );
   }
 
   return (
-    <div className="px-8 py-6">
-      <div className="border border-gray-100 rounded-xl overflow-hidden">
-        <div className="flex items-center gap-3 px-4 py-3 bg-white">
+    <div className="px-8 pb-6">
+      <div className="border border-border rounded-xl overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-3 bg-background">
           {/* Google Drive logo */}
-          <div className="w-8 h-8 rounded-lg bg-white border border-gray-200 flex items-center justify-center shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-background border border-border flex items-center justify-center shrink-0">
             <svg width="18" height="16" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
               <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
               <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47"/>
@@ -497,31 +508,35 @@ function GDriveConnectionSection({ pending = false }) {
           </div>
 
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-gray-900">Google Drive</p>
+            <p className="text-sm font-semibold text-foreground">Google Drive</p>
             {status.connected ? (
-              <p className="text-xs text-gray-500 truncate">{status.email || "Connected"}</p>
+              <p className="text-xs text-muted-foreground truncate">{status.email || "Connected"}</p>
             ) : (
-              <p className="text-xs text-gray-400">Not connected</p>
+              <p className="text-xs text-muted-foreground">Not connected</p>
             )}
           </div>
 
           {status.connected ? (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={handleDisconnect}
               disabled={revoking}
-              className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors shrink-0"
+              className="shrink-0 disabled:opacity-40"
             >
               {revoking ? "Disconnecting…" : "Disconnect"}
-            </button>
+            </Button>
           ) : (
-            <button
+            <Button
               type="button"
+              variant="default"
+              size="sm"
               onClick={handleConnect}
-              className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors shrink-0"
+              className="shrink-0"
             >
               Connect
-            </button>
+            </Button>
           )}
         </div>
       </div>
