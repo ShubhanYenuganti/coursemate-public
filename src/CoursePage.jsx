@@ -8,6 +8,15 @@ import Generations from './Generations.jsx';
 import CourseStatsWidget from './components/CourseStatsWidget';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -300,55 +309,67 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
             </div>
             <CourseStatsWidget courseId={course?.id} />
             {isOwner && (
-              <div className="rounded-xl border border-gray-200 bg-white/80 px-4 py-4 space-y-3">
-                <h3 className="text-sm font-semibold text-gray-700">Default AI Model</h3>
-                <p className="text-xs text-gray-400">When set, chats in this course will default to this provider and model instead of the global default.</p>
-                <div className="flex flex-wrap gap-3 items-end">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-gray-500">Provider</label>
-                    <select
-                      value={aiProvider}
-                      onChange={(e) => {
-                        setAiProvider(e.target.value);
-                        setAiModel('');
-                        setAiPickerStatus(null);
-                      }}
-                      className="px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                    >
-                      <option value="">None (use global)</option>
-                      <option value="openai">OpenAI</option>
-                      <option value="claude">Claude</option>
-                      <option value="gemini">Gemini</option>
-                    </select>
-                  </div>
-                  {aiProvider && (
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-medium text-gray-500">Model</label>
-                      <select
-                        value={aiModel}
-                        onChange={(e) => { setAiModel(e.target.value); setAiPickerStatus(null); }}
-                        className="px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Default AI Model</CardTitle>
+                  <CardDescription>
+                    When set, chats in this course will default to this provider and model instead of the global default.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-wrap gap-3 items-end">
+                    <div className="flex flex-col gap-1.5">
+                      <Label>Provider</Label>
+                      <Select
+                        value={aiProvider || 'none'}
+                        onValueChange={(v) => {
+                          setAiProvider(v === 'none' ? '' : v);
+                          setAiModel('');
+                          setAiPickerStatus(null);
+                        }}
                       >
-                        <option value="">Default for provider</option>
-                        {(PROVIDER_MODELS[aiProvider] || []).map((m) => (
-                          <option key={m.id} value={m.id}>{m.label}</option>
-                        ))}
-                      </select>
+                        <SelectTrigger className="w-[180px]">
+                          <SelectValue placeholder="None (use global)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">None (use global)</SelectItem>
+                          <SelectItem value="openai">OpenAI</SelectItem>
+                          <SelectItem value="claude">Claude</SelectItem>
+                          <SelectItem value="gemini">Gemini</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
+                    {aiProvider && (
+                      <div className="flex flex-col gap-1.5">
+                        <Label>Model</Label>
+                        <Select
+                          value={aiModel || 'default'}
+                          onValueChange={(v) => {
+                            setAiModel(v === 'default' ? '' : v);
+                            setAiPickerStatus(null);
+                          }}
+                        >
+                          <SelectTrigger className="w-[200px]">
+                            <SelectValue placeholder="Default for provider" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="default">Default for provider</SelectItem>
+                            {(PROVIDER_MODELS[aiProvider] || []).map((m) => (
+                              <SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <Button onClick={handleSaveAiModel} disabled={aiPickerStatus === 'saving'}>
+                      {aiPickerStatus === 'saving' ? 'Saving…' : aiPickerStatus === 'saved' ? 'Saved!' : 'Save'}
+                    </Button>
+                  </div>
+                  {aiPickerStatus === 'error' && (
+                    <p className="text-xs text-destructive mt-3">Failed to save. Please try again.</p>
                   )}
-                  <button
-                    type="button"
-                    onClick={handleSaveAiModel}
-                    disabled={aiPickerStatus === 'saving'}
-                    className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-                  >
-                    {aiPickerStatus === 'saving' ? 'Saving…' : aiPickerStatus === 'saved' ? 'Saved!' : 'Save'}
-                  </button>
-                </div>
-                {aiPickerStatus === 'error' && (
-                  <p className="text-xs text-red-600">Failed to save. Please try again.</p>
-                )}
-              </div>
+                </CardContent>
+              </Card>
             )}
             {isOwner && (
             <SharingAccessModal
