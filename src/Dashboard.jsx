@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import CardViewer from "./CardViewer.jsx";
 import CreateCourseModal from "./CreateCourseModal.jsx";
+import { Button } from "@/components/ui/button";
 
 function SignOutIcon() {
   return (
@@ -18,40 +19,44 @@ export default function Dashboard({ userData, onSignOut }) {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200 shadow-sm">
+      <header className="bg-background/80 backdrop-blur-sm border-b border-border shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           {/* Left: Brand */}
-          <span className="text-xl font-bold text-gray-900">CourseMate</span>
+          <span className="text-xl font-bold text-foreground">CourseMate</span>
 
           {/* Right: Avatar + New course + Sign out */}
           <div className="flex items-center gap-3">
             {userData?.picture && (
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
                 onClick={() => navigate('/profile')}
-                className="rounded-full focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="rounded-full focus:ring-ring"
                 title="View profile"
                 aria-label="View profile"
               >
                 <img
                   src={userData.picture}
                   alt={userData.username || userData.name}
-                  className="w-8 h-8 rounded-full border-2 border-gray-200 hover:opacity-80 transition-opacity cursor-pointer"
+                  className="w-8 h-8 rounded-full border-2 border-border hover:opacity-80 transition-opacity cursor-pointer"
                 />
-              </button>
+              </Button>
             )}
             <CreateCourseModal ref={createModalRef} />
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={onSignOut}
-              className="p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+              className="text-muted-foreground hover:text-foreground"
               title="Sign out"
               aria-label="Sign out"
             >
               <SignOutIcon />
-            </button>
+            </Button>
           </div>
         </div>
       </header>
