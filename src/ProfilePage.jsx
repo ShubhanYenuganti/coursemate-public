@@ -185,152 +185,160 @@ function ApiKeysSection() {
   }
 
   return (
-    <div className="px-8 py-6">
-      {/* Section header */}
-      <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">API Keys</h2>
-          {!loading && (
-            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-gray-100 text-gray-600 text-xs font-semibold">
-              {keyCount}
-            </span>
+    <Card className="rounded-none border-0 border-t border-border shadow-none">
+      <CardHeader className="px-8 pt-6 pb-1">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-sm font-semibold text-foreground uppercase tracking-wide">API Keys</CardTitle>
+            {!loading && (
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-muted text-muted-foreground text-xs font-semibold">
+                {keyCount}
+              </span>
+            )}
+          </div>
+          {!adding && availableProviders.length > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={startAdding}
+            >
+              <span className="text-base leading-none">+</span> Add Key
+            </Button>
           )}
         </div>
-        {!adding && availableProviders.length > 0 && (
-          <button
-            type="button"
-            onClick={startAdding}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-          >
-            <span className="text-base leading-none">+</span> Add Key
-          </button>
-        )}
-      </div>
-      <p className="text-xs text-gray-500 mb-4">
-        Your keys are encrypted at rest and never exposed in responses.
-      </p>
-
-      {/* Add key form */}
-      {adding && (
-        <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4 space-y-3">
-          <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Select provider</p>
-          <div className="flex gap-2 flex-wrap">
-            {availableProviders.map((p) => (
-              <button
-                key={p}
+        <CardDescription className="text-xs text-muted-foreground">
+          Your keys are encrypted at rest and never exposed in responses.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="px-8 pb-6">
+        {/* Add key form */}
+        {adding && (
+          <div className="mb-4 rounded-xl border border-border bg-accent/50 p-4 space-y-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Select provider</p>
+            <div className="flex gap-2 flex-wrap">
+              {availableProviders.map((p) => (
+                <Button
+                  key={p}
+                  type="button"
+                  variant={addProvider === p ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setAddProvider(p)}
+                >
+                  {PROVIDER_LABELS[p]}
+                </Button>
+              ))}
+            </div>
+            <Input
+              type="text"
+              value={addValue}
+              onChange={(e) => { setAddValue(e.target.value); setAddError(""); }}
+              placeholder={`Paste your ${addProvider ? PROVIDER_LABELS[addProvider] : "API"} key…`}
+              className="font-mono"
+            />
+            {addError && <p className="text-xs text-destructive">{addError}</p>}
+            <div className="flex gap-2">
+              <Button
                 type="button"
-                onClick={() => setAddProvider(p)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                  addProvider === p
-                    ? "bg-indigo-600 text-white border-indigo-600"
-                    : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
-                }`}
+                variant="default"
+                size="sm"
+                onClick={handleSaveNew}
+                disabled={addStatus === "saving"}
               >
-                {PROVIDER_LABELS[p]}
-              </button>
+                {addStatus === "saving" ? "Saving…" : "Save"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={cancelAdding}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Key list */}
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : savedProviders.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No API keys saved yet.</p>
+        ) : (
+          <div className="divide-y divide-border border border-border rounded-xl overflow-hidden">
+            {savedProviders.map((provider) => (
+              <div key={provider} className="bg-background">
+                {/* Normal row */}
+                {editingProvider !== provider ? (
+                  <div className="flex items-center gap-3 px-4 py-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-foreground">{PROVIDER_LABELS[provider]}</p>
+                      <p className="text-xs text-muted-foreground font-mono mt-0.5">••••••••••••••••••••</p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => startEditing(provider)}
+                        title="Edit key"
+                        className="text-muted-foreground hover:text-primary hover:bg-accent"
+                      >
+                        <PencilIcon />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleDelete(provider)}
+                        disabled={deletingProvider === provider}
+                        title="Delete key"
+                        className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-40"
+                      >
+                        <TrashIcon />
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Edit row */
+                  <div className="px-4 py-3 space-y-2 bg-accent/40">
+                    <p className="text-xs font-semibold text-muted-foreground">{PROVIDER_LABELS[provider]} — new key</p>
+                    <Input
+                      type="text"
+                      autoFocus
+                      value={editValue}
+                      onChange={(e) => { setEditValue(e.target.value); setEditError(""); }}
+                      placeholder="Paste replacement key…"
+                      className="font-mono"
+                    />
+                    {editError && <p className="text-xs text-destructive">{editError}</p>}
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="default"
+                        size="sm"
+                        onClick={handleSaveEdit}
+                        disabled={editStatus === "saving"}
+                      >
+                        {editStatus === "saving" ? "Saving…" : "Update"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={cancelEditing}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
-          <input
-            type="text"
-            value={addValue}
-            onChange={(e) => { setAddValue(e.target.value); setAddError(""); }}
-            placeholder={`Paste your ${addProvider ? PROVIDER_LABELS[addProvider] : "API"} key…`}
-            className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent font-mono"
-          />
-          {addError && <p className="text-xs text-red-600">{addError}</p>}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={handleSaveNew}
-              disabled={addStatus === "saving"}
-              className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-            >
-              {addStatus === "saving" ? "Saving…" : "Save"}
-            </button>
-            <button
-              type="button"
-              onClick={cancelAdding}
-              className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Key list */}
-      {loading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
-      ) : savedProviders.length === 0 ? (
-        <p className="text-sm text-gray-400">No API keys saved yet.</p>
-      ) : (
-        <div className="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden">
-          {savedProviders.map((provider) => (
-            <div key={provider} className="bg-white">
-              {/* Normal row */}
-              {editingProvider !== provider ? (
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900">{PROVIDER_LABELS[provider]}</p>
-                    <p className="text-xs text-gray-400 font-mono mt-0.5">••••••••••••••••••••</p>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => startEditing(provider)}
-                      title="Edit key"
-                      className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
-                    >
-                      <PencilIcon />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(provider)}
-                      disabled={deletingProvider === provider}
-                      title="Delete key"
-                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40"
-                    >
-                      <TrashIcon />
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                /* Edit row */
-                <div className="px-4 py-3 space-y-2 bg-indigo-50/40">
-                  <p className="text-xs font-semibold text-gray-600">{PROVIDER_LABELS[provider]} — new key</p>
-                  <input
-                    type="text"
-                    autoFocus
-                    value={editValue}
-                    onChange={(e) => { setEditValue(e.target.value); setEditError(""); }}
-                    placeholder="Paste replacement key…"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent font-mono"
-                  />
-                  {editError && <p className="text-xs text-red-600">{editError}</p>}
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={handleSaveEdit}
-                      disabled={editStatus === "saving"}
-                      className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-                    >
-                      {editStatus === "saving" ? "Saving…" : "Update"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={cancelEditing}
-                      className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50 transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
