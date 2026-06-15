@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 // Public — no auth gate — so Google's OAuth verifier can crawl them.
 export default function LegalPage({ title, lastUpdated, children }) {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
+    <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-background/70 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-3">

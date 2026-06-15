@@ -29,7 +29,7 @@ export default function SignInPage({ loading, error, onGoogleSignIn }) {
   }, [onGoogleSignIn]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-accent via-background to-cyan-50 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-background flex items-center justify-center px-4">
       <div className="w-full max-w-md animate-[fadeInUp_0.6s_ease-out]">
         {/* Logo / Brand */}
         <div className="text-center mb-8">
