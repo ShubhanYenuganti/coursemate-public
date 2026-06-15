@@ -17,7 +17,7 @@
 **Files:**
 - Create: `tests/test_no_legacy_rag_in_production.py`
 
-- [ ] **Step 1: Write the failing-if-violated test**
+- [x] **Step 1: Write the failing-if-violated test**
 
 ```python
 # tests/test_no_legacy_rag_in_production.py
@@ -40,13 +40,13 @@ def test_no_production_module_references_retrieve_chunks():
     )
 ```
 
-- [ ] **Step 2: Run the test (should already pass — it documents the invariant)**
+- [x] **Step 2: Run the test (should already pass — it documents the invariant)**
 
 Run: `pytest tests/test_no_legacy_rag_in_production.py -v`
 Expected: PASS (no production module currently references it). If it FAILS, a production caller
 exists — STOP and reassess the spec's finding before proceeding.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/test_no_legacy_rag_in_production.py
@@ -60,7 +60,7 @@ git commit -m "test: guard against legacy retrieve_chunks in production code"
 **Files:**
 - Modify: `api/rag.py:123` (docstring on `retrieve_chunks`)
 
-- [ ] **Step 1: Update the docstring**
+- [x] **Step 1: Update the docstring**
 
 Replace the opening of `retrieve_chunks` (line 123) so the first docstring line reads:
 
@@ -78,12 +78,12 @@ def retrieve_chunks(conn, query: str, material_ids: list, top_k: int = TOP_K,
 
 Preserve the existing parameter list exactly; only the docstring changes.
 
-- [ ] **Step 2: Run the eval-import smoke check**
+- [x] **Step 2: Run the eval-import smoke check**
 
 Run: `python -c "import sys; sys.path.insert(0,'api'); import rag; assert hasattr(rag,'retrieve_chunks')"`
 Expected: no output, exit 0 (function still importable for the eval).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add api/rag.py
@@ -97,13 +97,13 @@ git commit -m "docs: mark retrieve_chunks as eval-only legacy baseline"
 **Files:**
 - Modify: `api/chat.py` (~line 2119 comment "legacy exact-chunk replay")
 
-- [ ] **Step 1: Inspect the branch**
+- [x] **Step 1: Inspect the branch**
 
 Read `api/chat.py` around lines 2110–2140. Determine whether the "legacy exact-chunk replay" branch
 is reachable — specifically whether it hydrates IDs from a table retired by
 `migrations/002_retire_legacy_chat_rag_tables.sql`.
 
-- [ ] **Step 2: Decide and act**
+- [x] **Step 2: Decide and act**
 
 - **If unreachable** (reads a retired table / guarded by a condition that is always false): remove
   the dead branch and its comment. Keep the surrounding live logic intact.
@@ -111,12 +111,12 @@ is reachable — specifically whether it hydrates IDs from a table retired by
   deferred, see 2026-06-10-legacy-rag-retirement plan` and note the finding in the commit message.
   Do not guess or force-remove.
 
-- [ ] **Step 3: Run the chat test suite**
+- [x] **Step 3: Run the chat test suite**
 
 Run: `pytest tests/test_chat_citations.py tests/test_chat_memory.py tests/test_chat_search_snippets.py -v`
 Expected: PASS (no behavioral regression).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add api/chat.py
