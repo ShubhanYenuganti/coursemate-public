@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 
 const FEATURES = [
   {
@@ -93,9 +94,9 @@ const FAQ_ITEMS = [
 function ProviderBadges({ providers }) {
   const icons = { OpenAI: "○", Anthropic: "◆", "Google Gemini": "✦" };
   return (
-    <div className="flex items-center gap-2 text-sm text-gray-600">
+    <div className="flex items-center gap-2 text-sm text-muted-foreground">
       {providers.map((p) => (
-        <span key={p} className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-gray-200 bg-white">
+        <span key={p} className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-border bg-background">
           <span>{icons[p]}</span>
           <span>{p}</span>
         </span>
@@ -107,22 +108,23 @@ function ProviderBadges({ providers }) {
 function FaqItem({ q, a }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="border-b border-gray-200">
-      <button
-        className="w-full flex items-center justify-between py-4 text-left text-gray-900 font-medium hover:text-indigo-600 transition-colors"
+    <div className="border-b border-border">
+      <Button
+        variant="ghost"
+        className="w-full flex items-center justify-between py-4 text-left text-foreground font-medium hover:text-primary transition-colors h-auto px-0"
         onClick={() => setOpen(!open)}
       >
         {q}
         <svg
-          className={`w-5 h-5 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`}
+          className={`w-5 h-5 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
-      </button>
-      {open && <p className="pb-4 text-gray-600 text-sm leading-relaxed">{a}</p>}
+      </Button>
+      {open && <p className="pb-4 text-muted-foreground text-sm leading-relaxed">{a}</p>}
     </div>
   );
 }
@@ -159,54 +161,49 @@ export default function LandingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white text-gray-900">
+    <div className="min-h-screen bg-background text-foreground">
       {/* Navbar */}
-      <nav className="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-gray-100">
+      <nav className="sticky top-0 z-50 bg-background/90 backdrop-blur border-b border-border">
         <div className="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
+            {/* Brand logo mark — intentional indigo-600 brand gradient kept */}
             <div className="w-7 h-7 bg-indigo-600 rounded-md flex items-center justify-center">
               <span className="text-xs font-bold text-white">C</span>
             </div>
-            <span className="font-semibold text-gray-900">CourseMate</span>
+            <span className="font-semibold text-foreground">CourseMate</span>
           </div>
-          <button
-            onClick={goToSignIn}
-            className="px-4 py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-          >
+          <Button onClick={goToSignIn} size="sm">
             Sign up free
-          </button>
+          </Button>
         </div>
       </nav>
 
       {/* Hero */}
       <section className="max-w-5xl mx-auto px-6 pt-20 pb-16 text-center">
-        <div className="inline-block px-3 py-1 bg-indigo-50 text-indigo-600 text-xs font-medium rounded-full mb-6">
+        <div className="inline-block px-3 py-1 bg-accent text-primary text-xs font-medium rounded-full mb-6">
           Your keys. Your models. Your learning.
         </div>
         <h1 className="text-4xl sm:text-5xl font-bold leading-tight mb-6">
           Chat with your course —{" "}
-          <span className="text-indigo-600">powered by the models you choose.</span>
+          <span className="text-primary">powered by the models you choose.</span>
         </h1>
-        <p className="text-gray-600 text-lg leading-relaxed mb-3">
-          Bring your own <span className="text-indigo-600 font-medium">OpenAI</span>,{" "}
+        <p className="text-muted-foreground text-lg leading-relaxed mb-3">
+          Bring your own <span className="text-primary font-medium">OpenAI</span>,{" "}
           <span className="text-orange-500 font-medium">Anthropic</span>, or{" "}
           <span className="text-blue-500 font-medium">Google Gemini</span> API keys. CourseMate
           uses RAG to ground every answer in{" "}
-          <span className="underline decoration-indigo-400">your uploaded materials</span>, with
+          <span className="underline decoration-ring">your uploaded materials</span>, with
           optional web search when your notes don't have the answer. Generate quizzes, flashcards,
           and reports asynchronously — fast, queued, ready when you are.
         </p>
-        <p className="font-semibold text-gray-900 mb-8">Full control, full transparency.</p>
+        <p className="font-semibold text-foreground mb-8">Full control, full transparency.</p>
         <div className="flex flex-wrap justify-center gap-3 mb-10">
-          <button
-            onClick={goToSignIn}
-            className="px-6 py-3 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
-          >
+          <Button onClick={goToSignIn} size="lg">
             Sign up free
-          </button>
+          </Button>
           <a
             href="#how-it-works"
-            className="px-6 py-3 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+            className="px-6 py-3 border border-border text-muted-foreground font-medium rounded-lg hover:bg-muted transition-colors"
           >
             See how it works
           </a>
@@ -215,47 +212,48 @@ export default function LandingPage() {
       </section>
 
       {/* Features */}
-      <section className="bg-gray-50 py-16">
+      <section className="bg-muted py-16">
         <div className="max-w-5xl mx-auto px-6">
-          <p className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-6">
+          <p className="text-sm font-bold text-foreground uppercase tracking-wider mb-6">
             Features
           </p>
           {/* Card wrapping tabs + content */}
-          <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+          <div className="bg-background rounded-2xl border border-border p-6 shadow-sm">
           {/* Tabs - segmented control */}
-          <div className="grid grid-cols-3 gap-1 bg-gray-100 rounded-xl p-1 mb-6">
+          <div className="grid grid-cols-3 gap-1 bg-muted rounded-xl p-1 mb-6">
             {FEATURES.map((f) => (
-              <button
+              <Button
                 key={f.id}
+                variant="ghost"
                 onClick={() => setActiveFeature(f.id)}
-                className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-all ${
+                className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-all h-auto ${
                   activeFeature === f.id
-                    ? "bg-white text-indigo-600 shadow-sm border border-gray-200"
-                    : "text-gray-500 hover:text-gray-700"
+                    ? "bg-background text-primary shadow-sm border border-border"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {f.label}
-              </button>
+              </Button>
             ))}
           </div>
           {/* Feature content */}
           <div>
             <div className="flex items-start gap-3 mb-3">
-              <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-8 h-8 bg-accent rounded-lg flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                 </svg>
               </div>
               <div>
-                <h3 className="font-semibold text-gray-900">{feature.title}</h3>
-                <p className="text-xs text-gray-500">{feature.subtitle}</p>
+                <h3 className="font-semibold text-foreground">{feature.title}</h3>
+                <p className="text-xs text-muted-foreground">{feature.subtitle}</p>
               </div>
             </div>
-            <p className="text-gray-600 text-sm leading-relaxed mb-4">{feature.description}</p>
+            <p className="text-muted-foreground text-sm leading-relaxed mb-4">{feature.description}</p>
             <ul className="space-y-2 mb-5">
               {feature.bullets.map((b) => (
-                <li key={b} className="flex items-start gap-2 text-sm text-gray-700">
-                  <span className="text-indigo-500 mt-0.5">•</span>
+                <li key={b} className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <span className="text-primary mt-0.5">•</span>
                   {b}
                 </li>
               ))}
@@ -269,37 +267,38 @@ export default function LandingPage() {
       {/* How It Works */}
       <section id="how-it-works" className="py-16">
         <div className="max-w-5xl mx-auto px-6">
-          <p className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-8">
+          <p className="text-sm font-bold text-foreground uppercase tracking-wider mb-8">
             How It Works
           </p>
           <div className="grid grid-cols-2 gap-6 items-start">
             {/* Steps list */}
-            <div className="border-l-2 border-gray-100 space-y-2">
+            <div className="border-l-2 border-border space-y-2">
               {HOW_IT_WORKS.map(({ step, title }) => {
                 const active = step === activeStep;
                 return (
-                  <button
+                  <Button
                     key={step}
+                    variant="ghost"
                     onClick={() => setActiveStep(step)}
-                    className={`w-full text-left px-5 py-4 rounded-xl transition-all ${
+                    className={`w-full text-left px-5 py-4 rounded-xl transition-all h-auto flex flex-col items-start ${
                       active
-                        ? "bg-indigo-50 border border-indigo-300 border-l-4 border-l-indigo-500"
-                        : "hover:bg-gray-50"
+                        ? "bg-accent border border-primary/50 border-l-4 border-l-primary"
+                        : "hover:bg-muted"
                     }`}
                   >
-                    <p className={`text-xs font-semibold mb-1 ${active ? "text-indigo-600" : "text-gray-400"}`}>
+                    <p className={`text-xs font-semibold mb-1 ${active ? "text-primary" : "text-muted-foreground"}`}>
                       Step {step}
                     </p>
-                    <p className={`text-sm font-semibold ${active ? "text-gray-900" : "text-gray-400"}`}>
+                    <p className={`text-sm font-semibold ${active ? "text-foreground" : "text-muted-foreground"}`}>
                       {title}
                     </p>
-                  </button>
+                  </Button>
                 );
               })}
             </div>
             {/* Description panel */}
-            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm min-h-[160px] flex items-center">
-              <p className="text-gray-700 text-sm leading-relaxed">
+            <div className="bg-background border border-border rounded-xl p-6 shadow-sm min-h-[160px] flex items-center">
+              <p className="text-muted-foreground text-sm leading-relaxed">
                 {HOW_IT_WORKS.find((s) => s.step === activeStep)?.description}
               </p>
             </div>
@@ -308,35 +307,36 @@ export default function LandingPage() {
       </section>
 
       {/* What You Can Generate */}
-      <section className="bg-gray-50 py-16">
+      <section className="bg-muted py-16">
         <div className="max-w-5xl mx-auto px-6">
-          <p className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-6">
+          <p className="text-sm font-bold text-foreground uppercase tracking-wider mb-6">
             What You Can Generate
           </p>
-          <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+          <div className="bg-background rounded-2xl border border-border p-6 shadow-sm">
             {/* Tabs - segmented control */}
-            <div className="grid grid-cols-3 gap-1 bg-gray-100 rounded-xl p-1 mb-6">
+            <div className="grid grid-cols-3 gap-1 bg-muted rounded-xl p-1 mb-6">
               {GENERATE_TABS.map((t) => (
-                <button
+                <Button
                   key={t.id}
+                  variant="ghost"
                   onClick={() => setActiveGenerate(t.id)}
-                  className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-all ${
+                  className={`px-4 py-2.5 text-sm font-medium rounded-lg transition-all h-auto ${
                     activeGenerate === t.id
-                      ? "bg-white text-indigo-600 shadow-sm border border-gray-200"
-                      : "text-gray-500 hover:text-gray-700"
+                      ? "bg-background text-primary shadow-sm border border-border"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   {t.label}
-                </button>
+                </Button>
               ))}
             </div>
             <div className="flex items-start gap-2">
-              <svg className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h8" />
               </svg>
               <div>
-                <p className="text-sm font-medium text-gray-900">{generateTab.label}</p>
-                <p className="text-sm text-gray-600 mt-1">{generateTab.description}</p>
+                <p className="text-sm font-medium text-foreground">{generateTab.label}</p>
+                <p className="text-sm text-muted-foreground mt-1">{generateTab.description}</p>
               </div>
             </div>
           </div>
@@ -346,7 +346,7 @@ export default function LandingPage() {
       {/* FAQ */}
       <section className="py-16">
         <div className="max-w-5xl mx-auto px-6">
-          <p className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-8">FAQ</p>
+          <p className="text-sm font-bold text-foreground uppercase tracking-wider mb-8">FAQ</p>
           <div>
             {FAQ_ITEMS.map((item) => (
               <FaqItem key={item.q} q={item.q} a={item.a} />
@@ -356,12 +356,12 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-gray-200 py-8">
+      <footer className="border-t border-border py-8">
         <div className="max-w-5xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p className="text-sm text-gray-400">© {new Date().getFullYear()} CourseMate</p>
-          <div className="flex gap-6 text-sm text-gray-500">
-            <Link to="/privacy" className="hover:text-gray-900">Privacy Policy</Link>
-            <Link to="/terms" className="hover:text-gray-900">Terms of Service</Link>
+          <p className="text-sm text-muted-foreground">© {new Date().getFullYear()} CourseMate</p>
+          <div className="flex gap-6 text-sm text-muted-foreground">
+            <Link to="/privacy" className="hover:text-foreground">Privacy Policy</Link>
+            <Link to="/terms" className="hover:text-foreground">Terms of Service</Link>
           </div>
         </div>
       </footer>
