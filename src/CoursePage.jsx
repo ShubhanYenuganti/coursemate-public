@@ -52,14 +52,14 @@ function ToolbarItem({ icon, label, active, onClick }) {
       }`}
     >
       <span className={`max-w-0 overflow-hidden whitespace-nowrap text-sm font-medium transition-all duration-200 ease-out group-hover:max-w-xs ${
-        active ? 'text-indigo-700 max-w-xs' : 'text-gray-700'
+        active ? 'text-accent-foreground max-w-xs' : 'text-foreground'
       }`}>
         {label}
       </span>
       <div className={`w-10 h-10 flex items-center justify-center rounded-xl border shadow-sm text-lg transition-all duration-200 ${
         active
-          ? 'bg-indigo-600 border-indigo-600 text-white shadow-md'
-          : 'bg-white/80 border-gray-200 text-gray-600 group-hover:text-indigo-600 group-hover:border-indigo-300 group-hover:shadow-md'
+          ? 'bg-primary border-primary text-primary-foreground shadow-md'
+          : 'bg-background/80 border-border text-muted-foreground group-hover:text-primary group-hover:border-primary/40 group-hover:shadow-md'
       }`}>
         {icon}
       </div>
@@ -211,9 +211,9 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200 shadow-sm">
+      <header className="bg-background/80 backdrop-blur-sm border-b border-border shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Button
@@ -414,15 +414,15 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
       </main>
 
       {/* Floating toolbar */}
-      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-gray-200 shadow-lg">
+      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-background/70 backdrop-blur-md border border-border shadow-lg">
         <>
           <ToolbarItem icon="🏠" label="Overview" active={activeTab === 'home'} onClick={() => handleTabChange('home')} />
-          <div className="w-px h-6 bg-gray-200" />
+          <div className="w-px h-6 bg-border" />
         </>
         <ToolbarItem icon="📄" label="Materials" active={activeTab === 'materials'} onClick={() => handleTabChange('materials')} />
-        <div className="w-px h-6 bg-gray-200" />
+        <div className="w-px h-6 bg-border" />
         <ToolbarItem icon="💬" label="Chat"      active={activeTab === 'chat'}      onClick={() => handleTabChange('chat')} />
-        <div className="w-px h-6 bg-gray-200" />
+        <div className="w-px h-6 bg-border" />
         <ToolbarItem icon="💡" label="Generate"  active={activeTab === 'generate'}  onClick={() => handleTabChange('generate')} />
       </div>
     </div>
