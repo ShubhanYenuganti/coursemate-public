@@ -272,7 +272,7 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
                     placeholder="Add a description…"
                     className="resize-none"
                   />
-                  {descError && <p className="text-xs text-red-600">{descError}</p>}
+                  {descError && <p className="text-xs text-destructive">{descError}</p>}
                   <div className="flex gap-2">
                     <Button size="sm" onClick={handleSaveDesc} disabled={descStatus === 'saving'}>
                       {descStatus === 'saving' ? 'Saving…' : 'Save'}
