@@ -626,54 +626,56 @@ export default function ProfilePage({ userData, csrfToken, onSignOut, onUserUpda
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
-      {/* Notion connected toast */}
+    <div className="min-h-screen bg-background">
+      {/* Notion connected toast — decorative overlay, structure kept, retinted */}
       {notionToast && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-xl bg-gray-900 text-white text-sm shadow-lg">
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-xl bg-foreground text-background text-sm shadow-lg">
           <span>Notion connected successfully.</span>
-          <button type="button" onClick={() => setNotionToast(false)} className="ml-2 text-gray-400 hover:text-white transition-colors">✕</button>
+          <Button type="button" variant="ghost" size="icon" onClick={() => setNotionToast(false)} className="ml-2 text-background/60 hover:text-background hover:bg-transparent h-auto w-auto p-0">✕</Button>
         </div>
       )}
 
       {/* Header */}
-      <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200 shadow-sm">
+      <header className="bg-background/80 backdrop-blur-sm border-b border-border shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={() => navigate('/dashboard')}
-              className="p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
               title="Go back"
               aria-label="Go back"
             >
               <BackIcon />
-            </button>
-            <span className="text-xl font-bold text-gray-900">Profile</span>
+            </Button>
+            <span className="text-xl font-bold text-foreground">Profile</span>
           </div>
           <div className="flex items-center gap-3">
             {userData?.picture && (
               <img
                 src={userData.picture}
                 alt={userData.username || userData.name}
-                className="w-8 h-8 rounded-full border-2 border-gray-200"
+                className="w-8 h-8 rounded-full border-2 border-border"
               />
             )}
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={onSignOut}
-              className="p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
               title="Sign out"
               aria-label="Sign out"
             >
               <SignOutIcon />
-            </button>
+            </Button>
           </div>
         </div>
       </header>
 
       {/* Main content */}
       <main className="flex justify-center pt-12 px-4 pb-16">
-        <div className="w-full max-w-md space-y-0 bg-white/80 backdrop-blur-sm border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="w-full max-w-md space-y-0 bg-background/80 backdrop-blur-sm border border-border rounded-2xl shadow-sm overflow-hidden">
 
           {/* Avatar + identity */}
           <div className="flex flex-col items-center pt-8 pb-6 px-8">
@@ -681,102 +683,107 @@ export default function ProfilePage({ userData, csrfToken, onSignOut, onUserUpda
               <img
                 src={userData.picture}
                 alt={userData.username || userData.name}
-                className="w-20 h-20 rounded-full border-2 border-gray-200 shadow-sm mb-4"
+                className="w-20 h-20 rounded-full border-2 border-border shadow-sm mb-4"
               />
             ) : (
+              /* Brand avatar gradient — intentional brand asset, kept */
               <div className="w-20 h-20 rounded-full bg-gradient-to-r from-indigo-400 to-cyan-400 flex items-center justify-center mb-4 shadow-sm">
                 <span className="text-2xl font-bold text-white">
                   {(userData?.username || userData?.name || "?")[0].toUpperCase()}
                 </span>
               </div>
             )}
-            <p className="text-lg font-semibold text-gray-900">{userData?.username || userData?.name}</p>
-            <p className="text-sm text-gray-500">{userData?.email}</p>
+            <p className="text-lg font-semibold text-foreground">{userData?.username || userData?.name}</p>
+            <p className="text-sm text-muted-foreground">{userData?.email}</p>
           </div>
 
-          <div className="border-t border-gray-100" />
+          <div className="border-t border-border" />
 
           {/* Username section */}
-          <div className="px-8 py-6">
-            <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-4">Display Name</h2>
-            <form onSubmit={handleSaveUsername} className="flex gap-2">
-              <input
-                type="text"
-                value={usernameInput}
-                onChange={(e) => { setUsernameInput(e.target.value); setUsernameStatus(null); setUsernameError(""); }}
-                maxLength={255}
-                placeholder="Your display name"
-                className="flex-1 px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all"
-              />
-              <button
-                type="submit"
-                disabled={usernameStatus === "saving"}
-                className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-              >
-                {usernameStatus === "saving" ? "Saving…" : "Save"}
-              </button>
-            </form>
-            {usernameStatus === "saved" && (
-              <p className="mt-2 text-sm text-green-600">Username updated.</p>
-            )}
-            {usernameError && (
-              <p className="mt-2 text-sm text-red-600">{usernameError}</p>
-            )}
-          </div>
-
-          <div className="border-t border-gray-100" />
+          <Card className="rounded-none border-0 shadow-none">
+            <CardHeader className="px-8 pt-6 pb-2">
+              <CardTitle className="text-sm font-semibold text-foreground uppercase tracking-wide">Display Name</CardTitle>
+            </CardHeader>
+            <CardContent className="px-8 pb-6">
+              <form onSubmit={handleSaveUsername} className="flex gap-2">
+                <Label htmlFor="username-input" className="sr-only">Display name</Label>
+                <Input
+                  id="username-input"
+                  type="text"
+                  value={usernameInput}
+                  onChange={(e) => { setUsernameInput(e.target.value); setUsernameStatus(null); setUsernameError(""); }}
+                  maxLength={255}
+                  placeholder="Your display name"
+                  className="flex-1"
+                />
+                <Button
+                  type="submit"
+                  variant="default"
+                  disabled={usernameStatus === "saving"}
+                >
+                  {usernameStatus === "saving" ? "Saving…" : "Save"}
+                </Button>
+              </form>
+              {usernameStatus === "saved" && (
+                <p className="mt-2 text-sm text-green-600">Username updated.</p>
+              )}
+              {usernameError && (
+                <p className="mt-2 text-sm text-destructive">{usernameError}</p>
+              )}
+            </CardContent>
+          </Card>
 
           {/* API Keys section */}
           <ApiKeysSection />
-
-          <div className="border-t border-gray-100" />
 
           {/* Connected apps section */}
           <NotionConnectionSection pending={notionPending} />
           <GDriveConnectionSection pending={gdrivePending} />
 
-          <div className="border-t border-gray-100" />
-
           {/* Danger zone */}
-          <div className="px-8 py-6">
-            <h2 className="text-sm font-semibold text-red-600 uppercase tracking-wide mb-1">Danger Zone</h2>
-            <p className="text-sm text-gray-500 mb-4">Permanently removes your account and all associated data. This cannot be undone.</p>
-
-            {!deleteConfirm ? (
-              <button
-                type="button"
-                onClick={() => setDeleteConfirm(true)}
-                className="px-4 py-2 rounded-lg border border-red-300 text-red-600 text-sm font-medium hover:bg-red-50 transition-colors"
-              >
-                Remove my account
-              </button>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-sm font-medium text-red-700">Are you sure? This cannot be undone.</p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { setDeleteConfirm(false); setDeleteError(""); }}
-                    disabled={deleteStatus === "deleting"}
-                    className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleDeleteConfirm}
-                    disabled={deleteStatus === "deleting"}
-                    className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50 transition-colors"
-                  >
-                    {deleteStatus === "deleting" ? "Deleting…" : "Yes, delete my account"}
-                  </button>
+          <Card className="rounded-none border-0 border-t border-border shadow-none">
+            <CardHeader className="px-8 pt-6 pb-1">
+              <CardTitle className="text-sm font-semibold text-destructive uppercase tracking-wide">Danger Zone</CardTitle>
+              <CardDescription className="text-sm text-muted-foreground">Permanently removes your account and all associated data. This cannot be undone.</CardDescription>
+            </CardHeader>
+            <CardContent className="px-8 pb-6">
+              {!deleteConfirm ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => setDeleteConfirm(true)}
+                  className="border border-destructive/30 bg-transparent text-destructive hover:bg-destructive/10"
+                >
+                  Remove my account
+                </Button>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium text-destructive">Are you sure? This cannot be undone.</p>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => { setDeleteConfirm(false); setDeleteError(""); }}
+                      disabled={deleteStatus === "deleting"}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={handleDeleteConfirm}
+                      disabled={deleteStatus === "deleting"}
+                    >
+                      {deleteStatus === "deleting" ? "Deleting…" : "Yes, delete my account"}
+                    </Button>
+                  </div>
+                  {deleteError && (
+                    <p className="text-sm text-destructive">{deleteError}</p>
+                  )}
                 </div>
-                {deleteError && (
-                  <p className="text-sm text-red-600">{deleteError}</p>
-                )}
-              </div>
-            )}
-          </div>
+              )}
+            </CardContent>
+          </Card>
 
         </div>
       </main>
