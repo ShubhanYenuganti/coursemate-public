@@ -7,6 +7,7 @@ import ChatTab, { PROVIDER_MODELS } from './ChatTab.jsx';
 import Generations from './Generations.jsx';
 import CourseStatsWidget from './components/CourseStatsWidget';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -253,32 +254,23 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
             <div className="group relative">
               {editingDesc ? (
                 <div className="space-y-2">
-                  <textarea
+                  <Textarea
                     autoFocus
                     value={descValue}
                     onChange={(e) => { setDescValue(e.target.value); setDescError(''); }}
                     rows={4}
                     maxLength={2000}
                     placeholder="Add a description…"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent resize-none transition-all"
+                    className="resize-none"
                   />
                   {descError && <p className="text-xs text-red-600">{descError}</p>}
                   <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={handleSaveDesc}
-                      disabled={descStatus === 'saving'}
-                      className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-                    >
+                    <Button size="sm" onClick={handleSaveDesc} disabled={descStatus === 'saving'}>
                       {descStatus === 'saving' ? 'Saving…' : 'Save'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={cancelEditDesc}
-                      className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50 transition-colors"
-                    >
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={cancelEditDesc}>
                       Cancel
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ) : (
@@ -295,7 +287,7 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
                       type="button"
                       onClick={() => setEditingDesc(true)}
                       title="Edit description"
-                      className="absolute top-0 right-0 p-1.5 rounded-lg text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 opacity-0 group-hover:opacity-100 transition-all"
+                      className="absolute top-0 right-0 p-1.5 rounded-lg text-gray-300 hover:text-primary hover:bg-accent opacity-0 group-hover:opacity-100 transition-all"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
