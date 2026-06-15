@@ -224,7 +224,7 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
             >
               <BackIcon />
             </Button>
-            <span className="text-xl font-bold text-gray-900">{course?.title || 'Course'}</span>
+            <span className="text-xl font-bold text-foreground">{course?.title || 'Course'}</span>
           </div>
 
           <div className="flex items-center gap-3">
@@ -238,7 +238,7 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
                 <img
                   src={userData.picture}
                   alt={userData.username || userData.name}
-                  className="w-8 h-8 rounded-full border-2 border-gray-200 hover:opacity-80 transition-opacity cursor-pointer"
+                  className="w-8 h-8 rounded-full border-2 border-border hover:opacity-80 transition-opacity cursor-pointer"
                 />
               </button>
             )}
@@ -285,10 +285,10 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
               ) : (
                 <>
                   {course?.description ? (
-                    <p className="text-sm text-gray-600 leading-relaxed pr-8">{course.description}</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed pr-8">{course.description}</p>
                   ) : (
                     isOwner && (
-                      <p className="text-sm text-gray-400 italic pr-8">No description yet.</p>
+                      <p className="text-sm text-muted-foreground italic pr-8">No description yet.</p>
                     )
                   )}
                   {isOwner && (
@@ -296,7 +296,7 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
                       type="button"
                       onClick={() => setEditingDesc(true)}
                       title="Edit description"
-                      className="absolute top-0 right-0 p-1.5 rounded-lg text-gray-300 hover:text-primary hover:bg-accent opacity-0 group-hover:opacity-100 transition-all"
+                      className="absolute top-0 right-0 p-1.5 rounded-lg text-muted-foreground/60 hover:text-primary hover:bg-accent opacity-0 group-hover:opacity-100 transition-all"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
