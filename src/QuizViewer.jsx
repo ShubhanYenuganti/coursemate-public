@@ -773,8 +773,8 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
         {viewMode === 'quiz' && (
           <div className="max-w-2xl mx-auto flex flex-col gap-6">
             {attemptResult && (
-              <div className="mb-2 rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-xs font-semibold text-gray-900">
+              <div className="mb-2 rounded-xl border bg-background px-4 py-3">
+                <div className="text-xs font-semibold text-foreground">
                   Score: {typeof attemptResult.score_percent === 'number' ? `${attemptResult.score_percent.toFixed(0)}%` : 'N/A'}
                 </div>
                 {attemptResult.manual_review_required && (
@@ -785,7 +785,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
               </div>
             )}
             {questions.length === 0 && (
-              <p className="text-center text-sm text-gray-400 py-12">No questions generated.</p>
+              <p className="text-center text-sm text-muted-foreground py-12">No questions generated.</p>
             )}
             {questions.map((q, i) => (
               <QuestionCard
@@ -805,36 +805,37 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
         {/* ── Attempts list ── */}
         {viewMode === 'attempts' && (
           <div className="max-w-2xl mx-auto">
-            <h2 className="text-base font-semibold text-gray-900 mb-4">Past Attempts</h2>
+            <h2 className="text-base font-semibold text-foreground mb-4">Past Attempts</h2>
             {attemptsLoading && (
               <div className="flex justify-center py-12">
-                <div className="w-8 h-8 border-4 border-gray-200 border-t-indigo-500 rounded-full animate-spin" />
+                <div className="w-8 h-8 border-4 border-muted border-t-primary rounded-full animate-spin" />
               </div>
             )}
             {!attemptsLoading && attemptsList.length === 0 && (
-              <p className="text-sm text-gray-400 italic text-center py-12">No attempts yet. Submit the quiz to record your first attempt.</p>
+              <p className="text-sm text-muted-foreground italic text-center py-12">No attempts yet. Submit the quiz to record your first attempt.</p>
             )}
             {!attemptsLoading && attemptsList.map((a) => {
               const score = typeof a.score_percent === 'number' ? a.score_percent : null;
-              const scoreColor = score === null ? 'text-gray-500' : score >= 70 ? 'text-green-600' : score >= 40 ? 'text-amber-600' : 'text-red-600';
+              const scoreColor = score === null ? 'text-muted-foreground' : score >= 70 ? 'text-green-600' : score >= 40 ? 'text-amber-600' : 'text-red-600';
               return (
-                <div key={a.attempt_id} className="flex items-center justify-between gap-4 bg-white rounded-xl border border-gray-200 px-4 py-3 mb-3">
+                <div key={a.attempt_id} className="flex items-center justify-between gap-4 bg-background rounded-xl border px-4 py-3 mb-3">
                   <div>
                     <p className={`text-lg font-bold ${scoreColor}`}>
                       {score !== null ? `${score.toFixed(0)}%` : 'N/A'}
                     </p>
-                    <p className="text-[11px] text-gray-400 mt-0.5">
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
                       {formatDateTime(a.submitted_at)}
                       {a.manual_review_count > 0 && <span className="ml-2 text-amber-600">· {a.manual_review_count} manual review</span>}
                     </p>
                   </div>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => openAttemptDetail(a.attempt_id)}
-                    className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                    className="rounded-lg px-3 py-1.5 h-auto text-xs font-medium text-foreground hover:bg-muted"
                   >
                     Review
-                  </button>
+                  </Button>
                 </div>
               );
             })}
