@@ -201,12 +201,9 @@ export default function LandingPage() {
           <Button onClick={goToSignIn} size="lg">
             Sign up free
           </Button>
-          <a
-            href="#how-it-works"
-            className="px-6 py-3 border border-border text-muted-foreground font-medium rounded-lg hover:bg-muted transition-colors"
-          >
-            See how it works
-          </a>
+          <Button asChild variant="outline" size="lg" className="text-muted-foreground">
+            <a href="#how-it-works">See how it works</a>
+          </Button>
         </div>
         <ProviderBadges providers={["OpenAI", "Anthropic", "Google Gemini"]} />
       </section>
