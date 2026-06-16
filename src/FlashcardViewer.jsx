@@ -1,6 +1,21 @@
 import { useState, useMemo, useEffect } from 'react';
 import NotionTargetPicker from './components/NotionTargetPicker';
 import GDriveTargetPicker from './components/GDriveTargetPicker';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -140,18 +155,19 @@ function ShuffleIcon() {
 
 function ToolbarItem({ icon, label, onClick }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       onClick={onClick}
-      className="group flex items-center gap-2 transition-all duration-150 rounded-xl px-1 py-1 focus:outline-none cursor-pointer"
+      className="group h-auto w-auto rounded-xl px-1 py-1 gap-2 transition-all duration-150 focus:outline-none cursor-pointer hover:bg-transparent"
     >
-      <span className="max-w-0 overflow-hidden whitespace-nowrap text-sm font-medium transition-all duration-200 ease-out group-hover:max-w-xs text-gray-700">
+      <span className="max-w-0 overflow-hidden whitespace-nowrap text-sm font-medium transition-all duration-200 ease-out group-hover:max-w-xs text-foreground">
         {label}
       </span>
-      <div className="w-10 h-10 flex items-center justify-center rounded-xl border shadow-sm text-lg transition-all duration-200 bg-white/80 border-gray-200 text-gray-600 group-hover:text-indigo-600 group-hover:border-indigo-300 group-hover:shadow-md">
+      <div className="w-10 h-10 flex items-center justify-center rounded-xl border shadow-sm text-lg transition-all duration-200 bg-background/80 border-border text-muted-foreground group-hover:text-primary group-hover:border-primary/40 group-hover:shadow-md">
         {icon}
       </div>
-    </button>
+    </Button>
   );
 }
 
