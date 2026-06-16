@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -113,6 +114,19 @@ function FileTypeBadge({ name, sourceType }) {
     <span className={`flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded text-[7px] font-bold tracking-tight ${style.bg} ${style.text}`}>
       {style.label}
     </span>
+  );
+}
+
+function SourceName({ name }) {
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="flex-1 truncate min-w-0 text-xs cursor-default">{name}</span>
+        </TooltipTrigger>
+        <TooltipContent side="top">{name}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
@@ -740,7 +754,7 @@ export default function Quiz({ course, onAddSource }) {
                     }`}
                   >
                     <FileTypeBadge name={m.name} sourceType={m.source_type} />
-                    <span className="flex-1 truncate min-w-0 text-xs">{m.name}</span>
+                    <SourceName name={m.name} />
                     {(() => { const url = getMaterialUrl(m); return url ? (
                       <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 p-0.5 rounded text-muted-foreground hover:text-primary transition-colors" onClick={(e) => e.stopPropagation()}>
                         <ExternalLinkIcon />
@@ -762,7 +776,7 @@ export default function Quiz({ course, onAddSource }) {
                         }`}
                       >
                         <FileTypeBadge name={m.name} sourceType={m.source_type} />
-                        <span className="flex-1 truncate min-w-0 text-xs">{m.name}</span>
+                        <SourceName name={m.name} />
                         {(() => { const url = getMaterialUrl(m); return url ? (
                           <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 p-0.5 rounded text-muted-foreground hover:text-primary transition-colors" onClick={(e) => e.stopPropagation()}>
                             <ExternalLinkIcon />
