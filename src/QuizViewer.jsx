@@ -976,7 +976,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
 
       {notionBanner && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
-          notionBanner.ok ? "bg-gray-900 text-white" : "bg-red-600 text-white"
+          notionBanner.ok ? "bg-foreground text-background" : "bg-destructive text-white"
         }`}>
           {notionBanner.ok ? (
             <>
@@ -988,9 +988,9 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
           ) : (
             <span>{notionBanner.message}</span>
           )}
-          <button type="button" onClick={() => setNotionBanner(null)} className="ml-2 opacity-60 hover:opacity-100">
+          <Button type="button" variant="ghost" onClick={() => setNotionBanner(null)} className="h-auto w-auto ml-2 p-0 opacity-60 hover:opacity-100 hover:bg-transparent">
             <XIcon />
-          </button>
+          </Button>
         </div>
       )}
 
@@ -1008,7 +1008,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
 
       {gdriveBanner && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
-          gdriveBanner.ok ? "bg-gray-900 text-white" : "bg-red-600 text-white"
+          gdriveBanner.ok ? "bg-foreground text-background" : "bg-destructive text-white"
         }`}>
           {gdriveBanner.ok ? (
             <>
@@ -1020,9 +1020,9 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
           ) : (
             <span>{gdriveBanner.message}</span>
           )}
-          <button type="button" onClick={() => setGdriveBanner(null)} className="ml-2 opacity-60 hover:opacity-100">
+          <Button type="button" variant="ghost" onClick={() => setGdriveBanner(null)} className="h-auto w-auto ml-2 p-0 opacity-60 hover:opacity-100 hover:bg-transparent">
             <XIcon />
-          </button>
+          </Button>
         </div>
       )}
 
