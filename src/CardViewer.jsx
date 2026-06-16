@@ -53,9 +53,9 @@ function CourseMenu({ courseId, onDelete }) {
         <div className="absolute right-0 top-8 z-20 w-36 bg-background border border-border rounded-xl shadow-lg overflow-hidden">
           <Button
             type="button"
-            variant="ghost"
+            variant="destructive"
             onClick={(e) => { e.stopPropagation(); setOpen(false); onDelete(courseId); }}
-            className="w-full justify-start text-left px-4 py-2.5 h-auto rounded-none text-sm text-destructive hover:bg-destructive/10"
+            className="w-full justify-start text-left px-4 py-2.5 h-auto rounded-none text-sm"
           >
             Delete
           </Button>
@@ -128,7 +128,7 @@ function CourseCard({ course, onDelete, onClick, onRename }) {
                       variant="ghost"
                       size="icon"
                       onClick={startEdit}
-                      className="flex-shrink-0 p-0.5 h-auto w-auto text-muted-foreground/60 hover:text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="flex-shrink-0 p-0.5 h-auto w-auto rounded-md text-muted-foreground/60 hover:text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
                       aria-label="Rename course"
                     >
                       <EditIcon />
