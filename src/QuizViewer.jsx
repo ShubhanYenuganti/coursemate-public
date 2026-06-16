@@ -569,11 +569,11 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
   }
 
   const actionButtonClass =
-    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
-  const actionIconClass = "text-gray-500";
+    "rounded-lg border-border bg-background px-3 py-1.5 h-auto gap-1.5 text-xs font-medium text-foreground hover:bg-muted";
+  const actionIconClass = "text-muted-foreground";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-blue-50 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-accent via-purple-50 to-blue-50 flex flex-col">
       {parentGenerationId && (
         <div className="bg-amber-50 border-b border-amber-200 px-8 py-3">
           <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
@@ -581,114 +581,121 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
               New version generated. What would you like to do with the previous version?
             </p>
             <div className="flex items-center gap-2 flex-shrink-0">
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => handleResolve('save_both')}
                 disabled={resolving}
-                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                className="rounded-lg border-amber-300 bg-transparent px-3 py-1.5 h-auto text-xs font-medium text-amber-800 hover:bg-amber-100"
               >
                 Save Both
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => handleResolve('replace')}
                 disabled={resolving}
-                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                className="rounded-lg border-amber-300 bg-transparent px-3 py-1.5 h-auto text-xs font-medium text-amber-800 hover:bg-amber-100"
               >
                 Replace Previous
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={() => handleResolve('revert')}
                 disabled={resolving}
-                className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 transition-colors disabled:opacity-50"
+                className="rounded-lg bg-amber-600 px-3 py-1.5 h-auto text-xs font-medium text-white hover:bg-amber-700"
               >
                 Revert
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       )}
       {/* Header */}
-      <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-gray-100 px-8 py-3">
+      <header className="sticky top-0 z-10 bg-background/80 backdrop-blur border-b border-border px-8 py-3">
         <div className="max-w-5xl mx-auto relative flex items-center justify-center">
           <div className="flex items-center gap-10">
             <div className="text-center">
               {viewMode === 'quiz' ? (
                 <>
-                  <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">{answeredCount} / {total}</p>
-                  <p className="text-[10px] text-gray-400 mt-0.5">Quiz Progress</p>
+                  <p className="text-base font-semibold text-foreground tabular-nums leading-none">{answeredCount} / {total}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Quiz Progress</p>
                 </>
               ) : viewMode === 'attempts' ? (
                 <>
-                  <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">{attemptsList.length}</p>
-                  <p className="text-[10px] text-gray-400 mt-0.5">Attempts</p>
+                  <p className="text-base font-semibold text-foreground tabular-nums leading-none">{attemptsList.length}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Attempts</p>
                 </>
               ) : (
                 <>
-                  <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">
+                  <p className="text-base font-semibold text-foreground tabular-nums leading-none">
                     {selectedAttempt ? `${(selectedAttempt.score_percent ?? 0).toFixed(0)}%` : '—'}
                   </p>
-                  <p className="text-[10px] text-gray-400 mt-0.5">Score</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Score</p>
                 </>
               )}
             </div>
 
             <div className="flex items-center gap-2">
               {viewMode !== 'quiz' ? (
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={backToQuiz}
                   className={actionButtonClass}
                 >
                   <span className={actionIconClass}><ArrowLeftIcon /></span>
                   Back to Quiz
-                </button>
+                </Button>
               ) : (
                 <>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => onRegenerate?.(quiz)}
                     className={actionButtonClass}
                   >
                     <span className={actionIconClass}><RefreshIcon /></span>
                     Regenerate
-                  </button>
+                  </Button>
 
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={handleSubmitAttempt}
                     disabled={attemptStatus === 'submitting' || !generationId}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    className={`rounded-lg px-3 py-1.5 h-auto gap-1.5 text-xs font-medium ${
                       attemptStatus === 'submitted'
-                        ? 'border border-green-200 bg-green-50 text-green-700 cursor-default'
+                        ? 'border-green-200 bg-green-50 text-green-700 cursor-default hover:bg-green-50'
                         : attemptStatus === 'error'
-                          ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-50'
-                          : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-                    } disabled:opacity-50 disabled:cursor-not-allowed`}
+                          ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-50'
+                          : 'border-border bg-background text-foreground hover:bg-muted'
+                    }`}
                   >
                     <span className={actionIconClass}><ClockIcon /></span>
                     {attemptStatus === 'submitting' ? 'Grading…' : 'Submit Attempt'}
-                  </button>
+                  </Button>
 
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={handleSave}
                     disabled={saveStatus === 'saving' || saveStatus === 'saved'}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                    className={`rounded-lg px-3 py-1.5 h-auto gap-1.5 text-xs font-medium ${
                       saveStatus === 'saved'
-                        ? 'border-green-300 text-green-700 bg-green-50 cursor-default'
+                        ? 'border-green-300 text-green-700 bg-green-50 cursor-default hover:bg-green-50'
                         : saveStatus === 'error'
                           ? 'border-red-300 text-red-600 hover:bg-red-50'
-                          : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                          : 'border-border text-muted-foreground hover:bg-muted'
                     }`}
                   >
                     <span className={actionIconClass}><BookmarkIcon /></span>
                     {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved ✓' : saveStatus === 'error' ? 'Retry Save' : 'Save'}
-                  </button>
+                  </Button>
 
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={handleExportPdf}
                     disabled={!generationId || exportStatus === 'exporting'}
                     className={actionButtonClass}
@@ -696,10 +703,11 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                     <span className={actionIconClass}><DownloadIcon /></span>
                     {exportStatus === 'exporting' ? 'Exporting…' : 'Export'}
                     <span className={actionIconClass}><ChevronDownIcon /></span>
-                  </button>
+                  </Button>
                   {notionConnected && (
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
                       onClick={handleNotionClick}
                       disabled={notionExporting}
                       className={actionButtonClass}
@@ -711,11 +719,12 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                         <rect x="7" y="15" width="8" height="1.5" rx=".75"/>
                       </svg>
                       {notionExporting ? "Exporting…" : "Notion"}
-                    </button>
+                    </Button>
                   )}
                   {gdriveConnected && (
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
                       onClick={handleGDriveClick}
                       disabled={gdriveExporting}
                       className={actionButtonClass}
@@ -729,29 +738,31 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                         <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
                       </svg>
                       {gdriveExporting ? "Exporting…" : "Drive"}
-                    </button>
+                    </Button>
                   )}
                 </>
               )}
 
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={showAttempts}
                 className={actionButtonClass}
               >
                 <span className={actionIconClass}><ClockIcon /></span>
                 Attempts
-              </button>
+              </Button>
             </div>
           </div>
 
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={onClose}
-            className="absolute right-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            className="absolute right-0 h-auto w-auto rounded-lg p-1.5 text-muted-foreground hover:text-foreground"
           >
             <XIcon />
-          </button>
+          </Button>
         </div>
       </header>
 
