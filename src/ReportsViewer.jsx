@@ -812,7 +812,7 @@ export default function ReportsViewer({
 
       {notionBanner && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
-          notionBanner.ok ? "bg-gray-900 text-white" : "bg-red-600 text-white"
+          notionBanner.ok ? "bg-foreground text-background" : "bg-destructive text-white"
         }`}>
           {notionBanner.ok ? (
             <>
@@ -824,9 +824,9 @@ export default function ReportsViewer({
           ) : (
             <span>{notionBanner.message}</span>
           )}
-          <button type="button" onClick={() => setNotionBanner(null)} className="ml-2 opacity-60 hover:opacity-100">
+          <Button type="button" onClick={() => setNotionBanner(null)} variant="ghost" size="icon-sm" className="ml-2 rounded-md text-current opacity-60 hover:opacity-100 hover:bg-transparent">
             <XIcon />
-          </button>
+          </Button>
         </div>
       )}
 
@@ -844,7 +844,7 @@ export default function ReportsViewer({
 
       {gdriveBanner && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
-          gdriveBanner.ok ? "bg-gray-900 text-white" : "bg-red-600 text-white"
+          gdriveBanner.ok ? "bg-foreground text-background" : "bg-destructive text-white"
         }`}>
           {gdriveBanner.ok ? (
             <>
@@ -856,9 +856,9 @@ export default function ReportsViewer({
           ) : (
             <span>{gdriveBanner.message}</span>
           )}
-          <button type="button" onClick={() => setGdriveBanner(null)} className="ml-2 opacity-60 hover:opacity-100">
+          <Button type="button" onClick={() => setGdriveBanner(null)} variant="ghost" size="icon-sm" className="ml-2 rounded-md text-current opacity-60 hover:opacity-100 hover:bg-transparent">
             <XIcon />
-          </button>
+          </Button>
         </div>
       )}
 
