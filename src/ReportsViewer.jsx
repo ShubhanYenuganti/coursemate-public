@@ -4,6 +4,7 @@ import 'katex/dist/katex.min.css';
 import DOMPurify from 'dompurify';
 import NotionTargetPicker from './components/NotionTargetPicker';
 import GDriveTargetPicker from './components/GDriveTargetPicker';
+import { Button } from '@/components/ui/button';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -609,30 +610,32 @@ export default function ReportsViewer({
               New version generated. What would you like to do with the previous version?
             </p>
             <div className="flex items-center gap-2 flex-shrink-0">
-              <button
+              <Button
                 type="button"
                 onClick={() => handleResolve('save_both')}
                 disabled={resolving}
-                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                variant="outline"
+                className="rounded-lg border-amber-300 bg-transparent px-3 py-1.5 h-auto text-xs font-medium text-amber-800 hover:bg-amber-100"
               >
                 Save Both
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={() => handleResolve('replace')}
                 disabled={resolving}
-                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                variant="outline"
+                className="rounded-lg border-amber-300 bg-transparent px-3 py-1.5 h-auto text-xs font-medium text-amber-800 hover:bg-amber-100"
               >
                 Replace Previous
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={() => handleResolve('revert')}
                 disabled={resolving}
-                className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 transition-colors disabled:opacity-50"
+                className="rounded-lg bg-amber-600 px-3 py-1.5 h-auto text-xs font-medium text-white hover:bg-amber-700"
               >
                 Revert
-              </button>
+              </Button>
             </div>
           </div>
         </div>
