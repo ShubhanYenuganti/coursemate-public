@@ -5,6 +5,10 @@ import FlashcardViewer from './FlashcardViewer';
 import GenerationConfirmModal from './components/GenerationConfirmModal.jsx';
 import DueTodayWidget from './components/DueTodayWidget.jsx';
 import { PROVIDER_MODELS } from './modelCatalog.js';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 
 function ExternalLinkIcon() {
   return (
@@ -74,7 +78,7 @@ const FILE_TYPE_MAP = {
   jpeg: { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
   gif: { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
   svg: { label: 'SVG', bg: 'bg-orange-100', text: 'text-orange-600' },
-  txt: { label: 'TXT', bg: 'bg-gray-100', text: 'text-gray-500' },
+  txt: { label: 'TXT', bg: 'bg-muted', text: 'text-muted-foreground' },
 };
 
 function NotionBadgeIcon() {
@@ -94,13 +98,13 @@ function FileTypeBadge({ name, sourceType }) {
 
   if (!mapped && sourceType === 'notion') {
     return (
-      <span className="flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded bg-gray-100 text-gray-600">
+      <span className="flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded bg-muted text-muted-foreground">
         <NotionBadgeIcon />
       </span>
     );
   }
 
-  const style = mapped || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-gray-100', text: 'text-gray-500' };
+  const style = mapped || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-muted', text: 'text-muted-foreground' };
   return (
     <span className={`flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded text-[7px] font-bold tracking-tight ${style.bg} ${style.text}`}>
       {style.label}
@@ -110,17 +114,18 @@ function FileTypeBadge({ name, sourceType }) {
 
 function SourceToggle({ checked, onToggle }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       onClick={(e) => { e.stopPropagation(); onToggle(); }}
-      className={`flex-shrink-0 relative inline-flex h-4 w-7 items-center rounded-full transition-colors focus:outline-none ${
-        checked ? 'bg-indigo-500' : 'bg-gray-200'
+      className={`flex-shrink-0 relative inline-flex h-4 w-7 p-0 items-center rounded-full transition-colors focus:outline-none hover:bg-transparent ${
+        checked ? 'bg-primary' : 'bg-muted'
       }`}
     >
-      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow-sm transition-transform ${
+      <span className={`inline-block h-3 w-3 transform rounded-full bg-background shadow-sm transition-transform ${
         checked ? 'translate-x-3.5' : 'translate-x-0.5'
       }`} />
-    </button>
+    </Button>
   );
 }
 
