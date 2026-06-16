@@ -5,6 +5,7 @@ import DOMPurify from 'dompurify';
 import NotionTargetPicker from './components/NotionTargetPicker';
 import GDriveTargetPicker from './components/GDriveTargetPicker';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -78,7 +79,7 @@ const FILE_TYPE_MAP = {
   pdf:  { label: 'PDF', bg: 'bg-rose-100',   text: 'text-rose-600'   },
   doc:  { label: 'DOC', bg: 'bg-blue-100',   text: 'text-blue-600'   },
   docx: { label: 'DOC', bg: 'bg-blue-100',   text: 'text-blue-600'   },
-  txt:  { label: 'TXT', bg: 'bg-gray-100',   text: 'text-gray-500'   },
+  txt:  { label: 'TXT', bg: 'bg-muted',      text: 'text-muted-foreground' },
 };
 
 function NotionBadgeIcon() {
@@ -98,17 +99,17 @@ function FileTypeBadge({ name, sourceType }) {
 
   if (!mapped && sourceType === 'notion') {
     return (
-      <span className="flex-shrink-0 inline-flex items-center justify-center w-[34px] h-[21px] rounded bg-gray-100 text-gray-600">
+      <Badge variant="secondary" className="flex-shrink-0 inline-flex items-center justify-center w-[34px] h-[21px] rounded bg-muted text-muted-foreground p-0">
         <NotionBadgeIcon />
-      </span>
+      </Badge>
     );
   }
 
-  const style = mapped || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-gray-100', text: 'text-gray-500' };
+  const style = mapped || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-muted', text: 'text-muted-foreground' };
   return (
-    <span className={`flex-shrink-0 inline-flex items-center justify-center w-[34px] h-[21px] rounded text-[8px] font-bold tracking-tight ${style.bg} ${style.text}`}>
+    <Badge variant="secondary" className={`flex-shrink-0 inline-flex items-center justify-center w-[34px] h-[21px] rounded text-[8px] font-bold tracking-tight p-0 ${style.bg} ${style.text}`}>
       {style.label}
-    </span>
+    </Badge>
   );
 }
 
