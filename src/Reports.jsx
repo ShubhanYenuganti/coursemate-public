@@ -837,29 +837,31 @@ export default function Reports({ course, onAddSource }) {
 
         {availableProviders.length > 0 && (
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-2">AI Model</label>
+            <Label className="block text-xs font-medium text-muted-foreground mb-2">AI Model</Label>
             <div className="relative inline-block" ref={providerDropdownRef}>
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => setProviderDropdownOpen((open) => !open)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs text-gray-700 hover:border-indigo-400 transition-colors"
+                className="h-auto flex items-center gap-2 px-3 py-2 rounded-lg bg-background text-xs text-foreground hover:border-ring transition-colors"
               >
                 <span className="font-medium">{MODEL_LABELS[selectedProvider] || selectedProvider}</span>
-                <span className="text-gray-400">·</span>
+                <span className="text-muted-foreground">·</span>
                 <span>{(PROVIDER_MODELS[selectedProvider] || []).find((m) => m.id === selectedModelId)?.label || selectedModelId}</span>
                 <ChevronDownIcon />
-              </button>
+              </Button>
               {providerDropdownOpen && (
-                <div className="absolute z-20 mt-1 left-0 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-[220px] max-h-[280px] overflow-y-auto">
+                <div className="absolute z-20 mt-1 left-0 bg-background border border-border rounded-xl shadow-lg py-1 min-w-[220px] max-h-[280px] overflow-y-auto">
                   {availableProviders.map((provider) => (
                     <div key={provider}>
-                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                         {MODEL_LABELS[provider] || provider}
                       </p>
                       {(PROVIDER_MODELS[provider] || []).map((model) => (
-                        <button
+                        <Button
                           key={model.id}
                           type="button"
+                          variant="ghost"
                           onClick={() => {
                             setSelectedProvider(provider);
                             setSelectedModelId(model.id);
@@ -867,12 +869,12 @@ export default function Reports({ course, onAddSource }) {
                             localStorage.setItem('reports_selected_model_id', model.id);
                             setProviderDropdownOpen(false);
                           }}
-                          className={`w-full text-left px-4 py-1.5 text-xs hover:bg-indigo-50 transition-colors ${
-                            model.id === selectedModelId ? 'text-indigo-600 font-medium' : 'text-gray-700'
+                          className={`w-full h-auto block rounded-none text-left px-4 py-1.5 text-xs hover:bg-accent transition-colors ${
+                            model.id === selectedModelId ? 'text-primary font-medium' : 'text-foreground'
                           }`}
                         >
                           {model.label}
-                        </button>
+                        </Button>
                       ))}
                     </div>
                   ))}
