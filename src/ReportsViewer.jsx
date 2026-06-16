@@ -422,8 +422,8 @@ export default function ReportsViewer({
   );
 
   const actionButtonClass =
-    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
-  const actionIconClass = "text-gray-500";
+    "flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5 h-auto text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed";
+  const actionIconClass = "text-muted-foreground";
 
   // Page count hint from the report
   const pageCount = report?.page_count || report?.pages || null;
@@ -440,15 +440,15 @@ export default function ReportsViewer({
     return sourceMaterials;
   }, [report?.sources, selectedSourceIds, sourceMaterials]);
   const saveButtonClasses = [
-    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors',
+    'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 h-auto text-xs font-medium',
     saveStatus === 'saved'
       ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-      : 'border-gray-200 text-gray-600 hover:bg-gray-50',
+      : 'border-border text-muted-foreground hover:bg-muted',
     saveStatus === 'saving' || !generationId ? 'opacity-70 cursor-not-allowed' : '',
   ].join(' ');
   const exportButtonClasses = [
-    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 transition-colors',
-    exportStatus === 'exporting' || !generationId ? 'opacity-70 cursor-not-allowed' : 'hover:bg-gray-50',
+    'flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5 h-auto text-xs font-medium text-foreground',
+    exportStatus === 'exporting' || !generationId ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted',
   ].join(' ');
 
   useEffect(() => {
@@ -642,47 +642,51 @@ export default function ReportsViewer({
       )}
 
       {/* ── Header ── */}
-      <header className="sticky top-0 z-10 bg-white border-b border-gray-100 px-6 py-3">
+      <header className="sticky top-0 z-10 bg-background border-b border-gray-100 px-6 py-3">
         <div className="max-w-7xl mx-auto relative flex items-center justify-center">
           <div className="flex items-center gap-10">
             <div className="flex items-center gap-2">
             {generationError ? (
-              <span className="px-2 py-0.5 rounded-md border border-red-200 bg-red-50 text-[11px] text-red-700">
+              <span className="px-2 py-0.5 rounded-md border border-red-200 bg-red-50 text-[11px] text-destructive">
                 {generationError}
               </span>
             ) : null}
-            <button
+            <Button
               type="button"
               onClick={() => onRegenerate?.({ parent_generation_id: report?.generation_id })}
+              variant="outline"
               className={actionButtonClass}
             >
               <span className={actionIconClass}><RefreshIcon /></span>
               Regenerate
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={handleSave}
               disabled={!generationId || saveStatus === 'saving' || saveStatus === 'saved'}
+              variant="outline"
               className={saveButtonClasses}
               title={saveStatus === 'error' ? saveError : undefined}
             >
               <span className={actionIconClass}><BookmarkIcon /></span>
               {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved ✓' : saveStatus === 'error' ? 'Retry Save' : 'Save'}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={handleExport}
               disabled={!generationId || exportStatus === 'exporting'}
+              variant="outline"
               className={exportButtonClasses}
             >
               <span className={actionIconClass}><DownloadIcon /></span>
               {exportStatus === 'exporting' ? 'Exporting…' : exportStatus === 'error' ? 'Retry Export' : 'Export'}
-            </button>
+            </Button>
             {notionConnected && (
-              <button
+              <Button
                 type="button"
                 onClick={handleNotionClick}
                 disabled={notionExporting}
+                variant="outline"
                 className={actionButtonClass}
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className={`shrink-0 ${actionIconClass}`}>
@@ -692,13 +696,14 @@ export default function ReportsViewer({
                   <rect x="7" y="15" width="8" height="1.5" rx=".75"/>
                 </svg>
                 {notionExporting ? "Exporting…" : "Notion"}
-              </button>
+              </Button>
             )}
             {gdriveConnected && (
-              <button
+              <Button
                 type="button"
                 onClick={handleGDriveClick}
                 disabled={gdriveExporting}
+                variant="outline"
                 className={actionButtonClass}
               >
                 <svg width="12" height="10" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
@@ -710,18 +715,20 @@ export default function ReportsViewer({
                   <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
                 </svg>
                 {gdriveExporting ? "Exporting…" : "Drive"}
-              </button>
+              </Button>
             )}
             </div>
           </div>
 
-          <button
+          <Button
             type="button"
             onClick={onClose}
-            className="absolute right-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            variant="ghost"
+            size="icon"
+            className="absolute right-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
           >
             <XIcon />
-          </button>
+          </Button>
         </div>
       </header>
 
