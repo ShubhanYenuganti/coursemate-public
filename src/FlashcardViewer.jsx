@@ -459,7 +459,7 @@ export default function FlashcardViewer({
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-teal-50 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-accent via-purple-50 to-teal-50 flex flex-col">
       {parentGenerationId && (
         <div className="bg-amber-50 border-b border-amber-200 px-8 py-3">
           <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
@@ -753,107 +753,119 @@ export default function FlashcardViewer({
           {/* Spaced-repetition hint — tells users that rating schedules reviews */}
           <p className="mt-5 text-center text-xs text-muted-foreground">
             Rate each card with <span className="font-medium text-green-600">👍</span> /{' '}
-            <span className="font-medium text-red-500">👎</span> — we’ll schedule it to come back for review using spaced repetition.
+            <span className="font-medium text-destructive">👎</span> — we’ll schedule it to come back for review using spaced repetition.
           </p>
         </div>
       </main>
 
       {/* ── Bottom navigation ── */}
-      <footer className="bg-white/80 backdrop-blur border-t border-gray-100 px-8 py-4">
+      <footer className="bg-background/80 backdrop-blur border-t border-border px-8 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
 
           {/* Track progress toggle */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">Track progress</span>
-            <button
+            <span className="text-xs text-muted-foreground">Track progress</span>
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => setTrackProgress((t) => !t)}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                trackProgress ? 'bg-indigo-500' : 'bg-gray-200'
+              className={`relative inline-flex h-5 w-9 items-center rounded-full p-0 transition-colors focus:outline-none ${
+                trackProgress ? 'bg-primary hover:bg-primary' : 'bg-muted hover:bg-muted'
               }`}
             >
-              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-background shadow-sm transition-transform ${
                 trackProgress ? 'translate-x-4' : 'translate-x-0.5'
               }`} />
-            </button>
+            </Button>
             {trackProgress && total > 0 && (
-              <span className="text-[10px] text-gray-400 tabular-nums">{seen.size}/{total}</span>
+              <span className="text-[10px] text-muted-foreground tabular-nums">{seen.size}/{total}</span>
             )}
           </div>
 
           {/* Prev / Next */}
           <div className="flex items-center gap-3">
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={goPrev}
               disabled={currentIndex === 0}
-              className="w-10 h-10 flex items-center justify-center rounded-full border border-gray-200 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="h-10 w-10 rounded-full border-border text-muted-foreground hover:border-primary/40 hover:text-primary hover:bg-accent disabled:opacity-30"
             >
               <ChevronLeftIcon />
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
               onClick={goNext}
               disabled={currentIndex === total - 1}
-              className="w-10 h-10 flex items-center justify-center rounded-full border border-gray-200 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="h-10 w-10 rounded-full border-border text-muted-foreground hover:border-primary/40 hover:text-primary hover:bg-accent disabled:opacity-30"
             >
               <ChevronRightIcon />
-            </button>
+            </Button>
           </div>
 
           {/* Play / Shuffle */}
           <div className="flex items-center gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={() => setPlaying((p) => !p)}
               aria-label={playing ? 'Pause' : 'Play'}
-              className={`w-9 h-9 flex items-center justify-center rounded-full border transition-colors ${
+              className={`h-9 w-9 rounded-full ${
                 playing
-                  ? 'border-indigo-400 text-indigo-600 bg-indigo-50'
-                  : 'border-gray-200 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'
+                  ? 'border-primary/40 text-primary bg-accent'
+                  : 'border-border text-muted-foreground hover:border-primary/40 hover:text-primary hover:bg-accent'
               }`}
             >
               <PlayIcon />
-            </button>
-            <select
-              value={playInterval}
-              onChange={(e) => setPlayInterval(Number(e.target.value))}
-              className="text-xs border border-gray-200 rounded-md px-1.5 py-1 text-gray-500 bg-white hover:border-indigo-400 focus:outline-none focus:border-indigo-400 cursor-pointer"
-              aria-label="Play speed"
+            </Button>
+            <Select
+              value={String(playInterval)}
+              onValueChange={(v) => setPlayInterval(Number(v))}
             >
-              {[1, 2, 3, 4, 5, 8, 10, 15].map((s) => (
-                <option key={s} value={s}>{s}s</option>
-              ))}
-            </select>
-            <button
+              <SelectTrigger
+                size="sm"
+                aria-label="Play speed"
+                className="h-auto rounded-md border-border px-1.5 py-1 text-xs text-muted-foreground bg-background hover:border-primary/40"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[1, 2, 3, 4, 5, 8, 10, 15].map((s) => (
+                  <SelectItem key={s} value={String(s)}>{s}s</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
               type="button"
+              variant="outline"
               onClick={toggleShuffle}
-              className={`w-9 h-9 flex items-center justify-center rounded-full border transition-colors ${
+              className={`h-9 w-9 rounded-full ${
                 shuffled
-                  ? 'border-indigo-400 text-indigo-600 bg-indigo-50'
-                  : 'border-gray-200 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'
+                  ? 'border-primary/40 text-primary bg-accent'
+                  : 'border-border text-muted-foreground hover:border-primary/40 hover:text-primary hover:bg-accent'
               }`}
             >
               <ShuffleIcon />
-            </button>
+            </Button>
           </div>
 
         </div>
       </footer>
 
       {onGoToTab && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-gray-200 shadow-lg z-20">
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-background/70 backdrop-blur-md border border-border shadow-lg z-20">
           <ToolbarItem icon="📄" label="Materials" onClick={() => onGoToTab('materials')} />
-          <div className="w-px h-6 bg-gray-200" />
+          <div className="w-px h-6 bg-border" />
           <ToolbarItem icon="💬" label="Chat" onClick={() => onGoToTab('chat')} />
-          <div className="w-px h-6 bg-gray-200" />
+          <div className="w-px h-6 bg-border" />
           <ToolbarItem icon="💡" label="Generate" onClick={() => onGoToTab('generate')} />
         </div>
       )}
 
       {notionBanner && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
-          notionBanner.ok ? "bg-gray-900 text-white" : "bg-red-600 text-white"
+          notionBanner.ok ? "bg-foreground text-background" : "bg-destructive text-white"
         }`}>
           {notionBanner.ok ? (
             <>
@@ -865,9 +877,9 @@ export default function FlashcardViewer({
           ) : (
             <span>{notionBanner.message}</span>
           )}
-          <button type="button" onClick={() => setNotionBanner(null)} className="ml-2 opacity-60 hover:opacity-100">
+          <Button type="button" variant="ghost" onClick={() => setNotionBanner(null)} className="h-auto w-auto ml-2 p-0 opacity-60 hover:opacity-100 hover:bg-transparent">
             <XIcon />
-          </button>
+          </Button>
         </div>
       )}
 
@@ -885,7 +897,7 @@ export default function FlashcardViewer({
 
       {gdriveBanner && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
-          gdriveBanner.ok ? "bg-gray-900 text-white" : "bg-red-600 text-white"
+          gdriveBanner.ok ? "bg-foreground text-background" : "bg-destructive text-white"
         }`}>
           {gdriveBanner.ok ? (
             <>
@@ -897,9 +909,9 @@ export default function FlashcardViewer({
           ) : (
             <span>{gdriveBanner.message}</span>
           )}
-          <button type="button" onClick={() => setGdriveBanner(null)} className="ml-2 opacity-60 hover:opacity-100">
+          <Button type="button" variant="ghost" onClick={() => setGdriveBanner(null)} className="h-auto w-auto ml-2 p-0 opacity-60 hover:opacity-100 hover:bg-transparent">
             <XIcon />
-          </button>
+          </Button>
         </div>
       )}
 
