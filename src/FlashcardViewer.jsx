@@ -2,7 +2,6 @@ import { useState, useMemo, useEffect } from 'react';
 import NotionTargetPicker from './components/NotionTargetPicker';
 import GDriveTargetPicker from './components/GDriveTargetPicker';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
