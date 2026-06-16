@@ -163,7 +163,7 @@ function DocumentBody({ report, zoom }) {
   if (text) {
     return <MarkdownDocument text={text} zoom={zoom} />;
   }
-  return <p className="text-sm text-gray-400 italic">No content available.</p>;
+  return <p className="text-sm text-muted-foreground italic">No content available.</p>;
 }
 
 // Renders a structured sections array
@@ -177,9 +177,9 @@ function StructuredDocument({ report, zoom }) {
     <div style={{ fontSize: `${zoom}%` }}>
       {title && (
         <div className="text-center mb-10">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">{title}</h1>
-          {subtitle && <p className="text-sm text-gray-500">{subtitle}</p>}
-          {date && <p className="text-xs text-gray-400 mt-1">{date}</p>}
+          <h1 className="text-2xl font-bold text-foreground mb-2">{title}</h1>
+          {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
+          {date && <p className="text-xs text-muted-foreground mt-1">{date}</p>}
         </div>
       )}
       {sections.map((block, i) => <DocBlock key={i} block={block} />)}
@@ -193,34 +193,34 @@ function DocBlock({ block }) {
 
   if (type === 'heading' || type === 'section') {
     return (
-      <h2 className="text-base font-bold text-gray-900 mt-8 mb-3 pb-1 border-b border-gray-100">
+      <h2 className="text-base font-bold text-foreground mt-8 mb-3 pb-1 border-b border-border">
         {content}
       </h2>
     );
   }
   if (type === 'subheading' || type === 'subsection') {
     return (
-      <h3 className="text-sm font-semibold text-gray-800 mt-5 mb-2">{content}</h3>
+      <h3 className="text-sm font-semibold text-foreground mt-5 mb-2">{content}</h3>
     );
   }
   if (type === 'callout') {
     return (
-      <div className="my-4 pl-4 pr-4 py-3 bg-indigo-50 border-l-4 border-indigo-300 rounded-r-lg">
-        <p className="text-sm text-indigo-700 italic leading-relaxed">{renderInlineMath(content)}</p>
+      <div className="my-4 pl-4 pr-4 py-3 bg-accent border-l-4 border-primary/30 rounded-r-lg">
+        <p className="text-sm text-accent-foreground italic leading-relaxed">{renderInlineMath(content)}</p>
       </div>
     );
   }
   if (type === 'equation' || type === 'display_equation') {
     const lines = Array.isArray(block.lines) ? block.lines : (content ? [content] : []);
     return (
-      <div className="my-4 py-4 bg-gray-50 border border-gray-200 rounded-lg overflow-x-auto text-center">
+      <div className="my-4 py-4 bg-muted border border-border rounded-lg overflow-x-auto text-center">
         {lines.map((line, i) => {
           try {
             const html = katex.renderToString(line, { throwOnError: false, displayMode: true });
             // eslint-disable-next-line react/no-danger
             return <div key={i} className="py-1" dangerouslySetInnerHTML={{ __html: html }} />;
           } catch {
-            return <p key={i} className="font-mono text-sm text-gray-700">{line}</p>;
+            return <p key={i} className="font-mono text-sm text-muted-foreground">{line}</p>;
           }
         })}
       </div>
@@ -234,10 +234,10 @@ function DocBlock({ block }) {
       <div className="overflow-x-auto my-4">
         <table className="w-full text-xs border-collapse">
           {headers.length > 0 && (
-            <thead className="bg-gray-100 text-gray-700">
-              <tr className="border-b border-gray-200">
+            <thead className="bg-muted text-muted-foreground">
+              <tr className="border-b border-border">
                 {headers.map((h, i) => (
-                  <th key={i} className="px-3 py-1.5 text-left font-semibold border border-gray-200">
+                  <th key={i} className="px-3 py-1.5 text-left font-semibold border border-border">
                     {renderInlineMath(h)}
                   </th>
                 ))}
@@ -246,9 +246,9 @@ function DocBlock({ block }) {
           )}
           <tbody>
             {rows.map((row, ri) => (
-              <tr key={ri} className="border-b border-gray-200">
+              <tr key={ri} className="border-b border-border">
                 {(Array.isArray(row) ? row : []).map((cell, ci) => (
-                  <td key={ci} className="px-3 py-1.5 border border-gray-200">
+                  <td key={ci} className="px-3 py-1.5 border border-border">
                     {renderInlineMath(String(cell))}
                   </td>
                 ))}
@@ -264,7 +264,7 @@ function DocBlock({ block }) {
     return (
       <ul className="my-3 space-y-1.5 pl-5 list-disc">
         {items.map((item, i) => (
-          <li key={i} className="text-sm text-gray-700 leading-relaxed">{renderInlineMath(item)}</li>
+          <li key={i} className="text-sm text-muted-foreground leading-relaxed">{renderInlineMath(item)}</li>
         ))}
       </ul>
     );
@@ -273,15 +273,15 @@ function DocBlock({ block }) {
     const page = block.page || '';
     return (
       <div className="my-8 flex items-center gap-3">
-        <div className="flex-1 h-px bg-gray-200" />
-        {page && <span className="text-[10px] text-gray-400 flex-shrink-0">{page}</span>}
-        <div className="flex-1 h-px bg-gray-200" />
+        <div className="flex-1 h-px bg-border" />
+        {page && <span className="text-[10px] text-muted-foreground flex-shrink-0">{page}</span>}
+        <div className="flex-1 h-px bg-border" />
       </div>
     );
   }
   // default: paragraph
   return (
-    <p className="text-sm text-gray-700 leading-relaxed my-3">{renderInlineMath(content)}</p>
+    <p className="text-sm text-muted-foreground leading-relaxed my-3">{renderInlineMath(content)}</p>
   );
 }
 
@@ -297,7 +297,7 @@ function MarkdownDocument({ text, zoom }) {
     elements.push(
       <ul key={key++} className="my-3 space-y-1.5 pl-5 list-disc">
         {listBuffer.map((item, i) => (
-          <li key={i} className="text-sm text-gray-700 leading-relaxed">{item}</li>
+          <li key={i} className="text-sm text-muted-foreground leading-relaxed">{item}</li>
         ))}
       </ul>
     );
@@ -311,7 +311,7 @@ function MarkdownDocument({ text, zoom }) {
     if (/^# /.test(line)) {
       flushList();
       elements.push(
-        <h1 key={key++} className="text-2xl font-bold text-gray-900 text-center mb-2 mt-6">{line.replace(/^# /, '')}</h1>
+        <h1 key={key++} className="text-2xl font-bold text-foreground text-center mb-2 mt-6">{line.replace(/^# /, '')}</h1>
       );
       continue;
     }
@@ -319,7 +319,7 @@ function MarkdownDocument({ text, zoom }) {
     if (/^## /.test(line)) {
       flushList();
       elements.push(
-        <h2 key={key++} className="text-base font-bold text-gray-900 mt-8 mb-3 pb-1 border-b border-gray-100">{line.replace(/^## /, '')}</h2>
+        <h2 key={key++} className="text-base font-bold text-foreground mt-8 mb-3 pb-1 border-b border-border">{line.replace(/^## /, '')}</h2>
       );
       continue;
     }
@@ -327,7 +327,7 @@ function MarkdownDocument({ text, zoom }) {
     if (/^### /.test(line)) {
       flushList();
       elements.push(
-        <h3 key={key++} className="text-sm font-semibold text-gray-800 mt-5 mb-2">{line.replace(/^### /, '')}</h3>
+        <h3 key={key++} className="text-sm font-semibold text-foreground mt-5 mb-2">{line.replace(/^### /, '')}</h3>
       );
       continue;
     }
@@ -337,8 +337,8 @@ function MarkdownDocument({ text, zoom }) {
       const isSubsection = /^\d+\.\d+/.test(line);
       elements.push(
         isSubsection
-          ? <h3 key={key++} className="text-sm font-semibold text-gray-800 mt-5 mb-2">{line}</h3>
-          : <h2 key={key++} className="text-base font-bold text-gray-900 mt-8 mb-3 pb-1 border-b border-gray-100">{line}</h2>
+          ? <h3 key={key++} className="text-sm font-semibold text-foreground mt-5 mb-2">{line}</h3>
+          : <h2 key={key++} className="text-base font-bold text-foreground mt-8 mb-3 pb-1 border-b border-border">{line}</h2>
       );
       continue;
     }
@@ -346,8 +346,8 @@ function MarkdownDocument({ text, zoom }) {
     if (/^> /.test(line)) {
       flushList();
       elements.push(
-        <div key={key++} className="my-4 pl-4 pr-4 py-3 bg-indigo-50 border-l-4 border-indigo-300 rounded-r-lg">
-          <p className="text-sm text-indigo-700 italic leading-relaxed">{line.replace(/^> /, '')}</p>
+        <div key={key++} className="my-4 pl-4 pr-4 py-3 bg-accent border-l-4 border-primary/30 rounded-r-lg">
+          <p className="text-sm text-accent-foreground italic leading-relaxed">{line.replace(/^> /, '')}</p>
         </div>
       );
       continue;
@@ -362,7 +362,7 @@ function MarkdownDocument({ text, zoom }) {
       flushList();
       elements.push(
         <div key={key++} className="my-8 flex items-center gap-3">
-          <div className="flex-1 h-px bg-gray-200" />
+          <div className="flex-1 h-px bg-border" />
         </div>
       );
       continue;
@@ -375,7 +375,7 @@ function MarkdownDocument({ text, zoom }) {
     // Paragraph
     flushList();
     elements.push(
-      <p key={key++} className="text-sm text-gray-700 leading-relaxed my-3">{line}</p>
+      <p key={key++} className="text-sm text-muted-foreground leading-relaxed my-3">{line}</p>
     );
   }
   flushList();
