@@ -847,25 +847,25 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
           <div className="max-w-2xl mx-auto flex flex-col gap-4">
             {attemptDetailLoading && (
               <div className="flex justify-center py-12">
-                <div className="w-8 h-8 border-4 border-gray-200 border-t-indigo-500 rounded-full animate-spin" />
+                <div className="w-8 h-8 border-4 border-muted border-t-primary rounded-full animate-spin" />
               </div>
             )}
             {!attemptDetailLoading && selectedAttempt && (
               <>
                 {/* Score summary */}
-                <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center justify-between">
+                <div className="bg-background rounded-xl border px-4 py-3 flex items-center justify-between">
                   <div>
-                    <p className="text-xs text-gray-500">Score</p>
+                    <p className="text-xs text-muted-foreground">Score</p>
                     <p className={`text-2xl font-bold ${
                       typeof selectedAttempt.score_percent === 'number'
                         ? selectedAttempt.score_percent >= 70 ? 'text-green-600' : selectedAttempt.score_percent >= 40 ? 'text-amber-600' : 'text-red-600'
-                        : 'text-gray-500'
+                        : 'text-muted-foreground'
                     }`}>
                       {typeof selectedAttempt.score_percent === 'number' ? `${selectedAttempt.score_percent.toFixed(0)}%` : 'N/A'}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-[11px] text-gray-400">{formatDateTime(selectedAttempt.submitted_at)}</p>
+                    <p className="text-[11px] text-muted-foreground">{formatDateTime(selectedAttempt.submitted_at)}</p>
                     {selectedAttempt.manual_review_count > 0 && (
                       <p className="text-[11px] text-amber-600 mt-0.5">{selectedAttempt.manual_review_count} question(s) need manual review</p>
                     )}
@@ -877,21 +877,21 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                   const hasAnswer = q.user_response !== null && q.user_response !== undefined;
                   const isCorrect = q.is_correct === true;
                   const isSkipped = q.skipped === true || !hasAnswer;
-                  const borderColor = isCorrect ? 'border-green-200' : isSkipped ? 'border-gray-200' : 'border-red-200';
+                  const borderColor = isCorrect ? 'border-green-200' : isSkipped ? 'border' : 'border-red-200';
                   const badge = isCorrect
                     ? <span className="px-2 py-0.5 rounded-full bg-green-50 border border-green-200 text-green-700 text-[10px] font-medium">Correct</span>
                     : isSkipped
-                      ? <span className="px-2 py-0.5 rounded-full bg-gray-50 border border-gray-200 text-gray-500 text-[10px] font-medium">Skipped</span>
+                      ? <span className="px-2 py-0.5 rounded-full bg-muted border text-muted-foreground text-[10px] font-medium">Skipped</span>
                       : <span className="px-2 py-0.5 rounded-full bg-red-50 border border-red-200 text-red-600 text-[10px] font-medium">Incorrect</span>;
 
                   return (
-                    <div key={i} className={`bg-white rounded-2xl border ${borderColor} shadow-sm p-5`}>
+                    <div key={i} className={`bg-background rounded-2xl border ${borderColor} shadow-sm p-5`}>
                       <div className="flex items-start justify-between gap-3 mb-3">
-                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">{i + 1} of {selectedAttempt.per_question.length}</span>
+                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">{i + 1} of {selectedAttempt.per_question.length}</span>
                         {badge}
                       </div>
 
-                      <p className="text-sm font-medium text-gray-900 mb-4 leading-relaxed">{q.question_text}</p>
+                      <p className="text-sm font-medium text-foreground mb-4 leading-relaxed">{q.question_text}</p>
 
                       {/* MCQ options */}
                       {q.question_type === 'mcq' && Array.isArray(q.options) && (
@@ -903,7 +903,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                               <div key={oi} className={`px-3 py-2 rounded-lg border text-sm text-center ${
                                 isOpt ? 'border-green-400 bg-green-50 text-green-700' :
                                 isUserWrong ? 'border-red-300 bg-red-50 text-red-600' :
-                                'border-gray-100 text-gray-600'
+                                'border text-muted-foreground'
                               }`}>
                                 {opt}
                               </div>
@@ -922,7 +922,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                               <div key={opt} className={`flex-1 px-3 py-2 rounded-lg border text-sm text-center ${
                                 isOpt ? 'border-green-400 bg-green-50 text-green-700' :
                                 isUserWrong ? 'border-red-300 bg-red-50 text-red-600' :
-                                'border-gray-100 text-gray-600'
+                                'border text-muted-foreground'
                               }`}>
                                 {opt}
                               </div>
@@ -935,11 +935,11 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                       {(q.question_type === 'sa' || q.question_type === 'la') && (
                         <div className="mb-4 space-y-2">
                           <div>
-                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Your answer</p>
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Your answer</p>
                             <div className={`rounded-lg border px-3 py-2 text-sm whitespace-pre-wrap ${
-                              isSkipped ? 'border-gray-100 text-gray-400 italic' :
-                              isCorrect ? 'border-green-200 bg-green-50/60 text-gray-800' :
-                              'border-red-200 bg-red-50/60 text-gray-800'
+                              isSkipped ? 'border text-muted-foreground italic' :
+                              isCorrect ? 'border-green-200 bg-green-50/60 text-foreground' :
+                              'border-red-200 bg-red-50/60 text-foreground'
                             }`}>
                               {q.user_response || 'No answer given'}
                             </div>
@@ -950,16 +950,16 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                       {/* Correct answer + explanation for all types */}
                       {!isCorrect && (
                         <div className="mt-1">
-                          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Correct answer</p>
-                          <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-sm text-gray-800">
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Correct answer</p>
+                          <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-sm text-foreground">
                             {q.correct_answer}
                           </div>
                         </div>
                       )}
                       {q.explanation && (
                         <div className="mt-3">
-                          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Explanation</p>
-                          <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Explanation</p>
+                          <div className="rounded-lg border bg-muted px-3 py-2 text-sm text-muted-foreground">
                             {q.explanation}
                           </div>
                         </div>
