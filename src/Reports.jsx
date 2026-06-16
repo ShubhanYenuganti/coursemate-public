@@ -813,25 +813,25 @@ export default function Reports({ course, onAddSource }) {
         {/* Custom prompt */}
         {isCustom && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Custom Prompt</label>
-            <textarea
+            <Label className="block text-sm font-medium text-foreground mb-1.5">Custom Prompt</Label>
+            <Textarea
               value={customPrompt}
               onChange={(e) => setCustomPrompt(e.target.value)}
               rows={4}
               placeholder="Describe what you'd like the report to cover. Be as specific as possible — e.g. 'Create a comparative analysis of SLAM algorithms covered in the lectures'"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 transition-colors resize-none"
+              className="w-full min-h-0 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-ring transition-colors resize-none"
             />
-            <p className="text-[10px] text-gray-400 mt-1">{customPrompt.length} characters</p>
+            <p className="text-[10px] text-muted-foreground mt-1">{customPrompt.length} characters</p>
           </div>
         )}
 
         {/* Summary info */}
-        <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-indigo-50 border border-indigo-100">
+        <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-accent border border-accent">
           <SparkleIcon />
-          <div className="text-xs text-indigo-700">
+          <div className="text-xs text-accent-foreground">
             <span>Generating a </span>
             <span className="font-semibold">{activeTemplate?.label}</span>
-            <p className="text-indigo-500 mt-0.5">AI will analyze your selected sources and produce a well-structured document.</p>
+            <p className="text-primary mt-0.5">AI will analyze your selected sources and produce a well-structured document.</p>
           </div>
         </div>
 
