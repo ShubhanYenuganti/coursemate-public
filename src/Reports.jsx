@@ -770,40 +770,41 @@ export default function Reports({ course, onAddSource }) {
       </div>
 
       {/* ── Report config form ── */}
-      <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 flex flex-col gap-5">
+      <div className="flex-1 min-w-0 bg-background rounded-2xl border border-border shadow-sm p-6 flex flex-col gap-5">
         <div>
-          <h2 className="text-xl font-bold text-gray-900 mb-1">Custom Report Generator</h2>
-          <p className="text-sm text-gray-500">Choose a report template or write your own prompt to generate a document from your sources.</p>
+          <h2 className="text-xl font-bold text-foreground mb-1">Custom Report Generator</h2>
+          <p className="text-sm text-muted-foreground">Choose a report template or write your own prompt to generate a document from your sources.</p>
         </div>
 
         {/* Template grid */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Template</label>
+          <Label className="block text-sm font-medium text-foreground mb-2">Template</Label>
           <div className="grid grid-cols-2 gap-3">
             {TEMPLATES.map(({ id, label, description, Icon }) => {
               const active = template === id;
               return (
-                <button
+                <Button
                   key={id}
                   type="button"
+                  variant="outline"
                   onClick={() => setTemplate(id)}
-                  className={`relative text-left p-4 rounded-xl border transition-colors ${
+                  className={`relative h-auto block text-left p-4 rounded-xl transition-colors whitespace-normal ${
                     active
-                      ? 'bg-indigo-50 border-indigo-300'
-                      : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                      ? 'bg-accent border-ring'
+                      : 'bg-background border-border hover:border-muted-foreground hover:bg-muted'
                   }`}
                 >
                   {active && (
-                    <span className="absolute top-3 right-3 w-3 h-3 rounded-full bg-indigo-600 flex-shrink-0" />
+                    <span className="absolute top-3 right-3 w-3 h-3 rounded-full bg-primary flex-shrink-0" />
                   )}
-                  <span className={`block mb-2 ${active ? 'text-indigo-600' : 'text-gray-400'}`}>
+                  <span className={`block mb-2 ${active ? 'text-primary' : 'text-muted-foreground'}`}>
                     <Icon />
                   </span>
-                  <p className={`text-sm font-semibold mb-0.5 ${active ? 'text-indigo-700' : 'text-gray-800'}`}>
+                  <p className={`text-sm font-semibold mb-0.5 ${active ? 'text-accent-foreground' : 'text-foreground'}`}>
                     {label}
                   </p>
-                  <p className="text-xs text-gray-500 leading-snug">{description}</p>
-                </button>
+                  <p className="text-xs text-muted-foreground leading-snug">{description}</p>
+                </Button>
               );
             })}
           </div>
