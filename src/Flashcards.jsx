@@ -843,29 +843,31 @@ export default function Flashcards({ course, onAddSource }) {
 
         {availableProviders.length > 0 && (
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-2">AI Model</label>
+            <Label className="block text-xs font-medium text-muted-foreground mb-2">AI Model</Label>
             <div className="relative inline-block" ref={providerDropdownRef}>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => setProviderDropdownOpen((open) => !open)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs text-gray-700 hover:border-indigo-400 transition-colors"
+                className="h-auto flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-background text-xs text-muted-foreground hover:border-ring hover:bg-background transition-colors"
               >
                 <span className="font-medium">{MODEL_LABELS[selectedProvider] || selectedProvider}</span>
-                <span className="text-gray-400">·</span>
+                <span className="text-muted-foreground">·</span>
                 <span>{(PROVIDER_MODELS[selectedProvider] || []).find((m) => m.id === selectedModelId)?.label || selectedModelId}</span>
                 <ChevronDownIcon />
-              </button>
+              </Button>
               {providerDropdownOpen && (
-                <div className="absolute z-20 mt-1 left-0 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-[220px] max-h-[280px] overflow-y-auto">
+                <div className="absolute z-20 mt-1 left-0 bg-background border border-border rounded-xl shadow-lg py-1 min-w-[220px] max-h-[280px] overflow-y-auto">
                   {availableProviders.map((provider) => (
                     <div key={provider}>
-                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                         {MODEL_LABELS[provider] || provider}
                       </p>
                       {(PROVIDER_MODELS[provider] || []).map((model) => (
-                        <button
+                        <Button
                           key={model.id}
                           type="button"
+                          variant="ghost"
                           onClick={() => {
                             setSelectedProvider(provider);
                             setSelectedModelId(model.id);
@@ -873,12 +875,12 @@ export default function Flashcards({ course, onAddSource }) {
                             localStorage.setItem('flashcards_selected_model_id', model.id);
                             setProviderDropdownOpen(false);
                           }}
-                          className={`w-full text-left px-4 py-1.5 text-xs hover:bg-indigo-50 transition-colors ${
-                            model.id === selectedModelId ? 'text-indigo-600 font-medium' : 'text-gray-700'
+                          className={`h-auto w-full justify-start text-left px-4 py-1.5 text-xs rounded-none hover:bg-accent ${
+                            model.id === selectedModelId ? 'text-accent-foreground font-medium' : 'text-muted-foreground'
                           }`}
                         >
                           {model.label}
-                        </button>
+                        </Button>
                       ))}
                     </div>
                   ))}
@@ -888,20 +890,20 @@ export default function Flashcards({ course, onAddSource }) {
           </div>
         )}
 
-        <div className="mt-1 bg-white rounded-xl border border-gray-200 p-3">
+        <div className="mt-1 bg-background rounded-xl border border-border p-3">
           <div className="flex items-center justify-between gap-3 mb-2">
-            <p className="text-xs font-semibold text-gray-900">Generated & Drafted Flashcards</p>
+            <p className="text-xs font-semibold text-foreground">Generated & Drafted Flashcards</p>
             {historyLoading ? (
-              <p className="text-[10px] text-gray-400">Loading…</p>
+              <p className="text-[10px] text-muted-foreground">Loading…</p>
             ) : (
-              <p className="text-[10px] text-gray-400">{historyGenerations.length} saved</p>
+              <p className="text-[10px] text-muted-foreground">{historyGenerations.length} saved</p>
             )}
           </div>
 
           {historyLoading ? (
-            <p className="text-[10px] text-gray-400">Fetching your generations…</p>
+            <p className="text-[10px] text-muted-foreground">Fetching your generations…</p>
           ) : historyGenerations.length === 0 ? (
-            <p className="text-[10px] text-gray-400 italic">No flashcard history yet.</p>
+            <p className="text-[10px] text-muted-foreground italic">No flashcard history yet.</p>
           ) : (
             <div className="space-y-2">
               {historyGenerations.map((g) => {
@@ -911,12 +913,12 @@ export default function Flashcards({ course, onAddSource }) {
                   status === 'ready'
                     ? 'border-green-200 bg-green-50 text-green-700'
                     : status === 'failed'
-                      ? 'border-red-200 bg-red-50 text-red-600'
+                      ? 'border-destructive/20 bg-destructive/10 text-destructive'
                       : status === 'draft'
                         ? 'border-amber-200 bg-amber-50 text-amber-800'
                         : status === 'queued'
                           ? 'border-purple-200 bg-purple-50 text-purple-700'
-                          : 'border-indigo-200 bg-indigo-50 text-indigo-700';
+                          : 'border-accent bg-accent text-accent-foreground';
 
                 const tokenLow = g.estimated_total_tokens_low;
                 const tokenHigh = g.estimated_total_tokens_high;
@@ -928,11 +930,11 @@ export default function Flashcards({ course, onAddSource }) {
                 const createdAt = formatDateTime(g.created_at);
 
                 return (
-                  <div key={g.generation_id} className="rounded-lg border border-gray-200 p-2.5">
+                  <div key={g.generation_id} className="rounded-lg border border-border p-2.5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-xs font-semibold text-gray-900 truncate">{g.title || g.topic || 'Flashcards'}</p>
-                        <p className="text-[10px] text-gray-500 mt-0.5 truncate">
+                        <p className="text-xs font-semibold text-foreground truncate">{g.title || g.topic || 'Flashcards'}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
                           {g.provider || 'provider'} · {g.model_id || 'model'} · {createdAt}
                         </p>
                       </div>
@@ -946,54 +948,56 @@ export default function Flashcards({ course, onAddSource }) {
                           )}
                           {status}
                         </span>
-                        <button
+                        <Button
                           type="button"
+                          variant="ghost"
                           onClick={() => deleteGeneration(g.generation_id)}
-                          className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                          className="h-auto w-auto p-1 rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
                           aria-label="Delete"
                         >
                           <TrashIcon />
-                        </button>
+                        </Button>
                       </div>
                     </div>
 
                     <div className="mt-2 flex items-center justify-between gap-3">
-                      <p className="text-[10px] text-gray-500">
-                        Tokens: <span className="font-medium text-gray-700">{tokenText}</span>
+                      <p className="text-[10px] text-muted-foreground">
+                        Tokens: <span className="font-medium text-muted-foreground">{tokenText}</span>
                       </p>
 
                       <div className="flex items-center gap-2">
                         {status === 'generating' ? (
-                          <p className="text-[10px] text-indigo-600 italic">Processing…</p>
+                          <p className="text-[10px] text-primary italic">Processing…</p>
                         ) : status === 'queued' ? (
                           <p className="text-[10px] text-purple-600 italic">Queued…</p>
                         ) : status === 'draft' ? (
-                          <button
+                          <Button
                             type="button"
                             onClick={() => triggerGeneration(g.generation_id)}
                             disabled={estimating}
-                            className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            className="h-auto px-2 py-1 rounded-lg text-[10px] font-medium"
                           >
                             Generate
-                          </button>
+                          </Button>
                         ) : (
                           <>
-                            <button
+                            <Button
                               type="button"
+                              variant="outline"
                               onClick={() => reopenFromHistory(g)}
-                              className="px-2 py-1 rounded-lg border border-gray-200 text-[10px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                              className="h-auto px-2 py-1 rounded-lg text-[10px] font-medium text-muted-foreground"
                             >
                               Open
-                            </button>
+                            </Button>
                             {status === 'ready' && (
-                              <button
+                              <Button
                                 type="button"
                                 onClick={() => applyFlashcardsPreset(g, g.generation_id)}
                                 disabled={estimating}
-                                className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                className="h-auto px-2 py-1 rounded-lg text-[10px] font-medium"
                               >
                                 Regenerate
-                              </button>
+                              </Button>
                             )}
                           </>
                         )}
@@ -1006,13 +1010,13 @@ export default function Flashcards({ course, onAddSource }) {
           )}
         </div>
 
-        {generateError && <p className="text-xs text-red-600">{generateError}</p>}
+        {generateError && <p className="text-xs text-destructive">{generateError}</p>}
 
-        <button
+        <Button
           type="button"
           onClick={() => handleGenerate(pendingRegenerationParentId)}
           disabled={estimating || selectedCount === 0}
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+          className="h-auto w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
         >
           {estimating ? (
             <>
@@ -1028,12 +1032,12 @@ export default function Flashcards({ course, onAddSource }) {
               Generate {cardCount} Flashcards
             </>
           )}
-        </button>
+        </Button>
 
-        <p className="text-[10px] text-gray-400 flex items-center gap-1.5">
+        <p className="text-[10px] text-muted-foreground flex items-center gap-1.5">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
           AI responses are based on your selected course materials.{' '}
-          <a href="#" className="text-indigo-500 hover:underline">Learn more</a>
+          <a href="#" className="text-primary hover:underline">Learn more</a>
         </p>
 
         {confirmModalData && (
