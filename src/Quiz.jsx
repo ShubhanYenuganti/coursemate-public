@@ -792,91 +792,94 @@ export default function Quiz({ course, onAddSource }) {
       </Card>
 
       {/* ── Quiz config form ── */}
-      <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 flex flex-col gap-5">
+      <Card className="flex-1 min-w-0 rounded-2xl border border-border shadow-sm ring-0 p-6 flex flex-col gap-5 [--card-spacing:0px]">
         <div>
-          <h2 className="text-xl font-bold text-gray-900 mb-1">Custom Quiz Generator</h2>
-          <p className="text-sm text-gray-500">Configure your quiz parameters and generate questions from your selected sources.</p>
+          <h2 className="text-xl font-bold text-foreground mb-1">Custom Quiz Generator</h2>
+          <p className="text-sm text-muted-foreground">Configure your quiz parameters and generate questions from your selected sources.</p>
         </div>
 
         {/* Primary topic */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Primary Topic</label>
-          <input
+          <Label className="block text-sm font-medium text-foreground mb-1.5">Primary Topic</Label>
+          <Input
             type="text"
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             placeholder="e.g. Reinforcement Learning, Neural Networks..."
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 transition-colors"
+            className="w-full rounded-lg border border-border px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-ring transition-colors"
           />
         </div>
 
         {/* Question type counts */}
         <div className="grid grid-cols-2 gap-x-6 gap-y-4">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1.5">True / False Questions</label>
+            <Label className="block text-xs font-medium text-muted-foreground mb-1.5">True / False Questions</Label>
             <Stepper value={tfCount} onChange={setTfCount} />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1.5">Short Answer Questions</label>
+            <Label className="block text-xs font-medium text-muted-foreground mb-1.5">Short Answer Questions</Label>
             <Stepper value={saCount} onChange={setSaCount} />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1.5">Long Answer Questions</label>
+            <Label className="block text-xs font-medium text-muted-foreground mb-1.5">Long Answer Questions</Label>
             <Stepper value={laCount} onChange={setLaCount} />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1.5">Multiple Choice (MCQ)</label>
+            <Label className="block text-xs font-medium text-muted-foreground mb-1.5">Multiple Choice (MCQ)</Label>
             <Stepper value={mcqCount} onChange={setMcqCount} />
           </div>
         </div>
 
         {/* MCQ option count */}
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-2">MCQ Option Count</label>
-          <div className="flex gap-2 p-1 bg-gray-100 rounded-lg w-fit">
+          <Label className="block text-xs font-medium text-muted-foreground mb-2">MCQ Option Count</Label>
+          <div className="flex gap-2 p-1 bg-muted rounded-lg w-fit">
             {[4, 5].map((n) => (
-              <button
+              <Button
                 key={n}
                 type="button"
+                variant="ghost"
                 onClick={() => setMcqOptions(n)}
-                className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                className={`h-auto px-4 py-1.5 rounded-md text-xs font-medium transition-colors hover:bg-transparent ${
                   mcqOptions === n
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:text-gray-800'
+                    ? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary'
+                    : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 {n} Options
-              </button>
+              </Button>
             ))}
           </div>
         </div>
 
         {availableProviders.length > 0 && (
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-2">AI Model</label>
+            <Label className="block text-xs font-medium text-muted-foreground mb-2">AI Model</Label>
             <div className="relative inline-block" ref={providerDropdownRef}>
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => setProviderDropdownOpen((open) => !open)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs text-gray-700 hover:border-indigo-400 transition-colors"
+                className="h-auto flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-foreground hover:border-ring transition-colors"
               >
                 <span className="font-medium">{MODEL_LABELS[selectedProvider] || selectedProvider}</span>
-                <span className="text-gray-400">·</span>
+                <span className="text-muted-foreground">·</span>
                 <span>{(PROVIDER_MODELS[selectedProvider] || []).find((m) => m.id === selectedModelId)?.label || selectedModelId}</span>
                 <ChevronDownIcon />
-              </button>
+              </Button>
 
               {providerDropdownOpen && (
-                <div className="absolute z-20 mt-1 left-0 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-[220px] max-h-[280px] overflow-y-auto">
+                <div className="absolute z-20 mt-1 left-0 bg-background border border-border rounded-xl shadow-lg py-1 min-w-[220px] max-h-[280px] overflow-y-auto">
                   {availableProviders.map((provider) => (
                     <div key={provider}>
-                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                         {MODEL_LABELS[provider] || provider}
                       </p>
                       {(PROVIDER_MODELS[provider] || []).map((model) => (
-                        <button
+                        <Button
                           key={model.id}
                           type="button"
+                          variant="ghost"
                           onClick={() => {
                             setSelectedProvider(provider);
                             setSelectedModelId(model.id);
@@ -884,12 +887,12 @@ export default function Quiz({ course, onAddSource }) {
                             localStorage.setItem('quiz_selected_model_id', model.id);
                             setProviderDropdownOpen(false);
                           }}
-                          className={`w-full text-left px-4 py-1.5 text-xs hover:bg-indigo-50 transition-colors ${
-                            model.id === selectedModelId ? 'text-indigo-600 font-medium' : 'text-gray-700'
+                          className={`w-full h-auto block rounded-none text-left px-4 py-1.5 text-xs hover:bg-accent transition-colors ${
+                            model.id === selectedModelId ? 'text-primary font-medium' : 'text-foreground'
                           }`}
                         >
                           {model.label}
-                        </button>
+                        </Button>
                       ))}
                     </div>
                   ))}
@@ -901,9 +904,9 @@ export default function Quiz({ course, onAddSource }) {
 
         {/* Summary */}
         {totalQuestions > 0 && (
-          <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-indigo-50 border border-indigo-100">
+          <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-accent border border-accent">
             <SparkleIcon />
-            <span className="text-xs text-indigo-700">
+            <span className="text-xs text-accent-foreground">
               <span className="font-semibold">{totalQuestions} questions</span> will be generated
               {' '}({tfCount} T/F · {saCount} SA · {laCount} LA · {mcqCount} MCQ)
             </span>
@@ -911,20 +914,20 @@ export default function Quiz({ course, onAddSource }) {
         )}
 
         {/* History */}
-        <div className="mt-3 bg-white rounded-xl border border-gray-200 p-3">
+        <div className="mt-3 bg-background rounded-xl border border-border p-3">
           <div className="flex items-center justify-between gap-3 mb-2">
-            <p className="text-xs font-semibold text-gray-900">Generated & Drafted Quizzes</p>
+            <p className="text-xs font-semibold text-foreground">Generated & Drafted Quizzes</p>
             {historyLoading ? (
-              <p className="text-[10px] text-gray-400">Loading…</p>
+              <p className="text-[10px] text-muted-foreground">Loading…</p>
             ) : (
-              <p className="text-[10px] text-gray-400">{historyGenerations.length} saved</p>
+              <p className="text-[10px] text-muted-foreground">{historyGenerations.length} saved</p>
             )}
           </div>
 
           {historyLoading ? (
-            <p className="text-[10px] text-gray-400">Fetching your generations…</p>
+            <p className="text-[10px] text-muted-foreground">Fetching your generations…</p>
           ) : historyGenerations.length === 0 ? (
-            <p className="text-[10px] text-gray-400 italic">No quiz history yet.</p>
+            <p className="text-[10px] text-muted-foreground italic">No quiz history yet.</p>
           ) : (
             <div className="space-y-2">
               {historyGenerations.map((g) => {
@@ -934,12 +937,12 @@ export default function Quiz({ course, onAddSource }) {
                   status === 'ready'
                     ? 'border-green-200 bg-green-50 text-green-700'
                     : status === 'failed'
-                      ? 'border-red-200 bg-red-50 text-red-600'
+                      ? 'border-destructive/20 bg-destructive/10 text-destructive'
                       : status === 'draft'
                         ? 'border-amber-200 bg-amber-50 text-amber-800'
                         : status === 'queued'
                           ? 'border-purple-200 bg-purple-50 text-purple-700'
-                        : 'border-indigo-200 bg-indigo-50 text-indigo-700';
+                        : 'border-accent bg-accent text-accent-foreground';
 
                 const tokenLow = g.estimated_total_tokens_low;
                 const tokenHigh = g.estimated_total_tokens_high;
@@ -951,18 +954,18 @@ export default function Quiz({ course, onAddSource }) {
                 const createdAt = formatDateTime(g.created_at);
 
                 return (
-                  <div key={g.generation_id} className="rounded-lg border border-gray-200 p-2.5">
+                  <div key={g.generation_id} className="rounded-lg border border-border p-2.5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-xs font-semibold text-gray-900 truncate">
+                        <p className="text-xs font-semibold text-foreground truncate">
                           {g.title || g.topic || 'Quiz'}
                         </p>
-                        <p className="text-[10px] text-gray-500 mt-0.5 truncate">
+                        <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
                           {g.provider || 'provider'} · {g.model_id || 'model'} · {createdAt}
                         </p>
                       </div>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-medium ${badgeClass}`}>
+                        <Badge variant="outline" className={`gap-1 px-2 py-1 h-auto rounded-full text-[10px] font-medium ${badgeClass}`}>
                           {(status === 'generating' || status === 'queued') && (
                             <svg className="animate-spin h-2.5 w-2.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -970,55 +973,57 @@ export default function Quiz({ course, onAddSource }) {
                             </svg>
                           )}
                           {status}
-                        </span>
-                        <button
+                        </Badge>
+                        <Button
                           type="button"
+                          variant="ghost"
                           onClick={() => deleteGeneration(g.generation_id)}
-                          className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                          className="h-auto w-auto p-1 rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
                           aria-label="Delete"
                         >
                           <TrashIcon />
-                        </button>
+                        </Button>
                       </div>
                     </div>
 
                     <div className="mt-2 flex items-center justify-between gap-3">
-                      <p className="text-[10px] text-gray-500">
-                        Tokens: <span className="font-medium text-gray-700">{tokenText}</span>
+                      <p className="text-[10px] text-muted-foreground">
+                        Tokens: <span className="font-medium text-muted-foreground">{tokenText}</span>
                       </p>
 
                       <div className="flex items-center gap-2">
                         {status === 'generating' ? (
-                          <p className="text-[10px] text-indigo-600 italic">Processing…</p>
+                          <p className="text-[10px] text-primary italic">Processing…</p>
                         ) : status === 'queued' ? (
                           <p className="text-[10px] text-purple-600 italic">Queued…</p>
                         ) : status === 'draft' ? (
-                          <button
+                          <Button
                             type="button"
                             onClick={() => triggerGeneration(g.generation_id)}
                             disabled={estimating}
-                            className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            className="h-auto px-2 py-1 rounded-lg text-[10px] font-medium"
                           >
                             Generate
-                          </button>
+                          </Button>
                         ) : (
                           <>
-                            <button
+                            <Button
                               type="button"
+                              variant="outline"
                               onClick={() => reopenFromHistory(g)}
-                              className="px-2 py-1 rounded-lg border border-gray-200 text-[10px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                              className="h-auto px-2 py-1 rounded-lg text-[10px] font-medium text-muted-foreground"
                             >
                               Open
-                            </button>
+                            </Button>
                             {status === 'ready' && (
-                              <button
+                              <Button
                                 type="button"
                                 onClick={() => applyQuizPreset(g, g.generation_id)}
                                 disabled={estimating}
-                                className="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                className="h-auto px-2 py-1 rounded-lg text-[10px] font-medium"
                               >
                                 Regenerate
-                              </button>
+                              </Button>
                             )}
                           </>
                         )}
@@ -1033,15 +1038,15 @@ export default function Quiz({ course, onAddSource }) {
 
         {/* Error */}
         {generateError && (
-          <p className="text-xs text-red-600">{generateError}</p>
+          <p className="text-xs text-destructive">{generateError}</p>
         )}
 
         {/* Generate button */}
-        <button
+        <Button
           type="button"
           onClick={() => handleGenerate(pendingRegenerationParentId)}
           disabled={estimating || totalQuestions === 0 || selectedCount === 0}
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+          className="h-auto w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
         >
           {estimating ? (
             <>
@@ -1057,12 +1062,12 @@ export default function Quiz({ course, onAddSource }) {
               Generate Quiz
             </>
           )}
-        </button>
+        </Button>
 
-        <p className="text-[10px] text-gray-400 flex items-center gap-1.5">
+        <p className="text-[10px] text-muted-foreground flex items-center gap-1.5">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
           AI responses are based on your selected course materials.{' '}
-          <a href="#" className="text-indigo-500 hover:underline">Learn more</a>
+          <a href="#" className="text-primary hover:underline">Learn more</a>
         </p>
 
         {confirmModalData && (
@@ -1077,7 +1082,7 @@ export default function Quiz({ course, onAddSource }) {
             modelLabels={MODEL_LABELS}
           />
         )}
-      </div>
+      </Card>
 
     </div>
   );
