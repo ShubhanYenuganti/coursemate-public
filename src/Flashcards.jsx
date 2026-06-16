@@ -774,68 +774,71 @@ export default function Flashcards({ course, onAddSource }) {
         </div>
       </Card>
 
-      <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 flex flex-col gap-5">
+      <Card className="flex-1 min-w-0 rounded-2xl border border-border shadow-sm p-6 flex flex-col gap-5 [--card-spacing:0px]">
         <div>
-          <h2 className="text-xl font-bold text-gray-900 mb-1">Custom Flashcard Generator</h2>
-          <p className="text-sm text-gray-500">Generate study flashcards from your selected sources with customizable depth.</p>
+          <h2 className="text-xl font-bold text-foreground mb-1">Custom Flashcard Generator</h2>
+          <p className="text-sm text-muted-foreground">Generate study flashcards from your selected sources with customizable depth.</p>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Primary Topic</label>
-          <input
+          <Label className="block text-sm font-medium text-foreground mb-1.5">Primary Topic</Label>
+          <Input
             type="text"
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             placeholder="e.g. Kinematics, Control Systems..."
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 transition-colors"
+            className="w-full rounded-lg border border-border px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-ring transition-colors"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Number of Flashcards</label>
+          <Label className="block text-sm font-medium text-foreground mb-1.5">Number of Flashcards</Label>
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-3 border border-gray-200 rounded-lg px-3 py-2 bg-white">
-              <button
+            <div className="flex items-center gap-3 border border-border rounded-lg px-3 py-2 bg-background">
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => setCardCount((c) => Math.max(1, c - 1))}
                 disabled={cardCount <= 1}
-                className="text-gray-400 hover:text-gray-700 transition-colors disabled:opacity-30"
+                className="h-auto w-auto p-0 rounded-md text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors disabled:opacity-30"
               >
                 <MinusIcon />
-              </button>
-              <span className="text-sm font-semibold text-gray-900 w-5 text-center tabular-nums">{cardCount}</span>
-              <button
+              </Button>
+              <span className="text-sm font-semibold text-foreground w-5 text-center tabular-nums">{cardCount}</span>
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => setCardCount((c) => Math.min(100, c + 1))}
                 disabled={cardCount >= 100}
-                className="text-gray-400 hover:text-gray-700 transition-colors disabled:opacity-30"
+                className="h-auto w-auto p-0 rounded-md text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors disabled:opacity-30"
               >
                 <PlusIcon />
-              </button>
+              </Button>
             </div>
-            <span className="text-sm text-gray-400">{cardCount} cards</span>
+            <span className="text-sm text-muted-foreground">{cardCount} cards</span>
           </div>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Definition Depth</label>
-          <div className="flex gap-1 p-1 bg-gray-100 rounded-lg w-fit mb-2">
+          <Label className="block text-sm font-medium text-foreground mb-2">Definition Depth</Label>
+          <div className="flex gap-1 p-1 bg-muted rounded-lg w-fit mb-2">
             {DEPTH_OPTIONS.map(({ id, label }) => (
-              <button
+              <Button
                 key={id}
                 type="button"
+                variant="ghost"
                 onClick={() => setDepth(id)}
-                className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                className={`h-auto px-4 py-1.5 rounded-md text-xs font-medium transition-colors hover:bg-transparent ${
                   depth === id
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:text-gray-800'
+                    ? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary'
+                    : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 {label}
-              </button>
+              </Button>
             ))}
           </div>
-          {activeDepth && <p className="text-xs text-gray-500">{activeDepth.description}</p>}
+          {activeDepth && <p className="text-xs text-muted-foreground">{activeDepth.description}</p>}
         </div>
 
         {availableProviders.length > 0 && (
@@ -1046,7 +1049,7 @@ export default function Flashcards({ course, onAddSource }) {
             modelLabels={MODEL_LABELS}
           />
         )}
-      </div>
+      </Card>
     </div>
       <div className="mt-4">
         <DueTodayWidget courseId={course?.id} />
