@@ -885,20 +885,20 @@ export default function Reports({ course, onAddSource }) {
         )}
 
         {/* History */}
-        <div className="bg-white rounded-xl border border-gray-200 p-3">
+        <div className="bg-background rounded-xl border border-border p-3">
           <div className="flex items-center justify-between gap-3 mb-2">
-            <p className="text-xs font-semibold text-gray-900">Generated & Drafted Reports</p>
+            <p className="text-xs font-semibold text-foreground">Generated & Drafted Reports</p>
             {historyLoading ? (
-              <p className="text-[10px] text-gray-400">Loading…</p>
+              <p className="text-[10px] text-muted-foreground">Loading…</p>
             ) : (
-              <p className="text-[10px] text-gray-400">{historyGenerations.length} saved</p>
+              <p className="text-[10px] text-muted-foreground">{historyGenerations.length} saved</p>
             )}
           </div>
 
           {historyLoading ? (
-            <p className="text-[10px] text-gray-400">Fetching your reports…</p>
+            <p className="text-[10px] text-muted-foreground">Fetching your reports…</p>
           ) : historyGenerations.length === 0 ? (
-            <p className="text-[10px] text-gray-400 italic">No report history yet.</p>
+            <p className="text-[10px] text-muted-foreground italic">No report history yet.</p>
           ) : (
             <div className="space-y-2">
               {historyGenerations.map((g) => {
@@ -908,10 +908,10 @@ export default function Reports({ course, onAddSource }) {
                   : (isPolling ? 'generating' : (g.status || 'ready'));
                 const badgeClass =
                   status === 'ready'    ? 'border-green-200 bg-green-50 text-green-700'
-                  : status === 'failed' ? 'border-red-200 bg-red-50 text-red-600'
+                  : status === 'failed' ? 'border-destructive/20 bg-destructive/10 text-destructive'
                   : status === 'draft'  ? 'border-amber-200 bg-amber-50 text-amber-800'
                   : status === 'queued' ? 'border-purple-200 bg-purple-50 text-purple-700'
-                  :                       'border-indigo-200 bg-indigo-50 text-indigo-700';
+                  :                       'border-ring bg-accent text-accent-foreground';
 
                 const templateLabel = TEMPLATES.find((t) => t.id === g.template_id)?.label
                   || (g.template_id ? g.template_id : 'Report');
@@ -931,11 +931,11 @@ export default function Reports({ course, onAddSource }) {
                 const createdAt = formatDateTime(g.created_at);
 
                 return (
-                  <div key={g.generation_id} className="rounded-lg border border-gray-200 p-2.5">
+                  <div key={g.generation_id} className="rounded-lg border border-border p-2.5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-xs font-semibold text-gray-900 truncate">{rowTitle}</p>
-                        <p className="text-[10px] text-gray-500 mt-0.5 truncate">
+                        <p className="text-xs font-semibold text-foreground truncate">{rowTitle}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
                           {g.provider || 'provider'} · {g.model_id || 'model'} · {createdAt}
                         </p>
                       </div>
@@ -949,36 +949,38 @@ export default function Reports({ course, onAddSource }) {
                           )}
                           {status}
                         </span>
-                        <button
+                        <Button
                           type="button"
+                          variant="ghost"
                           onClick={() => deleteGeneration(g.generation_id)}
-                          className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                          className="h-auto w-auto p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                           aria-label="Delete"
                         >
                           <TrashIcon />
-                        </button>
+                        </Button>
                       </div>
                     </div>
 
                     <div className="mt-2 flex items-center justify-between gap-3">
-                      <p className="text-[10px] text-gray-500">
-                        Tokens: <span className="font-medium text-gray-700">{tokenText}</span>
+                      <p className="text-[10px] text-muted-foreground">
+                        Tokens: <span className="font-medium text-foreground">{tokenText}</span>
                       </p>
                       <div className="flex items-center gap-2">
                         {status === 'generating' ? (
-                          <p className="text-[10px] text-indigo-600 italic">Processing…</p>
+                          <p className="text-[10px] text-primary italic">Processing…</p>
                         ) : status === 'queued' ? (
                           <p className="text-[10px] text-purple-600 italic">Queued…</p>
                         ) : status === 'ready' ? (
-                          <button
+                          <Button
                             type="button"
+                            variant="outline"
                             onClick={() => reopenFromHistory(g)}
-                            className="px-2 py-1 rounded-lg border border-gray-200 text-[10px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                            className="h-auto px-2 py-1 rounded-lg text-[10px] font-medium text-foreground hover:bg-muted transition-colors"
                           >
                             Open
-                          </button>
+                          </Button>
                         ) : status === 'failed' ? (
-                          <p className="text-[10px] text-red-500 italic truncate max-w-[120px]" title={g.error}>
+                          <p className="text-[10px] text-destructive italic truncate max-w-[120px]" title={g.error}>
                             {g.error ? g.error.slice(0, 40) : 'Failed'}
                           </p>
                         ) : null}
@@ -993,15 +995,15 @@ export default function Reports({ course, onAddSource }) {
 
         {/* Error */}
         {generateError && (
-          <p className="text-xs text-red-600">{generateError}</p>
+          <p className="text-xs text-destructive">{generateError}</p>
         )}
 
         {/* Generate button — no longer blocked by in-progress generation */}
-        <button
+        <Button
           type="button"
           onClick={() => handleEstimate()}
           disabled={isEstimating || isQueueing || selectedCount === 0 || (isCustom && !customPrompt.trim())}
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+          className="w-full h-auto flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
         >
           {isEstimating ? (
             <>
@@ -1017,12 +1019,12 @@ export default function Reports({ course, onAddSource }) {
               Generate {activeTemplate?.label}
             </>
           )}
-        </button>
+        </Button>
 
-        <p className="text-[10px] text-gray-400 flex items-center gap-1.5">
+        <p className="text-[10px] text-muted-foreground flex items-center gap-1.5">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
           AI responses are based on your selected course materials.{' '}
-          <a href="#" className="text-indigo-500 hover:underline">Learn more</a>
+          <a href="#" className="text-primary hover:underline">Learn more</a>
         </p>
       </div>
 
