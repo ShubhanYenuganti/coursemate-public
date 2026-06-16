@@ -769,28 +769,31 @@ export default function ReportsViewer({
               {pageCount ? `${pageCount} page${pageCount > 1 ? 's' : ''}` : ''}
             </span>
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-0.5 p-1 bg-gray-100 rounded-lg">
+              <div className="flex items-center gap-0.5 p-1 bg-muted rounded-lg">
                 {[75, 100, 125].map((z) => (
-                  <button
+                  <Button
                     key={z}
                     type="button"
                     onClick={() => setZoom(z)}
-                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                      zoom === z ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                    variant="ghost"
+                    className={`rounded-md px-3 py-1 h-auto text-xs font-medium hover:bg-transparent ${
+                      zoom === z ? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary' : 'text-muted-foreground hover:text-foreground'
                     }`}
                   >
                     {z}%
-                  </button>
+                  </Button>
                 ))}
               </div>
-              <button
+              <Button
                 type="button"
                 onClick={handleCopy}
                 title={copied ? 'Copied!' : 'Copy content'}
-                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                variant="ghost"
+                size="icon"
+                className="rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
               >
                 <CopyIcon />
-              </button>
+              </Button>
             </div>
           </div>
 
