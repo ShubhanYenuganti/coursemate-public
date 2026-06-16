@@ -80,7 +80,7 @@ export default function Generations({ course, userData, onAddSource }) {
               type="button"
               variant={active ? 'default' : 'ghost'}
               onClick={() => setActiveTab(id)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium"
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium ${active ? 'shadow-sm' : ''}`}
             >
               <Icon size={14} />
               {label}
