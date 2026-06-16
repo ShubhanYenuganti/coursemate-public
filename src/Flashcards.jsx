@@ -677,7 +677,7 @@ export default function Flashcards({ course, onAddSource }) {
   return (
     <>
     <div className="flex gap-4 items-start">
-      <Card className="w-[220px] flex-shrink-0 rounded-2xl border border-border shadow-sm flex flex-col overflow-hidden p-0 gap-0 [--card-spacing:0px]" style={{ minHeight: '520px' }}>
+      <Card className="w-[220px] flex-shrink-0 rounded-2xl border border-border shadow-sm ring-0 flex flex-col overflow-hidden p-0 gap-0 [--card-spacing:0px]" style={{ minHeight: '520px' }}>
         <div className="px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Sources</span>
@@ -774,7 +774,7 @@ export default function Flashcards({ course, onAddSource }) {
         </div>
       </Card>
 
-      <Card className="flex-1 min-w-0 rounded-2xl border border-border shadow-sm p-6 flex flex-col gap-5 [--card-spacing:0px]">
+      <Card className="flex-1 min-w-0 rounded-2xl border border-border shadow-sm ring-0 p-6 flex flex-col gap-5 [--card-spacing:0px]">
         <div>
           <h2 className="text-xl font-bold text-foreground mb-1">Custom Flashcard Generator</h2>
           <p className="text-sm text-muted-foreground">Generate study flashcards from your selected sources with customizable depth.</p>
@@ -847,9 +847,9 @@ export default function Flashcards({ course, onAddSource }) {
             <div className="relative inline-block" ref={providerDropdownRef}>
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 onClick={() => setProviderDropdownOpen((open) => !open)}
-                className="h-auto flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-background text-xs text-muted-foreground hover:border-ring hover:bg-background transition-colors"
+                className="h-auto flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-foreground hover:border-ring transition-colors"
               >
                 <span className="font-medium">{MODEL_LABELS[selectedProvider] || selectedProvider}</span>
                 <span className="text-muted-foreground">·</span>
@@ -875,8 +875,8 @@ export default function Flashcards({ course, onAddSource }) {
                             localStorage.setItem('flashcards_selected_model_id', model.id);
                             setProviderDropdownOpen(false);
                           }}
-                          className={`h-auto w-full justify-start text-left px-4 py-1.5 text-xs rounded-none hover:bg-accent ${
-                            model.id === selectedModelId ? 'text-accent-foreground font-medium' : 'text-muted-foreground'
+                          className={`w-full h-auto block rounded-none text-left px-4 py-1.5 text-xs hover:bg-accent transition-colors ${
+                            model.id === selectedModelId ? 'text-primary font-medium' : 'text-foreground'
                           }`}
                         >
                           {model.label}
@@ -939,7 +939,7 @@ export default function Flashcards({ course, onAddSource }) {
                         </p>
                       </div>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-medium ${badgeClass}`}>
+                        <Badge variant="outline" className={`gap-1 px-2 py-1 h-auto rounded-full text-[10px] font-medium ${badgeClass}`}>
                           {(status === 'generating' || status === 'queued') && (
                             <svg className="animate-spin h-2.5 w-2.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -947,7 +947,7 @@ export default function Flashcards({ course, onAddSource }) {
                             </svg>
                           )}
                           {status}
-                        </span>
+                        </Badge>
                         <Button
                           type="button"
                           variant="ghost"
