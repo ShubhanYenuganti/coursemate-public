@@ -610,117 +610,148 @@ export default function FlashcardViewer({
           >
             {/* Front face */}
             <div
-              className="bg-white rounded-2xl shadow-md border border-gray-100 overflow-hidden"
+              className="bg-background rounded-2xl shadow-md border border-border overflow-hidden"
               style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
             >
               {/* Card top bar */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-50">
-                <button
+              <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={(e) => { e.stopPropagation(); setShowHint((h) => !h); }}
-                  className="flex items-center gap-1.5 text-xs text-indigo-500 hover:text-indigo-700 transition-colors"
+                  className="h-auto w-auto rounded-md gap-1.5 px-0 py-0 text-xs text-primary hover:bg-transparent hover:text-accent-foreground"
                 >
                   <LightbulbIcon />
                   Get a hint
-                </button>
+                </Button>
                 <div className="flex items-center gap-1">
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     onClick={(e) => e.stopPropagation()}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                    className="h-auto w-auto rounded-lg p-1.5 text-muted-foreground hover:text-foreground"
                   >
                     <SpeakerIcon />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="I knew this — schedule it for a later review"
-                    title="I knew this — schedules the card to return later (spaced repetition)"
-                    onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
-                  >
-                    <ThumbUpIcon />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Needs review — bring this card back soon"
-                    title="Needs review — brings this card back tomorrow (spaced repetition)"
-                    onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
-                  >
-                    <ThumbDownIcon />
-                  </button>
+                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          aria-label="I knew this — schedule it for a later review"
+                          onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
+                          className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50 hover:bg-green-50' : 'border-border text-muted-foreground hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
+                        >
+                          <ThumbUpIcon />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>I knew this — schedules the card to return later (spaced repetition)</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          aria-label="Needs review — bring this card back soon"
+                          onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
+                          className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'down' ? 'border-destructive/50 text-destructive bg-destructive/10 hover:bg-destructive/10' : 'border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive hover:bg-destructive/10'}`}
+                        >
+                          <ThumbDownIcon />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Needs review — brings this card back tomorrow (spaced repetition)</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
               </div>
 
               {/* Card body */}
               <div className="flex flex-col items-center justify-center px-10 py-16 min-h-[350px]">
                 {showHint && hint && (
-                  <p className="text-xs text-indigo-400 italic mb-6 text-center">Hint: {hint}</p>
+                  <p className="text-xs text-primary/70 italic mb-6 text-center">Hint: {hint}</p>
                 )}
-                <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-4">Front</p>
-                <p className="text-xl font-semibold text-gray-900 text-center leading-snug">{front}</p>
+                <p className="text-[10px] font-bold text-primary uppercase tracking-widest mb-4">Front</p>
+                <p className="text-xl font-semibold text-foreground text-center leading-snug">{front}</p>
               </div>
 
               {/* Flip bar */}
-              <div className="bg-indigo-600 rounded-b-2xl px-6 py-3 text-center">
-                <p className="text-sm text-white/90">Click the card to flip</p>
+              <div className="bg-primary rounded-b-2xl px-6 py-3 text-center">
+                <p className="text-sm text-primary-foreground/90">Click the card to flip</p>
               </div>
             </div>
 
             {/* Back face */}
             <div
-              className="absolute inset-0 bg-white rounded-2xl shadow-md border border-gray-100 overflow-hidden"
+              className="absolute inset-0 bg-background rounded-2xl shadow-md border border-border overflow-hidden"
               style={{
                 backfaceVisibility: 'hidden',
                 WebkitBackfaceVisibility: 'hidden',
                 transform: 'rotateY(180deg)',
               }}
             >
-              {whitingOut && <div className="absolute inset-0 bg-white z-10 rounded-2xl" />}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-50">
-                <span className="text-xs text-gray-400">Answer</span>
+              {whitingOut && <div className="absolute inset-0 bg-background z-10 rounded-2xl" />}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+                <span className="text-xs text-muted-foreground">Answer</span>
                 <div className="flex items-center gap-1">
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     onClick={(e) => e.stopPropagation()}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                    className="h-auto w-auto rounded-lg p-1.5 text-muted-foreground hover:text-foreground"
                   >
                     <SpeakerIcon />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="I knew this — schedule it for a later review"
-                    title="I knew this — schedules the card to return later (spaced repetition)"
-                    onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
-                  >
-                    <ThumbUpIcon />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Needs review — bring this card back soon"
-                    title="Needs review — brings this card back tomorrow (spaced repetition)"
-                    onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
-                  >
-                    <ThumbDownIcon />
-                  </button>
+                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          aria-label="I knew this — schedule it for a later review"
+                          onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
+                          className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50 hover:bg-green-50' : 'border-border text-muted-foreground hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
+                        >
+                          <ThumbUpIcon />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>I knew this — schedules the card to return later (spaced repetition)</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          aria-label="Needs review — bring this card back soon"
+                          onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
+                          className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'down' ? 'border-destructive/50 text-destructive bg-destructive/10 hover:bg-destructive/10' : 'border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive hover:bg-destructive/10'}`}
+                        >
+                          <ThumbDownIcon />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Needs review — brings this card back tomorrow (spaced repetition)</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
               </div>
 
               <div className="flex flex-col items-center justify-center px-10 py-16 min-h-[350px]">
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-4">Back</p>
-                <p className="text-base text-gray-700 text-center leading-relaxed">{back}</p>
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-4">Back</p>
+                <p className="text-base text-foreground/80 text-center leading-relaxed">{back}</p>
               </div>
 
-              <div className="bg-indigo-600 rounded-b-2xl px-6 py-3 text-center">
-                <p className="text-sm text-white/90">Click to flip back</p>
+              <div className="bg-primary rounded-b-2xl px-6 py-3 text-center">
+                <p className="text-sm text-primary-foreground/90">Click to flip back</p>
               </div>
             </div>
           </div>
 
           {/* Spaced-repetition hint — tells users that rating schedules reviews */}
-          <p className="mt-5 text-center text-xs text-gray-400">
+          <p className="mt-5 text-center text-xs text-muted-foreground">
             Rate each card with <span className="font-medium text-green-600">👍</span> /{' '}
             <span className="font-medium text-red-500">👎</span> — we’ll schedule it to come back for review using spaced repetition.
           </p>
