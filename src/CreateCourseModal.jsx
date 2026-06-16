@@ -1,6 +1,17 @@
 import { useState, forwardRef, useImperativeHandle } from "react";
-import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogClose,
+} from "@/components/ui/dialog";
 
 function NotebookIcon() {
   return (
@@ -40,8 +51,9 @@ const CreateCourseModal = forwardRef(function CreateCourseModal(_, ref) {
     setShowModal(true);
   };
 
-  const closeModal = () => {
-    if (!creating) setShowModal(false);
+  const handleOpenChange = (open) => {
+    if (!open && creating) return;
+    setShowModal(open);
   };
 
   const handleCreate = async (e) => {
@@ -78,92 +90,88 @@ const CreateCourseModal = forwardRef(function CreateCourseModal(_, ref) {
 
   return (
     <>
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="icon"
         onClick={openModal}
-        className="p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+        className="text-muted-foreground hover:text-foreground"
         title="New course"
         aria-label="New course"
       >
         <NotebookIcon />
-      </button>
+      </Button>
 
-      {showModal && createPortal(
-        <div
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center px-4 z-50"
-          onClick={closeModal}
-        >
-          <div
-            className="bg-white/90 backdrop-blur-md rounded-2xl shadow-[0_8px_40px_rgba(0,0,0,0.2)] w-full max-w-md p-8 border border-white/60"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-xl font-bold text-gray-900 mb-6">New Course</h2>
+      <Dialog open={showModal} onOpenChange={handleOpenChange}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Course</DialogTitle>
+          </DialogHeader>
 
-            <form onSubmit={handleCreate} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="course-title">
-                  Title <span className="text-red-500">*</span>
-                </label>
-                <input
-                  id="course-title"
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. Introduction to Machine Learning"
-                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 text-gray-900 placeholder-gray-400 text-sm"
-                  autoFocus
-                  disabled={creating}
-                />
-              </div>
+          <form onSubmit={handleCreate} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="course-title">
+                Title <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="course-title"
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="e.g. Introduction to Machine Learning"
+                autoFocus
+                disabled={creating}
+              />
+            </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="course-desc">
-                  Description <span className="text-gray-400 font-normal">(optional)</span>
-                </label>
-                <textarea
-                  id="course-desc"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="What is this course about?"
-                  rows={3}
-                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 text-gray-900 placeholder-gray-400 text-sm resize-none"
-                  disabled={creating}
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="course-desc">
+                Description <span className="text-muted-foreground font-normal">(optional)</span>
+              </Label>
+              <Textarea
+                id="course-desc"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="What is this course about?"
+                rows={3}
+                className="resize-none"
+                disabled={creating}
+              />
+            </div>
 
-              {error && (
-                <p className="text-red-600 text-sm">{error}</p>
-              )}
+            {error && (
+              <p className="text-destructive text-sm">{error}</p>
+            )}
 
-              <div className="flex gap-3 pt-2">
-                <button
+            <DialogFooter className="pt-2">
+              <DialogClose asChild>
+                <Button
                   type="button"
-                  onClick={closeModal}
+                  variant="outline"
                   disabled={creating}
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
+                  className="flex-1"
                 >
                   Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={creating || !title.trim()}
-                  className="flex-1 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {creating ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                      Creating…
-                    </>
-                  ) : (
-                    "Create Course"
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>,
-        document.body
-      )}
+                </Button>
+              </DialogClose>
+              <Button
+                type="submit"
+                disabled={creating || !title.trim()}
+                className="flex-1"
+              >
+                {creating ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-primary-foreground/40 border-t-primary-foreground rounded-full animate-spin" />
+                    Creating…
+                  </>
+                ) : (
+                  "Create Course"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
   );
 });

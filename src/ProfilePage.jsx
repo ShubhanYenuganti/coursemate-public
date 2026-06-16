@@ -701,7 +701,7 @@ export default function ProfilePage({ userData, csrfToken, onSignOut, onUserUpda
 
           {/* Username section */}
           <Card className="rounded-none border-0 shadow-none">
-            <CardHeader className="px-8 pt-6 pb-2">
+            <CardHeader className="px-8 pt-6 pb-1">
               <CardTitle className="text-sm font-semibold text-foreground uppercase tracking-wide">Display Name</CardTitle>
             </CardHeader>
             <CardContent className="px-8 pb-6">
@@ -714,7 +714,7 @@ export default function ProfilePage({ userData, csrfToken, onSignOut, onUserUpda
                   onChange={(e) => { setUsernameInput(e.target.value); setUsernameStatus(null); setUsernameError(""); }}
                   maxLength={255}
                   placeholder="Your display name"
-                  className="flex-1"
+                  className="flex-1 bg-input/30"
                 />
                 <Button
                   type="submit"
