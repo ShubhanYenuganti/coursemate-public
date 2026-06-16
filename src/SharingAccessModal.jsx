@@ -1,4 +1,9 @@
 import { useState, useEffect } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 
 const AVATAR_COLORS = [
   "bg-indigo-400", "bg-cyan-500", "bg-violet-400",
@@ -21,7 +26,7 @@ function Avatar({ name, picture }) {
       <img
         src={picture}
         alt={name}
-        className="w-9 h-9 rounded-full border border-gray-200 flex-shrink-0 object-cover"
+        className="w-9 h-9 rounded-full border border-border flex-shrink-0 object-cover"
       />
     );
   }
@@ -34,29 +39,29 @@ function Avatar({ name, picture }) {
 
 function MemberRow({ member, isOwner, onRemove, removing }) {
   return (
-    <div className="flex items-center gap-3 py-3 border-b border-gray-100 last:border-0">
+    <div className="flex items-center gap-3 py-3 border-b border-border last:border-0">
       <Avatar name={member.name} picture={member.picture} />
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-gray-900 truncate">{member.name}</p>
-        <p className="text-xs text-gray-400 truncate">{member.email}</p>
+        <p className="text-sm font-semibold text-foreground truncate">{member.name}</p>
+        <p className="text-xs text-muted-foreground truncate">{member.email}</p>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
-        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border bg-indigo-50 text-indigo-700 border-indigo-200">
-          Collaborator
-        </span>
+        <Badge variant="default">Collaborator</Badge>
         {isOwner && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-sm"
             disabled={removing}
             onClick={() => onRemove(member.id)}
-            className="p-1.5 rounded-lg text-gray-300 hover:text-red-400 hover:bg-red-50 transition-colors disabled:opacity-40"
+            className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
             aria-label="Remove collaborator"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -167,90 +172,96 @@ export default function SharingAccessModal({ courseId, csrfToken, isOwner }) {
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-5">
-      {/* Header */}
-      <div>
-        <p className="text-xs font-bold text-gray-900 uppercase tracking-wider mb-1">Sharing</p>
-        <p className="text-xs text-gray-500">
-          {isOwner
-            ? "Invite collaborators by email. They'll see this course on their dashboard and can access public materials, chat, and generate."
-            : "People with access to this course."}
-        </p>
-      </div>
+    <Card>
+      <CardContent className="space-y-5">
+        {/* Header */}
+        <div>
+          <p className="text-xs font-bold text-foreground uppercase tracking-wider mb-1">Sharing</p>
+          <p className="text-xs text-muted-foreground">
+            {isOwner
+              ? "Invite collaborators by email. They'll see this course on their dashboard and can access public materials, chat, and generate."
+              : "People with access to this course."}
+          </p>
+        </div>
 
-      {/* Invite row — owner only */}
-      {isOwner && (
-        <form onSubmit={handleInvite} className="flex gap-2 flex-wrap sm:flex-nowrap">
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => { setEmail(e.target.value); setError(""); }}
-            placeholder="Invite by email address…"
-            className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 text-sm text-gray-900 placeholder-gray-400"
-          />
-          <button
-            type="submit"
-            disabled={inviting || !email.trim()}
-            className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors flex-shrink-0 disabled:opacity-50"
-          >
-            {inviting ? "Adding…" : "Invite"}
-          </button>
-        </form>
-      )}
+        {/* Invite row — owner only */}
+        {isOwner && (
+          <form onSubmit={handleInvite} className="flex gap-2 flex-wrap sm:flex-nowrap">
+            <Label htmlFor="sharing-invite-email" className="sr-only">Invite by email address</Label>
+            <Input
+              id="sharing-invite-email"
+              type="email"
+              value={email}
+              onChange={(e) => { setEmail(e.target.value); setError(""); }}
+              placeholder="Invite by email address…"
+              className="flex-1 min-w-0"
+            />
+            <Button
+              type="submit"
+              disabled={inviting || !email.trim()}
+              className="flex-shrink-0"
+            >
+              {inviting ? "Adding…" : "Invite"}
+            </Button>
+          </form>
+        )}
 
-      {/* Feedback */}
-      {error && (
-        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
-      )}
-      {success && (
-        <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">{success}</p>
-      )}
+        {/* Feedback */}
+        {error && (
+          <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">{error}</p>
+        )}
+        {success && (
+          <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">{success}</p>
+        )}
 
-      {/* Members list */}
-      <div>
-        <p className="text-xs font-bold text-gray-900 uppercase tracking-wider mb-3">
-          {members.length} {members.length === 1 ? "Collaborator" : "Collaborators"}
-        </p>
-        {loadingMembers ? (
-          <div className="flex justify-center py-6">
-            <div className="w-6 h-6 border-2 border-gray-200 border-t-indigo-500 rounded-full animate-spin" />
-          </div>
-        ) : members.length === 0 ? (
-          <p className="text-xs text-gray-400 text-center py-4">No collaborators yet.</p>
-        ) : (
+        {/* Members list */}
+        <div>
+          <p className="text-xs font-bold text-foreground uppercase tracking-wider mb-3">
+            {members.length} {members.length === 1 ? "Collaborator" : "Collaborators"}
+          </p>
+          {loadingMembers ? (
+            <div className="flex justify-center py-6">
+              <div className="w-6 h-6 border-2 border-border border-t-primary rounded-full animate-spin" />
+            </div>
+          ) : members.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-4">No collaborators yet.</p>
+          ) : (
+            <div>
+              {members.map((m) => (
+                <MemberRow
+                  key={m.id}
+                  member={m}
+                  isOwner={isOwner}
+                  onRemove={handleRemove}
+                  removing={removingId === m.id}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {isOwner && pending.length > 0 && (
           <div>
-            {members.map((m) => (
-              <MemberRow
-                key={m.id}
-                member={m}
-                isOwner={isOwner}
-                onRemove={handleRemove}
-                removing={removingId === m.id}
-              />
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Pending</h4>
+            {pending.map((p) => (
+              <div key={p.email} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+                <span className="text-foreground truncate">
+                  {p.email} <span className="text-muted-foreground">- joins on sign-in</span>
+                </span>
+                <Button
+                  type="button"
+                  variant="link"
+                  size="xs"
+                  onClick={() => cancelPending(p.email)}
+                  className="text-destructive hover:text-destructive/80 flex-shrink-0 h-auto p-0"
+                >
+                  Cancel
+                </Button>
+              </div>
             ))}
           </div>
         )}
-      </div>
-
-      {isOwner && pending.length > 0 && (
-        <div>
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Pending</h4>
-          {pending.map((p) => (
-            <div key={p.email} className="flex items-center justify-between gap-3 py-1.5 text-sm">
-              <span className="text-gray-700 truncate">
-                {p.email} <span className="text-gray-400">- joins on sign-in</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => cancelPending(p.email)}
-                className="text-xs text-red-500 hover:text-red-600 flex-shrink-0"
-              >
-                Cancel
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+      </CardContent>
+    </Card>
   );
 }
