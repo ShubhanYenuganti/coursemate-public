@@ -692,27 +692,29 @@ export default function Quiz({ course, onAddSource }) {
     <div className="flex gap-4 items-start">
 
       {/* ── Sources sidebar ── */}
-      <div className="w-[220px] flex-shrink-0 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden" style={{ minHeight: '520px' }}>
+      <Card className="w-[220px] flex-shrink-0 rounded-2xl border border-border shadow-sm ring-0 flex flex-col overflow-hidden p-0 gap-0 [--card-spacing:0px]" style={{ minHeight: '520px' }}>
         <div className="px-4 py-3">
           <div className="flex items-center justify-between gap-3">
-            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Sources</span>
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Sources</span>
             {materials.length > 0 && (
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-gray-400 tabular-nums whitespace-nowrap">{selectedCount} selected</span>
-                <button
+                <span className="text-[10px] text-muted-foreground tabular-nums whitespace-nowrap">{selectedCount} selected</span>
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => setAllMaterialsSelected(true)}
-                  className="text-[10px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors whitespace-nowrap"
+                  className="h-auto w-auto p-0 rounded-md text-[10px] font-medium text-primary hover:text-accent-foreground hover:bg-transparent transition-colors whitespace-nowrap"
                 >
                   All
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => setAllMaterialsSelected(false)}
-                  className="text-[10px] font-medium text-gray-500 hover:text-gray-700 transition-colors whitespace-nowrap"
+                  className="h-auto w-auto p-0 rounded-md text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors whitespace-nowrap"
                 >
                   Clear
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -720,10 +722,10 @@ export default function Quiz({ course, onAddSource }) {
 
         <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
           {materialsLoading && (
-            <p className="px-3 py-2 text-[10px] text-gray-400">Loading…</p>
+            <p className="px-3 py-2 text-[10px] text-muted-foreground">Loading…</p>
           )}
           {!materialsLoading && materials.length === 0 && (
-            <p className="px-3 py-2 text-[10px] text-gray-400 italic">No materials yet.</p>
+            <p className="px-3 py-2 text-[10px] text-muted-foreground italic">No materials yet.</p>
           )}
           {(() => {
             const myMats = materials.filter((m) => !m.collaborator);
@@ -733,14 +735,14 @@ export default function Quiz({ course, onAddSource }) {
                 {myMats.map((m) => (
                   <div
                     key={m.id}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
-                      m.selected ? 'border-indigo-400' : 'border-transparent'
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-muted transition-colors cursor-default border-l-2 ${
+                      m.selected ? 'border-primary' : 'border-transparent'
                     }`}
                   >
                     <FileTypeBadge name={m.name} sourceType={m.source_type} />
                     <span className="flex-1 truncate min-w-0 text-xs">{m.name}</span>
                     {(() => { const url = getMaterialUrl(m); return url ? (
-                      <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 p-0.5 rounded text-gray-300 hover:text-indigo-500 transition-colors" onClick={(e) => e.stopPropagation()}>
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 p-0.5 rounded text-muted-foreground hover:text-primary transition-colors" onClick={(e) => e.stopPropagation()}>
                         <ExternalLinkIcon />
                       </a>
                     ) : null; })()}
@@ -750,19 +752,19 @@ export default function Quiz({ course, onAddSource }) {
                 {collabMats.length > 0 && (
                   <>
                     <div className="px-3 pt-2 pb-0.5">
-                      <span className="text-[9px] font-semibold text-gray-300 uppercase tracking-wider">From collaborators</span>
+                      <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">From collaborators</span>
                     </div>
                     {collabMats.map((m) => (
                       <div
                         key={m.id}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
-                          m.selected ? 'border-indigo-300' : 'border-transparent'
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-muted transition-colors cursor-default border-l-2 ${
+                          m.selected ? 'border-primary' : 'border-transparent'
                         }`}
                       >
                         <FileTypeBadge name={m.name} sourceType={m.source_type} />
                         <span className="flex-1 truncate min-w-0 text-xs">{m.name}</span>
                         {(() => { const url = getMaterialUrl(m); return url ? (
-                          <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 p-0.5 rounded text-gray-300 hover:text-indigo-500 transition-colors" onClick={(e) => e.stopPropagation()}>
+                          <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 p-0.5 rounded text-muted-foreground hover:text-primary transition-colors" onClick={(e) => e.stopPropagation()}>
                             <ExternalLinkIcon />
                           </a>
                         ) : null; })()}
@@ -776,17 +778,18 @@ export default function Quiz({ course, onAddSource }) {
           })()}
         </div>
 
-        <div className="px-3 pb-3 pt-2 flex-shrink-0 border-t border-gray-100 bg-white">
-          <button
+        <div className="px-3 pb-3 pt-2 flex-shrink-0 border-t border-border bg-background">
+          <Button
             type="button"
+            variant="outline"
             onClick={onAddSource}
-            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            className="w-full h-auto flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-foreground hover:bg-muted transition-colors"
           >
             <PlusIcon />
             Add Source
-          </button>
+          </Button>
         </div>
-      </div>
+      </Card>
 
       {/* ── Quiz config form ── */}
       <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 flex flex-col gap-5">
