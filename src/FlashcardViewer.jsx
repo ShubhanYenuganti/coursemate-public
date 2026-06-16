@@ -458,6 +458,7 @@ export default function FlashcardViewer({
   }
 
   return (
+    <TooltipProvider>
     <div className="min-h-screen bg-gradient-to-br from-accent via-purple-50 to-teal-50 flex flex-col">
       {parentGenerationId && (
         <div className="bg-amber-50 border-b border-amber-200 px-8 py-3">
@@ -632,38 +633,34 @@ export default function FlashcardViewer({
                   >
                     <SpeakerIcon />
                   </Button>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          aria-label="I knew this — schedule it for a later review"
-                          onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
-                          className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50 hover:bg-green-50' : 'border-border text-muted-foreground hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
-                        >
-                          <ThumbUpIcon />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>I knew this — schedules the card to return later (spaced repetition)</TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          aria-label="Needs review — bring this card back soon"
-                          onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
-                          className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'down' ? 'border-destructive/50 text-destructive bg-destructive/10 hover:bg-destructive/10' : 'border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive hover:bg-destructive/10'}`}
-                        >
-                          <ThumbDownIcon />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Needs review — brings this card back tomorrow (spaced repetition)</TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        aria-label="I knew this — schedule it for a later review"
+                        onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
+                        className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50 hover:bg-green-50' : 'border-border text-muted-foreground hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
+                      >
+                        <ThumbUpIcon />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>I knew this — schedules the card to return later (spaced repetition)</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        aria-label="Needs review — bring this card back soon"
+                        onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
+                        className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'down' ? 'border-destructive/50 text-destructive bg-destructive/10 hover:bg-destructive/10' : 'border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive hover:bg-destructive/10'}`}
+                      >
+                        <ThumbDownIcon />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Needs review — brings this card back tomorrow (spaced repetition)</TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
 
@@ -703,38 +700,34 @@ export default function FlashcardViewer({
                   >
                     <SpeakerIcon />
                   </Button>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          aria-label="I knew this — schedule it for a later review"
-                          onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
-                          className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50 hover:bg-green-50' : 'border-border text-muted-foreground hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
-                        >
-                          <ThumbUpIcon />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>I knew this — schedules the card to return later (spaced repetition)</TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          aria-label="Needs review — bring this card back soon"
-                          onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
-                          className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'down' ? 'border-destructive/50 text-destructive bg-destructive/10 hover:bg-destructive/10' : 'border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive hover:bg-destructive/10'}`}
-                        >
-                          <ThumbDownIcon />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Needs review — brings this card back tomorrow (spaced repetition)</TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        aria-label="I knew this — schedule it for a later review"
+                        onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
+                        className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50 hover:bg-green-50' : 'border-border text-muted-foreground hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
+                      >
+                        <ThumbUpIcon />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>I knew this — schedules the card to return later (spaced repetition)</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        aria-label="Needs review — bring this card back soon"
+                        onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
+                        className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'down' ? 'border-destructive/50 text-destructive bg-destructive/10 hover:bg-destructive/10' : 'border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive hover:bg-destructive/10'}`}
+                      >
+                        <ThumbDownIcon />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Needs review — brings this card back tomorrow (spaced repetition)</TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
 
@@ -926,5 +919,6 @@ export default function FlashcardViewer({
         />
       )}
     </div>
+    </TooltipProvider>
   );
 }
