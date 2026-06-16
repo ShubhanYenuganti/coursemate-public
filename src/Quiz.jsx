@@ -4,6 +4,11 @@ import { getMaterialUrl } from './utils/materialUtils';
 import QuizViewer from './QuizViewer';
 import GenerationConfirmModal from './components/GenerationConfirmModal.jsx';
 import { PROVIDER_MODELS } from './modelCatalog.js';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -77,7 +82,7 @@ const FILE_TYPE_MAP = {
   jpeg: { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
   gif:  { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
   svg:  { label: 'SVG', bg: 'bg-orange-100', text: 'text-orange-600' },
-  txt:  { label: 'TXT', bg: 'bg-gray-100',   text: 'text-gray-500'   },
+  txt:  { label: 'TXT', bg: 'bg-muted',   text: 'text-muted-foreground'   },
 };
 
 function NotionBadgeIcon() {
@@ -97,13 +102,13 @@ function FileTypeBadge({ name, sourceType }) {
 
   if (!mapped && sourceType === 'notion') {
     return (
-      <span className="flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded bg-gray-100 text-gray-600">
+      <span className="flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded bg-muted text-muted-foreground">
         <NotionBadgeIcon />
       </span>
     );
   }
 
-  const style = mapped || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-gray-100', text: 'text-gray-500' };
+  const style = mapped || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-muted', text: 'text-muted-foreground' };
   return (
     <span className={`flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded text-[7px] font-bold tracking-tight ${style.bg} ${style.text}`}>
       {style.label}
@@ -113,40 +118,43 @@ function FileTypeBadge({ name, sourceType }) {
 
 function SourceToggle({ checked, onToggle }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       onClick={(e) => { e.stopPropagation(); onToggle(); }}
-      className={`flex-shrink-0 relative inline-flex h-4 w-7 items-center rounded-full transition-colors focus:outline-none ${
-        checked ? 'bg-indigo-500' : 'bg-gray-200'
+      className={`flex-shrink-0 relative inline-flex h-4 w-7 p-0 items-center rounded-full transition-colors focus:outline-none hover:bg-transparent ${
+        checked ? 'bg-primary' : 'bg-muted'
       }`}
     >
-      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow-sm transition-transform ${
+      <span className={`inline-block h-3 w-3 transform rounded-full bg-background shadow-sm transition-transform ${
         checked ? 'translate-x-3.5' : 'translate-x-0.5'
       }`} />
-    </button>
+    </Button>
   );
 }
 
 function Stepper({ value, onChange, min = 0, max = 99 }) {
   return (
-    <div className="flex items-center gap-3 border border-gray-200 rounded-lg px-3 py-2 bg-white">
-      <button
+    <div className="flex items-center gap-3 border border-border rounded-lg px-3 py-2 bg-background">
+      <Button
         type="button"
+        variant="ghost"
         onClick={() => onChange(Math.max(min, value - 1))}
-        className="text-gray-400 hover:text-gray-700 transition-colors disabled:opacity-30"
+        className="h-auto w-auto p-0 rounded-md text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors disabled:opacity-30"
         disabled={value <= min}
       >
         <MinusIcon />
-      </button>
-      <span className="text-sm font-semibold text-gray-900 w-5 text-center tabular-nums">{value}</span>
-      <button
+      </Button>
+      <span className="text-sm font-semibold text-foreground w-5 text-center tabular-nums">{value}</span>
+      <Button
         type="button"
+        variant="ghost"
         onClick={() => onChange(Math.min(max, value + 1))}
-        className="text-gray-400 hover:text-gray-700 transition-colors disabled:opacity-30"
+        className="h-auto w-auto p-0 rounded-md text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors disabled:opacity-30"
         disabled={value >= max}
       >
         <PlusIcon />
-      </button>
+      </Button>
     </div>
   );
 }
