@@ -668,7 +668,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                       attemptStatus === 'submitted'
                         ? 'border-green-200 bg-green-50 text-green-700 cursor-default hover:bg-green-50'
                         : attemptStatus === 'error'
-                          ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-50'
+                          ? 'border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/10'
                           : 'border-border bg-background text-foreground hover:bg-muted'
                     }`}
                   >
@@ -685,7 +685,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                       saveStatus === 'saved'
                         ? 'border-green-300 text-green-700 bg-green-50 cursor-default hover:bg-green-50'
                         : saveStatus === 'error'
-                          ? 'border-red-300 text-red-600 hover:bg-red-50'
+                          ? 'border-destructive/40 text-destructive hover:bg-destructive/10'
                           : 'border-border text-muted-foreground hover:bg-muted'
                     }`}
                   >
