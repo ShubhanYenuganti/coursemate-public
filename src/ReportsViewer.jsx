@@ -725,8 +725,7 @@ export default function ReportsViewer({
             type="button"
             onClick={onClose}
             variant="ghost"
-            size="icon"
-            className="absolute right-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
+            className="absolute right-0 p-1.5 h-auto w-auto rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
           >
             <XIcon />
           </Button>
@@ -790,8 +789,7 @@ export default function ReportsViewer({
                 onClick={handleCopy}
                 title={copied ? 'Copied!' : 'Copy content'}
                 variant="ghost"
-                size="icon"
-                className="rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
+                className="p-1.5 h-auto w-auto rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
               >
                 <CopyIcon />
               </Button>
@@ -825,7 +823,7 @@ export default function ReportsViewer({
           ) : (
             <span>{notionBanner.message}</span>
           )}
-          <Button type="button" onClick={() => setNotionBanner(null)} variant="ghost" size="icon-sm" className="ml-2 rounded-md text-current opacity-60 hover:opacity-100 hover:bg-transparent">
+          <Button type="button" onClick={() => setNotionBanner(null)} variant="ghost" className="ml-2 p-0 h-auto w-auto rounded-md text-current opacity-60 hover:opacity-100 hover:bg-transparent">
             <XIcon />
           </Button>
         </div>
@@ -857,7 +855,7 @@ export default function ReportsViewer({
           ) : (
             <span>{gdriveBanner.message}</span>
           )}
-          <Button type="button" onClick={() => setGdriveBanner(null)} variant="ghost" size="icon-sm" className="ml-2 rounded-md text-current opacity-60 hover:opacity-100 hover:bg-transparent">
+          <Button type="button" onClick={() => setGdriveBanner(null)} variant="ghost" className="ml-2 p-0 h-auto w-auto rounded-md text-current opacity-60 hover:opacity-100 hover:bg-transparent">
             <XIcon />
           </Button>
         </div>
