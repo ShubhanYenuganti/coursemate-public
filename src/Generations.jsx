@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Quiz from './Quiz.jsx';
 import Flashcards from './Flashcards.jsx';
 import Reports from './Reports.jsx';
+import { Button } from '@/components/ui/button';
 
 // ─── Tab icons ────────────────────────────────────────────────────────────────
 
@@ -70,23 +71,20 @@ export default function Generations({ course, userData, onAddSource }) {
     <div className="flex flex-col gap-4">
 
       {/* ── Tab header ── */}
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-2 py-2 flex items-center gap-1">
+      <div className="bg-background rounded-2xl border border-border shadow-sm px-2 py-2 flex items-center gap-1">
         {TABS.map(({ id, label, Icon }) => {
           const active = activeTab === id;
           return (
-            <button
+            <Button
               key={id}
               type="button"
+              variant={active ? 'default' : 'ghost'}
               onClick={() => setActiveTab(id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
-                active
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
-              }`}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium"
             >
               <Icon size={14} />
               {label}
-            </button>
+            </Button>
           );
         })}
       </div>
