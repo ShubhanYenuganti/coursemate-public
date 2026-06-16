@@ -2,6 +2,10 @@ import { useState, useMemo } from 'react';
 import { formatDateTime } from './utils/dateUtils';
 import NotionTargetPicker from './components/NotionTargetPicker';
 import GDriveTargetPicker from './components/GDriveTargetPicker';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Card } from '@/components/ui/card';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -81,7 +85,7 @@ function SpeakerIcon() {
 function MCQContent({ options, selected, onSelect, revealed, correct }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Choose an answer</p>
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Choose an answer</p>
       <div className="grid grid-cols-2 gap-2">
         {(options || []).map((opt, i) => {
           const optText = typeof opt === 'string' ? opt : (opt.text || opt.label || String(opt));
@@ -89,19 +93,20 @@ function MCQContent({ options, selected, onSelect, revealed, correct }) {
           const isCorrect = revealed && (optText === correct || i === correct);
           const isWrong = revealed && isSelected && !isCorrect;
           return (
-            <button
+            <Button
               key={i}
               type="button"
+              variant="outline"
               onClick={() => !revealed && onSelect(optText)}
-              className={`px-4 py-3 rounded-lg border text-sm text-center transition-colors ${
-                isCorrect ? 'border-green-400 bg-green-50 text-green-700' :
-                isWrong   ? 'border-red-300 bg-red-50 text-red-600' :
-                isSelected ? 'border-indigo-400 bg-indigo-50 text-indigo-700' :
-                'border-gray-200 bg-white text-gray-700 hover:border-indigo-300 hover:bg-indigo-50'
+              className={`h-auto px-4 py-3 rounded-lg border text-sm text-center font-normal whitespace-normal transition-colors ${
+                isCorrect ? 'border-green-400 bg-green-50 text-green-700 hover:bg-green-50' :
+                isWrong   ? 'border-red-300 bg-red-50 text-red-600 hover:bg-red-50' :
+                isSelected ? 'border-primary bg-accent text-accent-foreground hover:bg-accent' :
+                'border text-muted-foreground hover:border-primary/50 hover:bg-accent'
               } ${revealed ? 'cursor-default' : 'cursor-pointer'}`}
             >
               {optText}
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -112,26 +117,27 @@ function MCQContent({ options, selected, onSelect, revealed, correct }) {
 function TrueFalseContent({ selected, onSelect, revealed, correct }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Choose an answer</p>
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Choose an answer</p>
       <div className="flex flex-col gap-2">
         {['True', 'False'].map((opt) => {
           const isSelected = selected === opt;
           const isCorrect = revealed && String(correct).toLowerCase() === opt.toLowerCase();
           const isWrong = revealed && isSelected && !isCorrect;
           return (
-            <button
+            <Button
               key={opt}
               type="button"
+              variant="outline"
               onClick={() => !revealed && onSelect(opt)}
-              className={`w-full px-4 py-3 rounded-lg border text-sm text-center transition-colors ${
-                isCorrect ? 'border-green-400 bg-green-50 text-green-700' :
-                isWrong   ? 'border-red-300 bg-red-50 text-red-600' :
-                isSelected ? 'border-indigo-400 bg-indigo-50 text-indigo-700' :
-                'border-gray-200 bg-white text-gray-700 hover:border-indigo-300 hover:bg-indigo-50'
+              className={`w-full h-auto px-4 py-3 rounded-lg border text-sm text-center font-normal transition-colors ${
+                isCorrect ? 'border-green-400 bg-green-50 text-green-700 hover:bg-green-50' :
+                isWrong   ? 'border-red-300 bg-red-50 text-red-600 hover:bg-red-50' :
+                isSelected ? 'border-primary bg-accent text-accent-foreground hover:bg-accent' :
+                'border text-muted-foreground hover:border-primary/50 hover:bg-accent'
               } ${revealed ? 'cursor-default' : 'cursor-pointer'}`}
             >
               {opt}
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -142,27 +148,27 @@ function TrueFalseContent({ selected, onSelect, revealed, correct }) {
 function ShortAnswerContent({ value, onChange, revealed, expectedAnswer, explanation }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Your answer</p>
-      <input
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Your answer</p>
+      <Input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={revealed}
         placeholder="Type your answer here..."
-        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 disabled:bg-gray-50 disabled:text-gray-500 transition-colors"
+        className="w-full rounded-lg text-sm"
       />
       {revealed && (
         <div className="mt-3 space-y-2">
           <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Expected</p>
-            <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-sm text-gray-800 whitespace-pre-wrap">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Expected</p>
+            <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-sm text-foreground whitespace-pre-wrap">
               {expectedAnswer || ''}
             </div>
           </div>
           {explanation && (
             <div>
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Explanation</p>
-              <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700 whitespace-pre-wrap">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Explanation</p>
+              <div className="rounded-lg border bg-muted px-3 py-2 text-sm text-muted-foreground whitespace-pre-wrap">
                 {explanation}
               </div>
             </div>
@@ -176,27 +182,27 @@ function ShortAnswerContent({ value, onChange, revealed, expectedAnswer, explana
 function LongAnswerContent({ value, onChange, revealed, expectedAnswer, explanation }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Your answer</p>
-      <textarea
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Your answer</p>
+      <Textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={revealed}
         placeholder="Type your detailed answer here..."
         rows={4}
-        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 disabled:bg-gray-50 disabled:text-gray-500 transition-colors resize-none"
+        className="w-full rounded-lg text-sm resize-none"
       />
       {revealed && (
         <div className="mt-3 space-y-2">
           <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Expected</p>
-            <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-sm text-gray-800 whitespace-pre-wrap">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Expected</p>
+            <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-sm text-foreground whitespace-pre-wrap">
               {expectedAnswer || ''}
             </div>
           </div>
           {explanation && (
             <div>
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Explanation</p>
-              <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700 whitespace-pre-wrap">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Explanation</p>
+              <div className="rounded-lg border bg-muted px-3 py-2 text-sm text-muted-foreground whitespace-pre-wrap">
                 {explanation}
               </div>
             </div>
@@ -216,18 +222,18 @@ function QuestionCard({ question, index, total, answer, onAnswer, revealed, onRe
   const hasAnswer = answer !== undefined && answer !== null && String(answer).trim() !== '';
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+    <Card className="rounded-2xl border shadow-sm ring-0 p-6 gap-0 [--card-spacing:0px]">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-indigo-600 tracking-widest uppercase">Term</span>
-          <span className="text-gray-400">
+          <span className="text-xs font-bold text-primary tracking-widest uppercase">Term</span>
+          <span className="text-muted-foreground">
             <SpeakerIcon />
           </span>
         </div>
-        <span className="text-xs text-gray-400 tabular-nums">{index + 1} of {total}</span>
+        <span className="text-xs text-muted-foreground tabular-nums">{index + 1} of {total}</span>
       </div>
 
-      <p className="text-sm font-medium text-gray-900 mb-5 leading-relaxed">{questionText}</p>
+      <p className="text-sm font-medium text-foreground mb-5 leading-relaxed">{questionText}</p>
 
       {(type === 'mcq' || type === 'multiple_choice') && (
         <MCQContent
@@ -267,8 +273,8 @@ function QuestionCard({ question, index, total, answer, onAnswer, revealed, onRe
 
       {revealed && isSelectType && question.explanation && (
         <div className="mt-4">
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Explanation</p>
-          <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Explanation</p>
+          <div className="rounded-lg border bg-muted px-3 py-2 text-sm text-muted-foreground">
             {question.explanation}
           </div>
         </div>
@@ -276,16 +282,17 @@ function QuestionCard({ question, index, total, answer, onAnswer, revealed, onRe
 
       {!revealed && (
         <div className="mt-4 text-center">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={onReveal}
-            className="text-xs text-indigo-500 hover:text-indigo-700 hover:underline transition-colors"
+            className="h-auto p-0 text-xs text-primary hover:underline hover:bg-transparent hover:text-primary/80"
           >
             {hasAnswer ? 'Show the answer' : 'Show the answer'}
-          </button>
+          </Button>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
