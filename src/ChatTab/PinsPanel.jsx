@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateTime } from '../utils/dateUtils';
@@ -10,7 +9,8 @@ export function PinsPanel({ pins, courseName, userData, materials, onDeletePin }
   const [expandedPin, setExpandedPin] = useState(null);
 
   return (
-    <Card className="flex-shrink-0 bg-background overflow-hidden rounded-none border-x-0 border-t-0 py-0 gap-0" style={{ maxHeight: '220px' }}>
+    <TooltipProvider delayDuration={300}>
+    <div className="flex-shrink-0 bg-background overflow-hidden border-b border-border" style={{ maxHeight: '220px' }}>
       {/* Header */}
       <div className="px-6 py-2 flex items-center gap-2 flex-shrink-0 border-b border-border">
         <span className="text-primary"><PinIcon filled /></span>
@@ -65,7 +65,6 @@ export function PinsPanel({ pins, courseName, userData, materials, onDeletePin }
                   </>
                 )}
               </button>
-              <TooltipProvider delayDuration={300}>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -81,7 +80,6 @@ export function PinsPanel({ pins, courseName, userData, materials, onDeletePin }
                   </TooltipTrigger>
                   <TooltipContent side="top">Delete pin</TooltipContent>
                 </Tooltip>
-              </TooltipProvider>
               </div>
 
               {/* Expanded card */}
@@ -137,6 +135,7 @@ export function PinsPanel({ pins, courseName, userData, materials, onDeletePin }
           );
         })}
       </div>
-    </Card>
+    </div>
+    </TooltipProvider>
   );
 }
