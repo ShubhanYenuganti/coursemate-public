@@ -1,6 +1,5 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { FileTypeIcon, Spinner, VisibilityToggle, TrashIcon } from "./atoms";
 import { fmtSize } from "./constants";
 
@@ -60,11 +59,8 @@ export default function UploadItemRow({ item, onVisibilityChange, onDismiss }) {
 
       {/* Loading progress banner — shown while uploading (indeterminate) */}
       {isLoading && (
-        <div className="mx-3 mb-2.5">
-          <Progress
-            value={60}
-            className="h-1 [&>[data-slot=progress-indicator]]:animate-[loading-bar_1.6s_ease-in-out_infinite]"
-          />
+        <div className="mx-3 mb-2.5 h-1 rounded-full bg-muted overflow-hidden">
+          <div className="h-full w-[60%] bg-primary rounded-full animate-[loading-bar_1.6s_ease-in-out_infinite]" />
         </div>
       )}
 
