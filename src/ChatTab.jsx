@@ -14,73 +14,20 @@ import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 
 import {
-  PlusIcon, ChatBubbleIcon, SendIcon, PinIcon, CopyIcon, RefreshIcon,
+  PlusIcon, SendIcon, PinIcon, CopyIcon, RefreshIcon,
   RevertIcon, RestoreIcon, MoreIcon, EditIcon, SparkleIcon, TrashIcon,
-  ArchiveIcon, UnarchiveIcon, ExternalLinkIcon, XIcon, ChevronDownIcon,
+  ExternalLinkIcon, XIcon, ChevronDownIcon,
   CheckIcon, PaperclipIcon, SpinnerIcon,
 } from './ChatTab/icons';
 import { FileTypeBadge, MaterialToggle } from './ChatTab/atoms';
 import { groupChatsByDate, getMessageModelLabel, MODEL_LABELS } from './ChatTab/helpers';
+import { ConvItem, ArchivedConvItem } from './ChatTab/ConversationList';
 
 // PROVIDER_MODELS lives in ./modelCatalog.js; re-exported here for existing
 // importers (e.g. CoursePage) that pull it from this module.
 export { PROVIDER_MODELS };
 
 // ─── sub-components ───────────────────────────────────────────────────────────
-
-function ConvItem({ conv, active, onClick, onDoubleClick, onArchive }) {
-  return (
-    <div className={`group w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs transition-colors ${
-      active
-        ? 'bg-indigo-50 text-indigo-700 font-medium'
-        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-    }`}>
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); onArchive(conv.id, !conv.is_archived); }}
-        title={conv.is_archived ? 'Unarchive' : 'Archive'}
-        className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 transition-all text-gray-400 hover:text-indigo-500 hover:bg-indigo-50"
-      >
-        {conv.is_archived ? <UnarchiveIcon /> : <ArchiveIcon />}
-      </button>
-      <button
-        type="button"
-        onClick={onClick}
-        onDoubleClick={onDoubleClick}
-        className="flex-1 flex items-center gap-2 min-w-0 text-left"
-      >
-        <span className={`flex-shrink-0 ${active ? 'text-indigo-500' : 'text-gray-400'}`}>
-          <ChatBubbleIcon />
-        </span>
-        <span className="truncate">{conv.title}</span>
-      </button>
-    </div>
-  );
-}
-
-function ArchivedConvItem({ conv, onDelete, onUnarchive }) {
-  return (
-    <div className="group w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors">
-      <button
-        type="button"
-        onClick={() => onDelete(conv.id)}
-        title="Delete permanently"
-        className="flex-shrink-0 p-0.5 rounded transition-all text-gray-400 hover:text-red-500 hover:bg-red-50"
-      >
-        <TrashIcon />
-      </button>
-      <button
-        type="button"
-        onClick={() => onUnarchive(conv.id)}
-        title="Unarchive"
-        className="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 transition-all text-gray-400 hover:text-indigo-500 hover:bg-indigo-50"
-      >
-        <UnarchiveIcon />
-      </button>
-      <span className="flex-1 truncate min-w-0">{conv.title}</span>
-    </div>
-  );
-}
 
 function SourcesPanel({ open, chunks, focusIndex, onClose, materials }) {
   const focusRef = useRef(null);
