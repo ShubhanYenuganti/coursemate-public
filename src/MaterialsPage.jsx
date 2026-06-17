@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
 import { formatDateTime } from "./utils/dateUtils";
 import {
   buildBulkSyncDocTypes,
@@ -11,18 +10,11 @@ import {
 import {
   DOCUMENT_TYPES,
   ACCEPTED_TYPES,
-  getMeta,
   fmtSize,
   uid,
 } from "./MaterialsPage/constants";
-import {
-  FileTypeIcon,
-  Spinner,
-  VisibilityToggle,
-  TrashIcon,
-  SourceTypeBadge,
-  EmbedStatusBadge,
-} from "./MaterialsPage/atoms";
+import { Spinner, TrashIcon } from "./MaterialsPage/atoms";
+import MaterialCard from "./MaterialsPage/MaterialCard";
 import UploadZone from "./MaterialsPage/UploadZone";
 import UploadItemRow from "./MaterialsPage/UploadItemRow";
 import StagingItemRow from "./MaterialsPage/StagingItemRow";
@@ -41,159 +33,6 @@ function normalizeSyncRows(provider, rawFiles) {
       doc_type: row.doc_type ?? null,
       source_type: sourceType,
     }));
-}
-
-// ─── material grid card (existing materials) ──────────────────────────────────
-
-function MaterialCard({
-  material,
-  courseId,
-  onVisibilityChange,
-  onDelete,
-  isOwner,
-}) {
-  const [deleting, setDeleting] = useState(false);
-  const navigate = useNavigate();
-
-  const quizGenMatch = material?.file_url?.match(
-    /^quiz:\/\/generation\/(\d+)$/,
-  );
-  const quizGenerationId = quizGenMatch ? quizGenMatch[1] : null;
-  const flashcardsGenMatch = material?.file_url?.match(
-    /^flashcards:\/\/generation\/(\d+)$/,
-  );
-  const flashcardsGenerationId = flashcardsGenMatch
-    ? flashcardsGenMatch[1]
-    : null;
-  const reportGenMatch = material?.file_url?.match(
-    /^report:\/\/generation\/(\d+)$/,
-  );
-  const reportGenerationId = reportGenMatch ? reportGenMatch[1] : null;
-  const driveFallbackUrl = material?.external_id
-    ? `https://drive.google.com/file/d/${material.external_id}/view`
-    : null;
-  const materialOpenUrl =
-    material?.source_type === "gdrive"
-      ? material?.outsourced_url || driveFallbackUrl || material?.download_url
-      : material?.source_type !== "upload" && material?.outsourced_url
-        ? material.outsourced_url
-        : material?.download_url;
-  const isIntegrationMaterial =
-    material?.source_type === "gdrive" || material?.source_type === "notion";
-  const lastEditedAt = isIntegrationMaterial
-    ? formatDateTime(material?.external_last_edited)
-    : "";
-  const lastUpdatedAt = isIntegrationMaterial
-    ? formatDateTime(material?.updated_at)
-    : "";
-
-  return (
-    <div className="flex rounded-lg border border-gray-200 bg-white overflow-hidden hover:shadow-md transition-shadow group">
-      {/* Blue left accent matching PDF_modal_ex.png */}
-      <div className={`w-1 shrink-0 ${getMeta(material.file_type).accent}`} />
-
-      {/* Icon area */}
-      <div className="flex items-center justify-center px-4 py-4 bg-gray-50/70 border-r border-gray-100">
-        <FileTypeIcon type={material.file_type} large />
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 min-w-0 px-4 py-3 flex flex-col justify-center gap-0.5">
-        {quizGenerationId ? (
-          <button
-            type="button"
-            onClick={() =>
-              navigate(`/course/${courseId}/quiz/${quizGenerationId}`)
-            }
-            className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug text-left"
-          >
-            {material.name}
-          </button>
-        ) : flashcardsGenerationId ? (
-          <button
-            type="button"
-            onClick={() =>
-              navigate(
-                `/course/${courseId}/flashcards/${flashcardsGenerationId}`,
-              )
-            }
-            className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug text-left"
-          >
-            {material.name}
-          </button>
-        ) : reportGenerationId ? (
-          <button
-            type="button"
-            onClick={() =>
-              navigate(`/course/${courseId}/reports/${reportGenerationId}`)
-            }
-            className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug text-left"
-          >
-            {material.name}
-          </button>
-        ) : (
-          <a
-            href={materialOpenUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug"
-          >
-            {material.name}
-          </a>
-        )}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <p className="text-xs text-gray-400">
-            {getMeta(material.file_type).label}
-            {material.visibility === "public" ? " · Public" : " · Private"}
-          </p>
-          <SourceTypeBadge sourceType={material.source_type} />
-        </div>
-        {lastEditedAt && (
-          <p className="text-xs text-gray-400">
-            Last Edited At: {lastEditedAt}
-          </p>
-        )}
-        {lastUpdatedAt && (
-          <p className="text-xs text-gray-400">
-            Last Updated At: {lastUpdatedAt}
-          </p>
-        )}
-      </div>
-
-      {/* Actions */}
-      <div className="flex flex-col items-end justify-between px-3 py-3 shrink-0">
-        {isOwner && (
-          <button
-            type="button"
-            onClick={async () => {
-              setDeleting(true);
-              await onDelete(material);
-            }}
-            disabled={deleting}
-            className="p-1 rounded text-gray-300 hover:text-red-500 transition-colors"
-            title="Delete material"
-          >
-            {deleting ? (
-              <Spinner size={14} className="text-gray-400" />
-            ) : (
-              <TrashIcon size={14} />
-            )}
-          </button>
-        )}
-
-        {isOwner && (
-          <div className="flex items-center gap-1 mt-auto">
-            <VisibilityToggle
-              isPublic={material.visibility === "public"}
-              onChange={(val) => onVisibilityChange(material.id, val)}
-              disabled={material.updating}
-              size="sm"
-            />
-          </div>
-        )}
-      </div>
-    </div>
-  );
 }
 
 // ─── main component ───────────────────────────────────────────────────────────
