@@ -25,53 +25,7 @@ import {
 } from "./MaterialsPage/atoms";
 import UploadZone from "./MaterialsPage/UploadZone";
 import UploadItemRow from "./MaterialsPage/UploadItemRow";
-
-// ─── staging item row (pre-upload, doc type selection) ───────────────────────
-
-function StagingItemRow({ item, onDocTypeChange, onUpload, onRemove }) {
-  return (
-    <div className="flex items-center gap-3 rounded-lg border border-indigo-100 bg-indigo-50/30 px-3 py-2.5">
-      <FileTypeIcon type={item.file.type} />
-
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-gray-800 truncate">
-          {item.file.name}
-        </p>
-        <p className="text-xs text-gray-400">{fmtSize(item.file.size)}</p>
-      </div>
-
-      <select
-        value={item.docType}
-        onChange={(e) => onDocTypeChange(item.id, e.target.value)}
-        className="text-xs rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400 shrink-0"
-      >
-        {DOCUMENT_TYPES.map((dt) => (
-          <option key={dt.value} value={dt.value}>
-            {dt.label}
-          </option>
-        ))}
-      </select>
-
-      <button
-        type="button"
-        onClick={() => onUpload(item)}
-        disabled={!item.docType}
-        className="shrink-0 px-3 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        Upload
-      </button>
-
-      <button
-        type="button"
-        onClick={() => onRemove(item.id)}
-        className="p-1 rounded text-gray-300 hover:text-gray-500 transition-colors shrink-0"
-        title="Remove"
-      >
-        <TrashIcon size={14} />
-      </button>
-    </div>
-  );
-}
+import StagingItemRow from "./MaterialsPage/StagingItemRow";
 
 function normalizeSyncRows(provider, rawFiles) {
   const sourceType = provider === "notion" ? "notion" : "gdrive";
