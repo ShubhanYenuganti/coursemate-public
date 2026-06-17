@@ -21,6 +21,15 @@ import StagingItemRow from "./MaterialsPage/StagingItemRow";
 import SyncModal from "./MaterialsPage/SyncModal";
 import ProgressPanel from "./MaterialsPage/ProgressPanel";
 import FilterBar from "./MaterialsPage/FilterBar";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 function normalizeSyncRows(provider, rawFiles) {
   const sourceType = provider === "notion" ? "notion" : "gdrive";
@@ -900,12 +909,13 @@ export default function MaterialsPage({
 
   return (
     <div className="space-y-8 pb-4">
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="flex border-b border-gray-100">
+      <div className="bg-background rounded-xl border border-border shadow-sm overflow-hidden">
+        <div className="flex border-b border-border">
           {["gdrive", "notion"].map((p) => (
-            <button
+            <Button
               key={p}
               type="button"
+              variant="ghost"
               onClick={() => {
                 setSyncProvider(p);
                 setSourceSearch("");
@@ -913,20 +923,20 @@ export default function MaterialsPage({
                 setConfirmRemoveId(null);
                 setAddError("");
               }}
-              className={`flex-1 py-2.5 text-xs font-medium transition-colors ${
+              className={`flex-1 py-2.5 text-xs font-medium rounded-none transition-colors ${
                 syncProvider === p
-                  ? "bg-indigo-50 text-indigo-700 border-b-2 border-indigo-500"
-                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                  ? "bg-accent text-accent-foreground border-b-2 border-primary"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
               }`}
             >
               {p === "gdrive" ? "Google Drive" : "Notion"}
-            </button>
+            </Button>
           ))}
         </div>
         <div className="p-4 space-y-3">
           {/* Search to add a new source point */}
           <div className="relative">
-            <input
+            <Input
               type="text"
               value={sourceSearch}
               onChange={(e) => {
@@ -938,7 +948,7 @@ export default function MaterialsPage({
                   ? "Search Notion databases to add…"
                   : "Search Drive folders to add…"
               }
-              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+              className="w-full text-sm"
             />
             {sourceSearching && (
               <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
@@ -947,7 +957,7 @@ export default function MaterialsPage({
             )}
           </div>
           {sourceSearch.trim() !== "" && sourceSearchResults.length > 0 && (
-            <div className="border border-gray-100 rounded-lg overflow-hidden max-h-44 overflow-y-auto">
+            <div className="border border-border rounded-lg overflow-hidden max-h-44 overflow-y-auto">
               {sourceSearchResults.map((r) => {
                 const isDuplicate = providerSourcePoints.some(
                   (sp) => String(sp.external_id) === String(r.id),
@@ -960,10 +970,10 @@ export default function MaterialsPage({
                       if (!isDuplicate) handleAddSourcePoint(r);
                     }}
                     disabled={isDuplicate}
-                    className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm border-b border-gray-50 last:border-0 transition-colors ${
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm border-b border-border/30 last:border-0 transition-colors ${
                       isDuplicate
-                        ? "text-gray-400 bg-gray-50 cursor-default"
-                        : "text-gray-800 hover:bg-indigo-50 hover:text-indigo-700"
+                        ? "text-muted-foreground bg-accent/50 cursor-default"
+                        : "text-foreground hover:bg-accent hover:text-accent-foreground"
                     }`}
                   >
                     <span className="flex-1 truncate">
@@ -972,7 +982,7 @@ export default function MaterialsPage({
                         : r.name || "Untitled"}
                     </span>
                     {isDuplicate ? (
-                      <span className="ml-2 text-xs text-gray-400 shrink-0">
+                      <span className="ml-2 text-xs text-muted-foreground shrink-0">
                         Already added
                       </span>
                     ) : (
@@ -987,34 +997,36 @@ export default function MaterialsPage({
               })}
             </div>
           )}
-          {addError && <p className="text-xs text-red-500">{addError}</p>}
+          {addError && <p className="text-xs text-destructive">{addError}</p>}
           <div className="space-y-2">
             {sourcePointsLoading ? (
               <div className="flex justify-center py-4">
                 <Spinner size={20} />
               </div>
             ) : providerSourcePoints.length === 0 ? (
-              <p className="text-xs text-gray-400 text-center py-4">
+              <p className="text-xs text-muted-foreground text-center py-4">
                 No source points added yet.
               </p>
             ) : (
               providerSourcePoints.map((sp) => (
                 <div
                   key={sp.id}
-                  className="flex items-center gap-2 p-2.5 rounded-lg border border-gray-100 bg-gray-50 group"
+                  className="flex items-center gap-2 p-2.5 rounded-lg border border-border bg-accent/50 group"
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 truncate">
+                    <p className="text-sm font-medium text-foreground truncate">
                       {sp.external_title || sp.external_id}
                     </p>
                     {sp.last_synced_at && (
-                      <p className="text-xs text-gray-400 mt-0.5">
+                      <p className="text-xs text-muted-foreground mt-0.5">
                         Last synced {formatDateTime(sp.last_synced_at)}
                       </p>
                     )}
                   </div>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() =>
                       handleToggleSourcePoint(sp.id, sp.is_active !== false)
                     }
@@ -1023,47 +1035,55 @@ export default function MaterialsPage({
                         ? "Pause ingestion"
                         : "Resume ingestion"
                     }
-                    className={`px-2 py-1 text-xs rounded border transition-colors shrink-0 ${
+                    className={`px-2 py-1 text-xs shrink-0 ${
                       sp.is_active !== false
-                        ? "border-green-200 bg-green-50 text-green-700 hover:bg-red-50 hover:text-red-600 hover:border-red-200"
-                        : "border-gray-200 bg-gray-100 text-gray-500 hover:bg-green-50 hover:text-green-600 hover:border-green-200"
+                        ? "border-green-200 bg-green-50 text-green-700 hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
+                        : "border-border bg-accent/50 text-muted-foreground hover:bg-green-50 hover:text-green-600 hover:border-green-200"
                     }`}
                   >
                     {sp.is_active !== false ? "Active" : "Paused"}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => openSyncModalForId(sp.id)}
-                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-600 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 transition-colors shrink-0"
+                    className="px-2 py-1 text-xs hover:bg-accent hover:text-accent-foreground shrink-0"
                   >
                     Sync
-                  </button>
+                  </Button>
                   {confirmRemoveId === sp.id ? (
                     <div className="flex items-center gap-1 shrink-0">
-                      <button
+                      <Button
                         type="button"
+                        variant="destructive"
+                        size="sm"
                         onClick={() => handleRemoveSourcePoint(sp.id)}
-                        className="px-2 py-1 text-xs rounded bg-red-600 text-white hover:bg-red-700"
+                        className="px-2 py-1 text-xs"
                       >
                         Remove
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
+                        variant="outline"
+                        size="sm"
                         onClick={() => setConfirmRemoveId(null)}
-                        className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-gray-100"
+                        className="px-2 py-1 text-xs"
                       >
                         Cancel
-                      </button>
+                      </Button>
                     </div>
                   ) : (
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
                       onClick={() => setConfirmRemoveId(sp.id)}
-                      className="p-1.5 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                      className="p-1.5 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all shrink-0"
                       title="Remove source point"
                     >
                       <TrashIcon size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               ))
@@ -1073,36 +1093,40 @@ export default function MaterialsPage({
       </div>
 
       {/* Upload section */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+      <div className="bg-background rounded-xl border border-border shadow-sm p-5 space-y-4">
         <UploadZone onFiles={handleFiles} disabled={false} />
 
         {/* Staging queue — doc type selection before upload starts */}
         {stagingItems.length > 0 && (
           <div className="space-y-2">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
               Ready to upload
             </p>
             {stagingItems.length > 1 && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-indigo-100 bg-indigo-50/50">
-                <span className="text-xs text-gray-500 shrink-0">Set all to:</span>
-                <select
-                  defaultValue=""
-                  onChange={(e) => { if (e.target.value) handleSetAllDocTypes(e.target.value); }}
-                  className="text-xs rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-accent/30">
+                <span className="text-xs text-muted-foreground shrink-0">Set all to:</span>
+                <Select
+                  value="__none__"
+                  onValueChange={(v) => { if (v !== "__none__") handleSetAllDocTypes(v); }}
                 >
-                  <option value="" disabled>— pick type —</option>
-                  {DOCUMENT_TYPES.map((dt) => (
-                    <option key={dt.value} value={dt.value}>{dt.label}</option>
-                  ))}
-                </select>
+                  <SelectTrigger className="h-7 w-36 text-xs shrink-0">
+                    <SelectValue placeholder="— pick type —" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DOCUMENT_TYPES.map((dt) => (
+                      <SelectItem key={dt.value} value={dt.value}>{dt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <div className="flex-1" />
-                <button
+                <Button
                   type="button"
+                  size="sm"
                   onClick={handleUploadAll}
-                  className="shrink-0 px-3 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                  className="shrink-0 text-xs"
                 >
                   Upload all
-                </button>
+                </Button>
               </div>
             )}
             {stagingItems.map((item) => (
@@ -1159,11 +1183,11 @@ export default function MaterialsPage({
         {/* Header + filter bar */}
         <div className="flex flex-col gap-3 mb-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-gray-800">
+            <h2 className="text-base font-semibold text-foreground">
               Course Materials
             </h2>
             {!loadingMats && (
-              <span className="text-xs text-gray-400">
+              <span className="text-xs text-muted-foreground">
                 {visibleMaterials.length} file
                 {visibleMaterials.length !== 1 ? "s" : ""}
               </span>
@@ -1179,10 +1203,10 @@ export default function MaterialsPage({
 
         {loadingMats ? (
           <div className="flex items-center justify-center py-16">
-            <Spinner size={28} className="text-indigo-400" />
+            <Spinner size={28} className="text-primary" />
           </div>
         ) : visibleMaterials.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <svg
               width="40"
               height="40"
