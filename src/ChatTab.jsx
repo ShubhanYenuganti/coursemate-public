@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { formatDateTime, parseUTC } from './utils/dateUtils';
+import { formatDateTime } from './utils/dateUtils';
 import { getMaterialUrl } from './utils/materialUtils';
 import { composerGateState } from './utils/composerGate';
 import { PROVIDER_MODELS, NON_VISION_MODEL_IDS } from './modelCatalog.js';
@@ -17,105 +17,14 @@ import {
   PlusIcon, ChatBubbleIcon, SendIcon, PinIcon, CopyIcon, RefreshIcon,
   RevertIcon, RestoreIcon, MoreIcon, EditIcon, SparkleIcon, TrashIcon,
   ArchiveIcon, UnarchiveIcon, ExternalLinkIcon, XIcon, ChevronDownIcon,
-  CheckIcon, PaperclipIcon, SpinnerIcon, NotionBadgeIcon,
+  CheckIcon, PaperclipIcon, SpinnerIcon,
 } from './ChatTab/icons';
-
-const FILE_TYPE_MAP = {
-  pdf:  { label: 'PDF', bg: 'bg-rose-100',   text: 'text-rose-600'   },
-  doc:  { label: 'DOC', bg: 'bg-blue-100',   text: 'text-blue-600'   },
-  docx: { label: 'DOC', bg: 'bg-blue-100',   text: 'text-blue-600'   },
-  xls:  { label: 'XLS', bg: 'bg-green-100',  text: 'text-green-700'  },
-  xlsx: { label: 'XLS', bg: 'bg-green-100',  text: 'text-green-700'  },
-  csv:  { label: 'CSV', bg: 'bg-green-100',  text: 'text-green-700'  },
-  png:  { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
-  jpg:  { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
-  jpeg: { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
-  gif:  { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
-  svg:  { label: 'SVG', bg: 'bg-orange-100', text: 'text-orange-600' },
-  txt:  { label: 'TXT', bg: 'bg-gray-100',   text: 'text-gray-500'   },
-};
-
-function FileTypeBadge({ name, sourceType }) {
-  const ext = (name || '').split('.').pop().toLowerCase();
-  const mapped = FILE_TYPE_MAP[ext];
-
-  if (!mapped && sourceType === 'notion') {
-    return (
-      <span className="flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded bg-gray-100 text-gray-600">
-        <NotionBadgeIcon />
-      </span>
-    );
-  }
-
-  const style = mapped || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-gray-100', text: 'text-gray-500' };
-  return (
-    <span className={`flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded text-[7px] font-bold tracking-tight ${style.bg} ${style.text}`}>
-      {style.label}
-    </span>
-  );
-}
-
-function MaterialToggle({ checked, onToggle }) {
-  return (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); onToggle(); }}
-      className={`flex-shrink-0 relative inline-flex h-4 w-7 items-center rounded-full transition-colors focus:outline-none ${
-        checked ? 'bg-indigo-500' : 'bg-gray-200'
-      }`}
-    >
-      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow-sm transition-transform ${
-        checked ? 'translate-x-3.5' : 'translate-x-0.5'
-      }`} />
-    </button>
-  );
-}
-
-const MODEL_LABELS = {
-  gemini: 'Gemini',
-  openai: 'GPT',
-  claude: 'Claude',
-};
+import { FileTypeBadge, MaterialToggle } from './ChatTab/atoms';
+import { groupChatsByDate, getMessageModelLabel, MODEL_LABELS } from './ChatTab/helpers';
 
 // PROVIDER_MODELS lives in ./modelCatalog.js; re-exported here for existing
 // importers (e.g. CoursePage) that pull it from this module.
 export { PROVIDER_MODELS };
-
-// ─── helpers ──────────────────────────────────────────────────────────────────
-
-function groupChatsByDate(chats) {
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const weekStart = new Date(todayStart.getTime() - 6 * 24 * 60 * 60 * 1000);
-  const today = [], lastWeek = [], older = [];
-  for (const chat of chats) {
-    const d = parseUTC(chat.last_message_at || chat.created_at);
-    if (d >= todayStart) today.push(chat);
-    else if (d >= weekStart) lastWeek.push(chat);
-    else older.push(chat);
-  }
-  return { today, lastWeek, older };
-}
-
-function inferProviderFromModelId(modelId) {
-  if (!modelId) return null;
-  for (const [provider, models] of Object.entries(PROVIDER_MODELS)) {
-    if ((models || []).some((m) => m.id === modelId)) return provider;
-  }
-  return null;
-}
-
-function getMessageModelLabel(msg) {
-  const modelId = msg?.ai_model || null;
-  const provider = msg?.ai_provider || inferProviderFromModelId(modelId);
-  if (provider && modelId) {
-    const modelLabel = (PROVIDER_MODELS[provider] || []).find((m) => m.id === modelId)?.label;
-    if (modelLabel) return modelLabel;
-  }
-  if (modelId) return modelId;
-  if (provider) return MODEL_LABELS[provider] || provider;
-  return null;
-}
 
 // ─── sub-components ───────────────────────────────────────────────────────────
 
