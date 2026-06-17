@@ -923,7 +923,7 @@ export default function MaterialsPage({
                 setConfirmRemoveId(null);
                 setAddError("");
               }}
-              className={`flex-1 py-2.5 text-xs font-medium rounded-none transition-colors ${
+              className={`flex-1 h-auto py-2.5 text-xs rounded-none ${
                 syncProvider === p
                   ? "bg-accent text-accent-foreground border-b-2 border-primary"
                   : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
@@ -948,7 +948,7 @@ export default function MaterialsPage({
                   ? "Search Notion databases to add…"
                   : "Search Drive folders to add…"
               }
-              className="w-full text-sm"
+              className="text-sm"
             />
             {sourceSearching && (
               <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
