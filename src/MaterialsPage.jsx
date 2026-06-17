@@ -26,6 +26,7 @@ import {
 import UploadZone from "./MaterialsPage/UploadZone";
 import UploadItemRow from "./MaterialsPage/UploadItemRow";
 import StagingItemRow from "./MaterialsPage/StagingItemRow";
+import SyncModal from "./MaterialsPage/SyncModal";
 
 function normalizeSyncRows(provider, rawFiles) {
   const sourceType = provider === "notion" ? "notion" : "gdrive";
@@ -39,167 +40,6 @@ function normalizeSyncRows(provider, rawFiles) {
       doc_type: row.doc_type ?? null,
       source_type: sourceType,
     }));
-}
-
-function SyncModal({
-  provider,
-  sourcePointTitle,
-  rows,
-  page,
-  hasMore,
-  loading,
-  toggles,
-  docTypes = {},
-  error,
-  onToggle,
-  onDocTypeChange,
-  onSetAllDocTypes,
-  onPrevPage,
-  onNextPage,
-  onSync,
-  onSyncAll,
-  onClose,
-}) {
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-gray-800">Sync Modal</h3>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {provider === "notion" ? "Notion" : "Google Drive"} ·{" "}
-            {sourcePointTitle || "Source point"}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
-        >
-          Close
-        </button>
-      </div>
-
-      {error && <p className="text-xs text-red-500">{error}</p>}
-
-      {loading ? (
-        <div className="py-8 flex items-center justify-center">
-          <Spinner size={22} className="text-indigo-400" />
-        </div>
-      ) : rows.length === 0 ? (
-        <p className="text-sm text-gray-500 py-6">
-          No files found for this source point.
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {rows.length > 1 && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-indigo-100 bg-indigo-50/50">
-              <span className="text-xs text-gray-500 shrink-0">Set all to:</span>
-              <select
-                defaultValue=""
-                onChange={(e) => {
-                  if (e.target.value) onSetAllDocTypes(e.target.value);
-                }}
-                className="text-xs rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-              >
-                <option value="" disabled>— pick type —</option>
-                {DOCUMENT_TYPES.map((dt) => (
-                  <option key={dt.value} value={dt.value}>{dt.label}</option>
-                ))}
-              </select>
-              <div className="flex-1" />
-              <button
-                type="button"
-                onClick={onSyncAll}
-                disabled={loading}
-                className="shrink-0 px-3 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                Sync all
-              </button>
-            </div>
-          )}
-          {rows.map((row) => {
-            const enabled = toggles[row.external_id] ?? row.sync !== false;
-            return (
-              <div
-                key={row.external_id}
-                className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2.5"
-              >
-                <FileTypeIcon type={row.mime_type} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-gray-800 truncate">
-                    {row.name}
-                  </p>
-                  <p className="text-xs text-gray-400 truncate">
-                    {row.external_id}
-                  </p>
-                </div>
-                <select
-                  value={
-                    docTypes[row.external_id] ?? row.doc_type ?? "general"
-                  }
-                  onChange={(e) =>
-                    onDocTypeChange(row.external_id, e.target.value)
-                  }
-                  className="text-xs rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400 shrink-0"
-                >
-                  {DOCUMENT_TYPES.map((dt) => (
-                    <option key={dt.value} value={dt.value}>
-                      {dt.label}
-                    </option>
-                  ))}
-                </select>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`text-xs font-medium ${enabled ? "text-emerald-600" : "text-gray-400"}`}
-                  >
-                    {enabled ? "Sync ON" : "Sync OFF"}
-                  </span>
-                  <VisibilityToggle
-                    isPublic={enabled}
-                    onChange={(next) => onToggle(row.external_id, next)}
-                    size="sm"
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between pt-1">
-        <div className="text-xs text-gray-400">Page {page}</div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onPrevPage}
-            disabled={page <= 1 || loading}
-            className="px-2.5 py-1 rounded border border-gray-200 text-xs text-gray-600 disabled:opacity-40 hover:bg-gray-50"
-          >
-            Prev
-          </button>
-          <button
-            type="button"
-            onClick={onNextPage}
-            disabled={!hasMore || loading}
-            className="px-2.5 py-1 rounded border border-gray-200 text-xs text-gray-600 disabled:opacity-40 hover:bg-gray-50"
-          >
-            Next
-          </button>
-        </div>
-      </div>
-
-      <div className="pt-1">
-        <button
-          type="button"
-          onClick={onSync}
-          disabled={loading || rows.length === 0}
-          className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-        >
-          Sync
-        </button>
-      </div>
-    </div>
-  );
 }
 
 // ─── progress panel ───────────────────────────────────────────────────────────
@@ -1636,31 +1476,30 @@ export default function MaterialsPage({
         )}
       </div>
 
-      {/* Sync Modal (overlay-style card, rendered when open) */}
-      {syncModalOpen && (
-        <SyncModal
-          provider={syncProvider}
-          sourcePointTitle={
-            selectedSourcePoint?.external_title ||
-            selectedSourcePoint?.external_id
-          }
-          rows={syncRows}
-          page={syncPage}
-          hasMore={syncHasMore}
-          loading={syncRowsLoading}
-          toggles={syncToggles}
-          docTypes={syncDocTypes}
-          error={syncRowsError}
-          onToggle={handleSyncToggle}
-          onDocTypeChange={handleSyncDocTypeChange}
-          onSetAllDocTypes={handleSetAllSyncDocTypes}
-          onPrevPage={() => fetchSyncRowsPage(Math.max(1, syncPage - 1))}
-          onNextPage={() => fetchSyncRowsPage(syncPage + 1)}
-          onSync={handleSyncConfirm}
-          onSyncAll={handleSyncAll}
-          onClose={closeSyncModal}
-        />
-      )}
+      {/* Sync Modal */}
+      <SyncModal
+        open={syncModalOpen}
+        provider={syncProvider}
+        sourcePointTitle={
+          selectedSourcePoint?.external_title ||
+          selectedSourcePoint?.external_id
+        }
+        rows={syncRows}
+        page={syncPage}
+        hasMore={syncHasMore}
+        loading={syncRowsLoading}
+        toggles={syncToggles}
+        docTypes={syncDocTypes}
+        error={syncRowsError}
+        onToggle={handleSyncToggle}
+        onDocTypeChange={handleSyncDocTypeChange}
+        onSetAllDocTypes={handleSetAllSyncDocTypes}
+        onPrevPage={() => fetchSyncRowsPage(Math.max(1, syncPage - 1))}
+        onNextPage={() => fetchSyncRowsPage(syncPage + 1)}
+        onSync={handleSyncConfirm}
+        onSyncAll={handleSyncAll}
+        onClose={closeSyncModal}
+      />
 
       {/* Progress panel — between upload section and materials grid */}
       {(syncJobs.length > 0 || uploadItems.length > 0) && !panelDismissed && (
