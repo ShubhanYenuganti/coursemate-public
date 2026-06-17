@@ -20,6 +20,7 @@ import UploadItemRow from "./MaterialsPage/UploadItemRow";
 import StagingItemRow from "./MaterialsPage/StagingItemRow";
 import SyncModal from "./MaterialsPage/SyncModal";
 import ProgressPanel from "./MaterialsPage/ProgressPanel";
+import FilterBar from "./MaterialsPage/FilterBar";
 
 function normalizeSyncRows(provider, rawFiles) {
   const sourceType = provider === "notion" ? "notion" : "gdrive";
@@ -33,71 +34,6 @@ function normalizeSyncRows(provider, rawFiles) {
       doc_type: row.doc_type ?? null,
       source_type: sourceType,
     }));
-}
-
-// ─── main component ───────────────────────────────────────────────────────────
-
-// ─── filter pill bar ──────────────────────────────────────────────────────────
-
-function FilterBar({ ownerFilter, setOwnerFilter, typeFilter, setTypeFilter }) {
-  const ownerPills = [
-    { id: "all", label: "All materials" },
-    { id: "mine", label: "My materials" },
-  ];
-  const typePills = [
-    { id: "all", label: "All types", prefix: null },
-    { id: "uploaded", label: "Uploaded", prefix: "↑" },
-    { id: "generated", label: "Generated", prefix: "✦" },
-  ];
-
-  return (
-    <div className="flex items-center gap-2 px-2 py-1.5 rounded-full bg-white border border-gray-200 shadow-sm w-fit flex-wrap">
-      {/* Owner group */}
-      <div className="flex items-center gap-0.5">
-        {ownerPills.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => setOwnerFilter(p.id)}
-            className={`px-3.5 py-1 rounded-full text-sm font-medium transition-colors duration-150 focus:outline-none ${
-              ownerFilter === p.id
-                ? "bg-indigo-600 text-white"
-                : "text-gray-500 hover:text-gray-800"
-            }`}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Divider */}
-      <div className="w-px h-5 bg-gray-200" />
-
-      {/* Type group label */}
-      <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest select-none pl-1">
-        Show
-      </span>
-
-      {/* Type group */}
-      <div className="flex items-center gap-0.5">
-        {typePills.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => setTypeFilter(p.id)}
-            className={`flex items-center gap-1 px-3.5 py-1 rounded-full text-sm font-medium transition-colors duration-150 focus:outline-none ${
-              typeFilter === p.id
-                ? "bg-indigo-600 text-white"
-                : "text-gray-500 hover:text-gray-800"
-            }`}
-          >
-            {p.prefix && <span className="text-xs">{p.prefix}</span>}
-            {p.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 // ─── main component ───────────────────────────────────────────────────────────
