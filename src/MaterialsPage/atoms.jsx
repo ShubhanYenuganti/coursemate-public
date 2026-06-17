@@ -1,4 +1,5 @@
 import { getMeta, SOURCE_TYPE_META } from "./constants";
+import { Badge } from "@/components/ui/badge";
 
 // ─── small shared pieces ─────────────────────────────────────────────────────
 
@@ -62,7 +63,7 @@ export function FileTypeIcon({ type, large = false }) {
   );
 }
 
-export function Spinner({ size = 16, className = "text-indigo-500" }) {
+export function Spinner({ size = 16, className = "text-primary" }) {
   return (
     <svg
       width={size}
@@ -107,12 +108,12 @@ export function VisibilityToggle({
           ? "Public — click to make private"
           : "Private — click to make public"
       }
-      className={`relative inline-flex shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-1 ${track} ${
-        isPublic ? "bg-indigo-500" : "bg-gray-300"
+      className={`relative inline-flex shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 ${track} ${
+        isPublic ? "bg-primary" : "bg-muted-foreground"
       } ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
     >
       <span
-        className={`inline-block rounded-full bg-white shadow-sm transform transition-transform duration-200 ${knob}`}
+        className={`inline-block rounded-full bg-background shadow-sm transform transition-transform duration-200 ${knob}`}
       />
     </button>
   );
@@ -144,11 +145,12 @@ export function SourceTypeBadge({ sourceType }) {
   const meta = SOURCE_TYPE_META[sourceType];
   if (!meta) return null;
   return (
-    <span
-      className={`inline-flex items-center text-[10px] font-medium border rounded-full px-1.5 py-0.5 leading-none ${meta.className}`}
+    <Badge
+      variant="outline"
+      className={`text-[10px] leading-none px-1.5 h-auto rounded-full ${meta.className}`}
     >
       {meta.label}
-    </span>
+    </Badge>
   );
 }
 
@@ -159,10 +161,13 @@ export function EmbedStatusBadge({ status, sourceType }) {
   // generating + uploading before it can enqueue the embed step.
   if (!status && sourceType === "notion") {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-full px-1.5 py-0.5 leading-none">
+      <Badge
+        variant="outline"
+        className="text-[10px] leading-none px-1.5 h-auto rounded-full text-purple-600 bg-purple-50 border-purple-200"
+      >
         <Spinner size={9} className="text-purple-500" />
         Syncing…
-      </span>
+      </Badge>
     );
   }
 
@@ -170,24 +175,33 @@ export function EmbedStatusBadge({ status, sourceType }) {
 
   if (status === "pending" || status === "processing") {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5 leading-none">
+      <Badge
+        variant="outline"
+        className="text-[10px] leading-none px-1.5 h-auto rounded-full text-amber-600 bg-amber-50 border-amber-200"
+      >
         <Spinner size={9} className="text-amber-500" />
         {status === "processing" ? "Indexing…" : "Queued"}
-      </span>
+      </Badge>
     );
   }
   if (status === "failed") {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-red-500 bg-red-50 border border-red-200 rounded-full px-1.5 py-0.5 leading-none">
+      <Badge
+        variant="destructive"
+        className="text-[10px] leading-none px-1.5 h-auto rounded-full"
+      >
         ✕ Index failed
-      </span>
+      </Badge>
     );
   }
   if (status === "skipped") {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-gray-400 bg-gray-50 border border-gray-200 rounded-full px-1.5 py-0.5 leading-none">
+      <Badge
+        variant="outline"
+        className="text-[10px] leading-none px-1.5 h-auto rounded-full text-muted-foreground bg-muted"
+      >
         — Not indexed
-      </span>
+      </Badge>
     );
   }
   return null;
