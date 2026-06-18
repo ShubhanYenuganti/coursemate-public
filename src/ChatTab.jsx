@@ -1454,21 +1454,21 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
 
       {/* Switched-to banner — centred over the full modal */}
       {switchBanner && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full bg-gray-900 text-white text-xs font-medium shadow-lg whitespace-nowrap pointer-events-none select-none">
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full bg-foreground text-background text-xs font-medium shadow-lg whitespace-nowrap pointer-events-none select-none">
           Switched to {switchBanner} ⚡
         </div>
       )}
 
       {/* Pin toast */}
       {pinToast && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full bg-gray-900 text-white text-xs font-medium shadow-lg whitespace-nowrap pointer-events-none select-none">
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full bg-foreground text-background text-xs font-medium shadow-lg whitespace-nowrap pointer-events-none select-none">
           {pinToast}
         </div>
       )}
 
       {/* Vision model banner */}
       {visionBanner && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-1.5 rounded-full bg-red-600 text-white text-xs font-medium shadow-lg whitespace-nowrap select-none">
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-1.5 rounded-full bg-destructive text-destructive-foreground text-xs font-medium shadow-lg whitespace-nowrap select-none">
           <span>{visionBanner}</span>
           <button type="button" onClick={() => setVisionBanner('')} className="hover:opacity-70 transition-opacity">
             <XIcon />
@@ -1479,7 +1479,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
       {/* ── Sidebar ── */}
       {!sidebarCollapsed ? (
         <div
-          className={`flex-shrink-0 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden relative ${
+          className={`flex-shrink-0 bg-background rounded-2xl border border-border shadow-sm flex flex-col overflow-hidden relative ${
             sidebarIsDraggingRef.current ? '' : 'transition-[width] duration-200'
           }`}
           style={{ width: sidebarWidth }}
@@ -1492,15 +1492,15 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
             onPointerDown={startSidebarDrag}
             className="absolute top-2 bottom-2 -right-2 w-4 cursor-col-resize z-20"
           >
-            <div className="absolute right-2 top-0 bottom-0 w-px bg-gray-200" />
+            <div className="absolute right-2 top-0 bottom-0 w-px bg-border" />
           </div>
         {/* Logo / title */}
-        <div className="px-4 py-3 border-b border-gray-100">
+        <div className="px-4 py-3 border-b border-border">
           <div className="flex items-center justify-between">
-            <span className="font-semibold text-gray-900 text-sm">Course Chat</span>
+            <span className="font-semibold text-foreground text-sm">Course Chat</span>
             <button
               type="button"
-              className="flex-shrink-0 p-1.5 text-gray-600 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-colors"
+              className="flex-shrink-0 p-1.5 text-muted-foreground hover:text-primary hover:bg-accent rounded-lg transition-colors"
               title="Search"
               onClick={() => setSearchOpen(true)}
             >
@@ -1514,7 +1514,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
             <button
               type="button"
               onClick={handleNewChat}
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-colors shadow-sm"
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors shadow-sm"
             >
               <PlusIcon />
               New chat
@@ -1528,17 +1528,17 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
           {/* Conversations */}
           <div className="overflow-y-auto px-2 space-y-4 pb-3 shrink-0" style={{ maxHeight: '45%' }}>
             {chatsLoading && (
-              <p className="px-3 py-2 text-[10px] text-gray-400">Loading...</p>
+              <p className="px-3 py-2 text-[10px] text-muted-foreground">Loading...</p>
             )}
             {!chatsLoading && chats.length === 0 && (
-              <p className="px-3 py-2 text-[10px] text-gray-400 italic">No conversations yet.</p>
+              <p className="px-3 py-2 text-[10px] text-muted-foreground italic">No conversations yet.</p>
             )}
             {today.length > 0 && (
               <div>
-                <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                <p className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider flex items-center justify-between">
                   <span>Today</span>
                   {chats.length > 0 && (
-                    <button type="button" onClick={handleClearAll} className="text-indigo-500 hover:text-indigo-700 normal-case text-[10px] font-normal transition-colors">
+                    <button type="button" onClick={handleClearAll} className="text-primary hover:text-primary/80 normal-case text-[10px] font-normal transition-colors">
                       Clear all
                     </button>
                   )}
@@ -1552,10 +1552,10 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
             )}
             {lastWeek.length > 0 && (
               <div>
-                <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                <p className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider flex items-center justify-between">
                   <span>Last 7 Days</span>
                   {today.length === 0 && chats.length > 0 && (
-                    <button type="button" onClick={handleClearAll} className="text-indigo-500 hover:text-indigo-700 normal-case text-[10px] font-normal transition-colors">
+                    <button type="button" onClick={handleClearAll} className="text-primary hover:text-primary/80 normal-case text-[10px] font-normal transition-colors">
                       Clear all
                     </button>
                   )}
@@ -1569,10 +1569,10 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
             )}
             {older.length > 0 && (
               <div>
-                <p className="px-3 py-1 text-[10px] font-medium text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                <p className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider flex items-center justify-between">
                   <span>Older</span>
                   {today.length === 0 && lastWeek.length === 0 && (
-                    <button type="button" onClick={handleClearAll} className="text-indigo-500 hover:text-indigo-700 normal-case text-[10px] font-normal transition-colors">
+                    <button type="button" onClick={handleClearAll} className="text-primary hover:text-primary/80 normal-case text-[10px] font-normal transition-colors">
                       Clear all
                     </button>
                   )}
@@ -1590,7 +1590,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
               <button
                 type="button"
                 onClick={() => setArchivedOpen((o) => !o)}
-                className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-600 transition-colors rounded-lg hover:bg-gray-50"
+                className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors rounded-lg hover:bg-accent"
               >
                 <span>Archived</span>
                 <svg
@@ -1611,10 +1611,10 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
               {archivedOpen && (
                 <div className="space-y-0.5 mt-0.5">
                   {archivedLoading && (
-                    <p className="px-3 py-1 text-[10px] text-gray-400">Loading...</p>
+                    <p className="px-3 py-1 text-[10px] text-muted-foreground">Loading...</p>
                   )}
                   {!archivedLoading && archivedChats.length === 0 && (
-                    <p className="px-3 py-1 text-[10px] text-gray-400 italic">No archived chats.</p>
+                    <p className="px-3 py-1 text-[10px] text-muted-foreground italic">No archived chats.</p>
                   )}
                   {archivedChats.map((c) => (
                     <ArchivedConvItem
@@ -1630,26 +1630,26 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
           </div>
 
           {/* Materials */}
-          <div className="flex-1 min-h-0 flex flex-col border-t border-gray-200 pt-2">
+          <div className="flex-1 min-h-0 flex flex-col border-t border-border pt-2">
             {/* Header row */}
             <div className="px-3 py-2 flex items-center justify-between">
-              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Your Materials</span>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Your Materials</span>
               {materials.length > 0 && (
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-gray-400 tabular-nums">
+                  <span className="text-[10px] text-muted-foreground tabular-nums">
                     {materials.filter((m) => m.selected).length} selected
                   </span>
                   <button
                     type="button"
                     onClick={() => setAllMaterialsSelected(true)}
-                    className="text-[10px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors"
+                    className="text-[10px] font-medium text-primary hover:text-primary/80 transition-colors"
                   >
                     All
                   </button>
                   <button
                     type="button"
                     onClick={() => setAllMaterialsSelected(false)}
-                    className="text-[10px] font-medium text-gray-500 hover:text-gray-700 transition-colors"
+                    className="text-[10px] font-medium text-muted-foreground hover:text-foreground transition-colors"
                   >
                     Clear
                   </button>
@@ -1660,10 +1660,10 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
             {/* Materials list */}
             <div className="flex-1 overflow-y-auto pb-2">
               {materialsLoading && (
-                <p className="px-3 py-2 text-[10px] text-gray-400">Loading…</p>
+                <p className="px-3 py-2 text-[10px] text-muted-foreground">Loading…</p>
               )}
               {!materialsLoading && materials.length === 0 ? (
-                <p className="px-3 py-2 text-[10px] text-gray-400 italic">No materials uploaded yet.</p>
+                <p className="px-3 py-2 text-[10px] text-muted-foreground italic">No materials uploaded yet.</p>
               ) : (
                 (() => {
                   const myMats = materials.filter((m) => !m.collaborator);
@@ -1673,8 +1673,8 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                       {myMats.map((m) => (
                         <div
                           key={m.id}
-                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
-                            m.selected ? 'border-indigo-400' : 'border-transparent'
+                          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-accent transition-colors cursor-default border-l-2 ${
+                            m.selected ? 'border-primary' : 'border-transparent'
                           }`}
                         >
                           <FileTypeBadge name={m.name} sourceType={m.source_type} />
@@ -1688,13 +1688,13 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                       {collabMats.length > 0 && (
                         <>
                           <div className="px-3 pt-2 pb-0.5">
-                            <span className="text-[9px] font-semibold text-gray-300 uppercase tracking-wider">From collaborators</span>
+                            <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">From collaborators</span>
                           </div>
                           {collabMats.map((m) => (
                             <div
                               key={m.id}
-                              className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
-                                m.selected ? 'border-indigo-300' : 'border-transparent'
+                              className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-accent transition-colors cursor-default border-l-2 ${
+                                m.selected ? 'border-primary' : 'border-transparent'
                               }`}
                             >
                               <FileTypeBadge name={m.name} sourceType={m.source_type} />
@@ -1714,11 +1714,11 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
             </div>
 
             {/* Add Source button */}
-            <div className="px-3 pb-3 pt-2 flex-shrink-0 border-t border-gray-100 bg-white">
+            <div className="px-3 pb-3 pt-2 flex-shrink-0 border-t border-border bg-background">
               <button
                 type="button"
                 onClick={onAddSource}
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-border text-xs font-medium text-foreground hover:bg-accent transition-colors"
               >
                 <PlusIcon />
                 Add Source
@@ -1730,15 +1730,15 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
 
         {/* Bottom: user */}
         {userData && (
-          <div className="border-t border-gray-200 p-3 flex items-center gap-2">
+          <div className="border-t border-border p-3 flex items-center gap-2">
             {userData.picture ? (
-              <img src={userData.picture} alt={userData.name} className="w-7 h-7 rounded-full border border-gray-200 flex-shrink-0" />
+              <img src={userData.picture} alt={userData.name} className="w-7 h-7 rounded-full border border-border flex-shrink-0" />
             ) : (
-              <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold flex-shrink-0">
+              <div className="w-7 h-7 rounded-full bg-accent text-accent-foreground flex items-center justify-center text-xs font-bold flex-shrink-0">
                 {(userData.name || userData.username || 'U')[0].toUpperCase()}
               </div>
             )}
-            <span className="text-xs text-gray-700 font-medium truncate">{userData.name || userData.username}</span>
+            <span className="text-xs text-foreground font-medium truncate">{userData.name || userData.username}</span>
           </div>
         )}
         </div>
@@ -1746,22 +1746,22 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
         <button
           type="button"
           onClick={handleSidebarRestore}
-          className="flex-shrink-0 w-3 rounded-2xl border border-gray-200 bg-white shadow-sm hover:bg-gray-50 transition-colors relative"
+          className="flex-shrink-0 w-3 rounded-2xl border border-border bg-background shadow-sm hover:bg-accent transition-colors relative"
           title="Show sidebar"
         >
-          <span className="absolute inset-y-2 left-1/2 -translate-x-1/2 w-px bg-gray-300" />
+          <span className="absolute inset-y-2 left-1/2 -translate-x-1/2 w-px bg-border" />
         </button>
       )}
 
       {/* ── Main chat ── */}
-      <div className="flex-1 flex flex-col min-w-0 relative overflow-hidden bg-white rounded-2xl border border-gray-200 shadow-sm">
+      <div className="flex-1 flex flex-col min-w-0 relative overflow-hidden bg-background rounded-2xl border border-border shadow-sm">
 
         {/* Chat title header */}
         {activeConv && activeConv !== '__new__' && (() => {
           const activeChat = chats.find((c) => c.id === activeConv);
           if (!activeChat) return null;
           return (
-            <div className="flex-shrink-0 px-6 pt-4 pb-2 border-b border-gray-100">
+            <div className="flex-shrink-0 px-6 pt-4 pb-2 border-b border-border">
               {editingTitle ? (
                 <input
                   ref={titleInputRef}
@@ -1770,14 +1770,14 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
                   onBlur={handleTitleSave}
                   onKeyDown={handleTitleKeyDown}
                   disabled={titleSaving}
-                  className="w-full text-sm font-semibold text-gray-900 bg-transparent border-b-2 border-indigo-400 focus:outline-none px-0 py-0.5 disabled:opacity-50"
+                  className="w-full text-sm font-semibold text-foreground bg-transparent border-b-2 border-primary focus:outline-none px-0 py-0.5 disabled:opacity-50"
                   maxLength={500}
                 />
               ) : (
                 <p
                   role="button"
                   tabIndex={0}
-                  className="text-sm font-semibold text-gray-900 truncate cursor-text select-none"
+                  className="text-sm font-semibold text-foreground truncate cursor-text select-none"
                   title="Double-click to rename"
                   onDoubleClick={handleTitleDoubleClick}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'F2') handleTitleDoubleClick(); }}
@@ -1793,8 +1793,8 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
         <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-auto px-6 pt-5 pb-4 space-y-6 transition-all duration-200 ${sourcesPanel.open ? 'mr-80' : ''}`}>
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center gap-2 text-center">
-              <p className="text-base font-semibold text-gray-800">Ask me anything about {course?.title || 'this course'}</p>
-              <p className="text-sm text-gray-400 max-w-xs">I can explain concepts, quiz you on the material, summarize lectures, and more.</p>
+              <p className="text-base font-semibold text-foreground">Ask me anything about {course?.title || 'this course'}</p>
+              <p className="text-sm text-muted-foreground max-w-xs">I can explain concepts, quiz you on the material, summarize lectures, and more.</p>
             </div>
           ) : (
             (() => {
@@ -1933,7 +1933,7 @@ export default function ChatTab({ course, userData, onAddSource, onGoToTab }) {
     </div>
 
     {/* Saved pins — full width below chat + input */}
-    <div className="w-full rounded-2xl border border-gray-200 shadow-sm bg-white overflow-hidden">
+    <div className="w-full rounded-2xl border border-border shadow-sm bg-background overflow-hidden">
       <PinsPanel
         pins={pinnedResponses}
         courseName={course?.title}
