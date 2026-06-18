@@ -912,10 +912,9 @@ export default function MaterialsPage({
       <div className="bg-background rounded-xl border border-border shadow-sm overflow-hidden">
         <div className="flex border-b border-border">
           {["gdrive", "notion"].map((p) => (
-            <Button
+            <button
               key={p}
               type="button"
-              variant="ghost"
               onClick={() => {
                 setSyncProvider(p);
                 setSourceSearch("");
@@ -923,14 +922,14 @@ export default function MaterialsPage({
                 setConfirmRemoveId(null);
                 setAddError("");
               }}
-              className={`flex-1 h-auto py-2.5 text-xs rounded-none ${
+              className={`flex-1 py-2.5 text-xs font-medium transition-colors ${
                 syncProvider === p
                   ? "bg-accent text-accent-foreground border-b-2 border-primary"
                   : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
               }`}
             >
               {p === "gdrive" ? "Google Drive" : "Notion"}
-            </Button>
+            </button>
           ))}
         </div>
         <div className="p-4 space-y-3">
