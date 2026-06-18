@@ -1,4 +1,20 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Command,
+  CommandInput,
+  CommandList,
+  CommandGroup,
+  CommandItem,
+} from "@/components/ui/command";
 
 /**
  * NotionTargetPicker
@@ -23,8 +39,6 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [addError, setAddError] = useState("");
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const pickerContainerRef = useRef(null);
 
   function normalizeNotionId(rawId) {
     const cleaned = String(rawId || "").trim().replace(/-/g, "");
@@ -180,7 +194,6 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
     });
     setSearchQuery("");
     setSearchResults([]);
-    setPickerOpen(false);
   }
 
   async function handleConfirm() {
@@ -211,192 +224,143 @@ export default function NotionTargetPicker({ courseId, generationType, onSelect,
     }
   }
 
-  useEffect(() => {
-    if (!pickerOpen) return;
+  function selectSourceTarget(target) {
+    setSelected(target);
+    setSearchQuery("");
+    setSearchResults([]);
+  }
 
-    const onKeyDown = (e) => {
-      if (e.key === "Escape") setPickerOpen(false);
-    };
-
-    const onPointerDown = (e) => {
-      const container = pickerContainerRef.current;
-      if (!container) return;
-      if (!container.contains(e.target)) setPickerOpen(false);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("pointerdown", onPointerDown);
-    };
-  }, [pickerOpen]);
+  const DbBadge = () => (
+    <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700">
+      DB
+    </span>
+  );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
-      <div
-        className="w-full max-w-md mx-4 bg-white rounded-2xl shadow-xl border border-gray-200 max-h-[85vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-          <h3 className="text-sm font-semibold text-gray-900">Export to Notion</h3>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-md gap-0 p-0">
+        <DialogHeader className="flex-row items-center justify-between space-y-0 px-4 py-3">
+          <DialogTitle className="text-sm font-semibold">Export to Notion</DialogTitle>
+        </DialogHeader>
 
         {!stickyLoaded ? (
-          <div className="px-4 py-6 text-sm text-gray-400">Loading…</div>
+          <div className="px-4 py-6 text-sm text-muted-foreground">Loading…</div>
         ) : (
-          <div className="px-4 py-3 space-y-4 overflow-y-auto">
+          <div className="space-y-4 overflow-y-auto px-4 py-3">
             <div>
-              <p className="text-xs text-gray-500 mb-1">Page name</p>
-              <input
+              <p className="mb-1 text-xs text-muted-foreground">Page name</p>
+              <Input
                 autoFocus
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleConfirm()}
                 placeholder={`e.g. Week 3 ${generationType === "quiz" ? "Quiz" : generationType === "flashcards" ? "Flashcards" : "Report"}`}
-                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
               />
             </div>
 
             <div>
-              <p className="text-xs text-gray-500 mb-1">Parent database</p>
+              <p className="mb-1 text-xs text-muted-foreground">Parent database</p>
 
               {selected && (
-                <div className="mb-2 inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-100 w-full">
-                  <span className="text-xs text-indigo-700 flex-1 truncate">
+                <div className="mb-2 inline-flex w-full items-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2">
+                  <span className="flex-1 truncate text-xs text-primary">
                     {selected.title || "Untitled"}
                   </span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">
-                    DB
-                  </span>
-                  <button
+                  <DbBadge />
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="icon-xs"
                     onClick={() => setSelected(null)}
-                    className="text-indigo-400 hover:text-indigo-600 text-xs"
+                    className="text-primary/60 hover:bg-transparent hover:text-primary"
                   >
                     ✕
-                  </button>
+                  </Button>
                 </div>
               )}
 
-              <div ref={pickerContainerRef}>
-                <input
-                  type="text"
+              <Command shouldFilter={false} className="rounded-lg border border-border bg-background">
+                <CommandInput
                   value={searchQuery}
-                  onChange={(e) => {
+                  onValueChange={(v) => {
                     setAddError("");
-                    setSearchQuery(e.target.value);
-                    setPickerOpen(true);
+                    setSearchQuery(v);
                   }}
-                  onFocus={() => setPickerOpen(true)}
                   placeholder={selected ? "Change parent database…" : "Search Notion databases…"}
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
                 />
-
-                {(pickerOpen || searching) && (
-                  <div className="mt-1 w-full border border-gray-200 bg-white rounded-lg shadow-sm overflow-hidden">
-                    <div className="max-h-52 overflow-y-auto">
-                      {sourceTargets.length > 0 && (
-                        <div className="px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">
-                          CourseMate Databases
-                        </div>
-                      )}
+                <CommandList className="max-h-52">
+                  {sourceTargets.length > 0 && (
+                    <CommandGroup heading="CourseMate Databases">
                       {!sourcesLoaded ? (
-                        <div className="px-3 pb-2 text-xs text-gray-400">Loading…</div>
-                      ) : sourceTargets.length > 0 && filteredSourceTargets.length === 0 ? (
-                        <div className="px-3 pb-2 text-xs text-gray-400">No matches.</div>
+                        <p className="px-3 pb-2 text-xs text-muted-foreground">Loading…</p>
+                      ) : filteredSourceTargets.length === 0 ? (
+                        <p className="px-3 pb-2 text-xs text-muted-foreground">No matches.</p>
                       ) : (
                         filteredSourceTargets.map((r) => (
-                          <button
+                          <CommandItem
                             key={r.id}
-                            type="button"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => {
-                              setSelected(r);
-                              setSearchQuery("");
-                              setSearchResults([]);
-                              setPickerOpen(false);
-                            }}
-                            className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-50 transition-colors ${
-                              selected?.id === r.id ? "bg-indigo-50 text-indigo-700" : "text-gray-800"
-                            }`}
+                            value={`source-${r.id}`}
+                            onSelect={() => selectSourceTarget(r)}
                           >
                             <span className="flex-1 truncate">{r.title || "Untitled"}</span>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">DB</span>
-                          </button>
+                            <DbBadge />
+                          </CommandItem>
                         ))
                       )}
+                    </CommandGroup>
+                  )}
 
-                      <div className={`px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-widest ${sourceTargets.length > 0 ? "border-t border-gray-100" : ""}`}>
-                        Notion Databases
-                      </div>
-                      {searchQuery.trim() === "" ? (
-                        <div className="px-3 pb-2 text-xs text-gray-400">Start typing to search Notion databases…</div>
-                      ) : searching ? (
-                        <div className="px-3 pb-2 text-xs text-gray-400">Searching…</div>
-                      ) : searchResults.length === 0 ? (
-                        <div className="px-3 pb-2 text-xs text-gray-400">No results.</div>
-                      ) : (
-                        searchResults.map((r) => (
-                          <button
-                            key={r.id}
-                            type="button"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => handleSelectSearchResult(r)}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-50 transition-colors"
-                          >
-                            <span className="flex-1 truncate">{r.title || "Untitled"}</span>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">DB</span>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
+                  <CommandGroup heading="Notion Databases">
+                    {searchQuery.trim() === "" ? (
+                      <p className="px-3 pb-2 text-xs text-muted-foreground">Start typing to search Notion databases…</p>
+                    ) : searching ? (
+                      <p className="px-3 pb-2 text-xs text-muted-foreground">Searching…</p>
+                    ) : searchResults.length === 0 ? (
+                      <p className="px-3 pb-2 text-xs text-muted-foreground">No results.</p>
+                    ) : (
+                      searchResults.map((r) => (
+                        <CommandItem
+                          key={r.id}
+                          value={`notion-${r.id}`}
+                          onSelect={() => handleSelectSearchResult(r)}
+                        >
+                          <span className="flex-1 truncate">{r.title || "Untitled"}</span>
+                          <DbBadge />
+                        </CommandItem>
+                      ))
+                    )}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
 
               {sourcesLoaded && sourceTargets.length === 0 && (
-                <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-                  <p className="text-[11px] font-medium text-gray-700">Add from Notion database search</p>
-                  <p className="text-[11px] text-gray-500 mt-0.5">
+                <div className="mt-3 rounded-lg border border-border bg-muted px-3 py-2">
+                  <p className="text-[11px] font-medium text-foreground">Add from Notion database search</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
                     You don’t have any saved databases yet. Search Notion above and pick a database to export into.
                   </p>
                 </div>
               )}
 
-              {addError && <p className="text-xs text-red-500 mt-1">{addError}</p>}
-            </div>
-
-            <div className="flex gap-2 pt-1 border-t border-gray-100">
-              <button
-                type="button"
-                onClick={handleConfirm}
-                disabled={!selected || !name.trim() || saving}
-                className="flex-1 px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
-              >
-                {saving ? "Saving…" : "Export"}
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
+              {addError && <p className="mt-1 text-xs text-destructive">{addError}</p>}
             </div>
           </div>
         )}
-      </div>
-    </div>
+
+        <DialogFooter className="border-t border-border px-4 py-3">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={handleConfirm}
+            disabled={!selected || !name.trim() || saving}
+          >
+            {saving ? "Saving…" : "Export"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

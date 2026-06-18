@@ -6,6 +6,17 @@ import MaterialsPage from './MaterialsPage.jsx';
 import ChatTab, { PROVIDER_MODELS } from './ChatTab.jsx';
 import Generations from './Generations.jsx';
 import CourseStatsWidget from './components/CourseStatsWidget';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -41,14 +52,14 @@ function ToolbarItem({ icon, label, active, onClick }) {
       }`}
     >
       <span className={`max-w-0 overflow-hidden whitespace-nowrap text-sm font-medium transition-all duration-200 ease-out group-hover:max-w-xs ${
-        active ? 'text-indigo-700 max-w-xs' : 'text-gray-700'
+        active ? 'text-accent-foreground max-w-xs' : 'text-foreground'
       }`}>
         {label}
       </span>
       <div className={`w-10 h-10 flex items-center justify-center rounded-xl border shadow-sm text-lg transition-all duration-200 ${
         active
-          ? 'bg-indigo-600 border-indigo-600 text-white shadow-md'
-          : 'bg-white/80 border-gray-200 text-gray-600 group-hover:text-indigo-600 group-hover:border-indigo-300 group-hover:shadow-md'
+          ? 'bg-primary border-primary text-primary-foreground shadow-md'
+          : 'bg-background/80 border-border text-muted-foreground group-hover:text-primary group-hover:border-primary/40 group-hover:shadow-md'
       }`}>
         {icon}
       </div>
@@ -200,20 +211,20 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200 shadow-sm">
+      <header className="bg-background/80 backdrop-blur-sm border-b border-border shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={() => navigate('/')}
-              className="p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
               title="Back to home"
             >
               <BackIcon />
-            </button>
-            <span className="text-xl font-bold text-gray-900">{course?.title || 'Course'}</span>
+            </Button>
+            <span className="text-xl font-bold text-foreground">{course?.title || 'Course'}</span>
           </div>
 
           <div className="flex items-center gap-3">
@@ -221,25 +232,25 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
               <button
                 type="button"
                 onClick={() => navigate('/profile')}
-                className="rounded-full focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="rounded-full focus:outline-none focus:ring-2 focus:ring-ring"
                 title="View profile"
               >
                 <img
                   src={userData.picture}
                   alt={userData.username || userData.name}
-                  className="w-8 h-8 rounded-full border-2 border-gray-200 hover:opacity-80 transition-opacity cursor-pointer"
+                  className="w-8 h-8 rounded-full border-2 border-border hover:opacity-80 transition-opacity cursor-pointer"
                 />
               </button>
             )}
             <CreateCourseModal />
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={onSignOut}
-              className="p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
               title="Sign out"
             >
               <SignOutIcon />
-            </button>
+            </Button>
           </div>
         </div>
       </header>
@@ -252,41 +263,32 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
             <div className="group relative">
               {editingDesc ? (
                 <div className="space-y-2">
-                  <textarea
+                  <Textarea
                     autoFocus
                     value={descValue}
                     onChange={(e) => { setDescValue(e.target.value); setDescError(''); }}
                     rows={4}
                     maxLength={2000}
                     placeholder="Add a description…"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent resize-none transition-all"
+                    className="resize-none"
                   />
-                  {descError && <p className="text-xs text-red-600">{descError}</p>}
+                  {descError && <p className="text-xs text-destructive">{descError}</p>}
                   <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={handleSaveDesc}
-                      disabled={descStatus === 'saving'}
-                      className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-                    >
+                    <Button size="sm" onClick={handleSaveDesc} disabled={descStatus === 'saving'}>
                       {descStatus === 'saving' ? 'Saving…' : 'Save'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={cancelEditDesc}
-                      className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50 transition-colors"
-                    >
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={cancelEditDesc}>
                       Cancel
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ) : (
                 <>
                   {course?.description ? (
-                    <p className="text-sm text-gray-600 leading-relaxed pr-8">{course.description}</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed pr-8">{course.description}</p>
                   ) : (
                     isOwner && (
-                      <p className="text-sm text-gray-400 italic pr-8">No description yet.</p>
+                      <p className="text-sm text-muted-foreground italic pr-8">No description yet.</p>
                     )
                   )}
                   {isOwner && (
@@ -294,7 +296,7 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
                       type="button"
                       onClick={() => setEditingDesc(true)}
                       title="Edit description"
-                      className="absolute top-0 right-0 p-1.5 rounded-lg text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 opacity-0 group-hover:opacity-100 transition-all"
+                      className="absolute top-0 right-0 p-1.5 rounded-lg text-muted-foreground/60 hover:text-primary hover:bg-accent opacity-0 group-hover:opacity-100 transition-all"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -307,55 +309,67 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
             </div>
             <CourseStatsWidget courseId={course?.id} />
             {isOwner && (
-              <div className="rounded-xl border border-gray-200 bg-white/80 px-4 py-4 space-y-3">
-                <h3 className="text-sm font-semibold text-gray-700">Default AI Model</h3>
-                <p className="text-xs text-gray-400">When set, chats in this course will default to this provider and model instead of the global default.</p>
-                <div className="flex flex-wrap gap-3 items-end">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-gray-500">Provider</label>
-                    <select
-                      value={aiProvider}
-                      onChange={(e) => {
-                        setAiProvider(e.target.value);
-                        setAiModel('');
-                        setAiPickerStatus(null);
-                      }}
-                      className="px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                    >
-                      <option value="">None (use global)</option>
-                      <option value="openai">OpenAI</option>
-                      <option value="claude">Claude</option>
-                      <option value="gemini">Gemini</option>
-                    </select>
-                  </div>
-                  {aiProvider && (
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-medium text-gray-500">Model</label>
-                      <select
-                        value={aiModel}
-                        onChange={(e) => { setAiModel(e.target.value); setAiPickerStatus(null); }}
-                        className="px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Default AI Model</CardTitle>
+                  <CardDescription>
+                    When set, chats in this course will default to this provider and model instead of the global default.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-wrap gap-3 items-end">
+                    <div className="flex flex-col gap-1.5">
+                      <Label>Provider</Label>
+                      <Select
+                        value={aiProvider || 'none'}
+                        onValueChange={(v) => {
+                          setAiProvider(v === 'none' ? '' : v);
+                          setAiModel('');
+                          setAiPickerStatus(null);
+                        }}
                       >
-                        <option value="">Default for provider</option>
-                        {(PROVIDER_MODELS[aiProvider] || []).map((m) => (
-                          <option key={m.id} value={m.id}>{m.label}</option>
-                        ))}
-                      </select>
+                        <SelectTrigger className="w-[180px]">
+                          <SelectValue placeholder="None (use global)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">None (use global)</SelectItem>
+                          <SelectItem value="openai">OpenAI</SelectItem>
+                          <SelectItem value="claude">Claude</SelectItem>
+                          <SelectItem value="gemini">Gemini</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
+                    {aiProvider && (
+                      <div className="flex flex-col gap-1.5">
+                        <Label>Model</Label>
+                        <Select
+                          value={aiModel || 'default'}
+                          onValueChange={(v) => {
+                            setAiModel(v === 'default' ? '' : v);
+                            setAiPickerStatus(null);
+                          }}
+                        >
+                          <SelectTrigger className="w-[200px]">
+                            <SelectValue placeholder="Default for provider" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="default">Default for provider</SelectItem>
+                            {(PROVIDER_MODELS[aiProvider] || []).map((m) => (
+                              <SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <Button onClick={handleSaveAiModel} disabled={aiPickerStatus === 'saving'}>
+                      {aiPickerStatus === 'saving' ? 'Saving…' : aiPickerStatus === 'saved' ? 'Saved!' : 'Save'}
+                    </Button>
+                  </div>
+                  {aiPickerStatus === 'error' && (
+                    <p className="text-xs text-destructive mt-3">Failed to save. Please try again.</p>
                   )}
-                  <button
-                    type="button"
-                    onClick={handleSaveAiModel}
-                    disabled={aiPickerStatus === 'saving'}
-                    className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-                  >
-                    {aiPickerStatus === 'saving' ? 'Saving…' : aiPickerStatus === 'saved' ? 'Saved!' : 'Save'}
-                  </button>
-                </div>
-                {aiPickerStatus === 'error' && (
-                  <p className="text-xs text-red-600">Failed to save. Please try again.</p>
-                )}
-              </div>
+                </CardContent>
+              </Card>
             )}
             {isOwner && (
             <SharingAccessModal
@@ -400,15 +414,15 @@ export default function CoursePage({ course, userData, csrfToken, onSignOut, onC
       </main>
 
       {/* Floating toolbar */}
-      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-gray-200 shadow-lg">
+      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-background/70 backdrop-blur-md border border-border shadow-lg">
         <>
           <ToolbarItem icon="🏠" label="Overview" active={activeTab === 'home'} onClick={() => handleTabChange('home')} />
-          <div className="w-px h-6 bg-gray-200" />
+          <div className="w-px h-6 bg-border" />
         </>
         <ToolbarItem icon="📄" label="Materials" active={activeTab === 'materials'} onClick={() => handleTabChange('materials')} />
-        <div className="w-px h-6 bg-gray-200" />
+        <div className="w-px h-6 bg-border" />
         <ToolbarItem icon="💬" label="Chat"      active={activeTab === 'chat'}      onClick={() => handleTabChange('chat')} />
-        <div className="w-px h-6 bg-gray-200" />
+        <div className="w-px h-6 bg-border" />
         <ToolbarItem icon="💡" label="Generate"  active={activeTab === 'generate'}  onClick={() => handleTabChange('generate')} />
       </div>
     </div>

@@ -1,6 +1,20 @@
 import { useState, useMemo, useEffect } from 'react';
 import NotionTargetPicker from './components/NotionTargetPicker';
 import GDriveTargetPicker from './components/GDriveTargetPicker';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -140,18 +154,19 @@ function ShuffleIcon() {
 
 function ToolbarItem({ icon, label, onClick }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       onClick={onClick}
-      className="group flex items-center gap-2 transition-all duration-150 rounded-xl px-1 py-1 focus:outline-none cursor-pointer"
+      className="group h-auto w-auto rounded-xl px-1 py-1 gap-2 transition-all duration-150 focus:outline-none cursor-pointer hover:bg-transparent"
     >
-      <span className="max-w-0 overflow-hidden whitespace-nowrap text-sm font-medium transition-all duration-200 ease-out group-hover:max-w-xs text-gray-700">
+      <span className="max-w-0 overflow-hidden whitespace-nowrap text-sm font-medium transition-all duration-200 ease-out group-hover:max-w-xs text-foreground">
         {label}
       </span>
-      <div className="w-10 h-10 flex items-center justify-center rounded-xl border shadow-sm text-lg transition-all duration-200 bg-white/80 border-gray-200 text-gray-600 group-hover:text-indigo-600 group-hover:border-indigo-300 group-hover:shadow-md">
+      <div className="w-10 h-10 flex items-center justify-center rounded-xl border shadow-sm text-lg transition-all duration-200 bg-background/80 border-border text-muted-foreground group-hover:text-primary group-hover:border-primary/40 group-hover:shadow-md">
         {icon}
       </div>
-    </button>
+    </Button>
   );
 }
 
@@ -256,8 +271,8 @@ export default function FlashcardViewer({
   const courseName = course?.name || course?.title || 'Flashcards';
 
   const actionButtonClass =
-    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
-  const actionIconClass = "text-gray-500";
+    "rounded-lg border-border bg-background px-3 py-1.5 h-auto gap-1.5 text-xs font-medium text-foreground hover:bg-muted";
+  const actionIconClass = "text-muted-foreground";
 
   function goNext() {
     setPlaying(false);
@@ -443,7 +458,8 @@ export default function FlashcardViewer({
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-teal-50 flex flex-col">
+    <TooltipProvider>
+    <div className="min-h-screen bg-gradient-to-br from-accent via-purple-50 to-teal-50 flex flex-col">
       {parentGenerationId && (
         <div className="bg-amber-50 border-b border-amber-200 px-8 py-3">
           <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
@@ -451,72 +467,77 @@ export default function FlashcardViewer({
               New version generated. What would you like to do with the previous version?
             </p>
             <div className="flex items-center gap-2 flex-shrink-0">
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => handleResolve('save_both')}
                 disabled={resolving}
-                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                className="rounded-lg border-amber-300 bg-transparent px-3 py-1.5 h-auto text-xs font-medium text-amber-800 hover:bg-amber-100"
               >
                 Save Both
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => handleResolve('replace')}
                 disabled={resolving}
-                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                className="rounded-lg border-amber-300 bg-transparent px-3 py-1.5 h-auto text-xs font-medium text-amber-800 hover:bg-amber-100"
               >
                 Replace Previous
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={() => handleResolve('revert')}
                 disabled={resolving}
-                className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 transition-colors disabled:opacity-50"
+                className="rounded-lg bg-amber-600 px-3 py-1.5 h-auto text-xs font-medium text-white hover:bg-amber-700"
               >
                 Revert
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       )}
 
       {/* ── Header ── */}
-      <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-gray-100 px-8 py-3">
+      <header className="sticky top-0 z-10 bg-background/80 backdrop-blur border-b border-border px-8 py-3">
         <div className="max-w-6xl mx-auto relative flex items-center justify-center">
           <div className="flex items-center gap-10">
             <div className="text-center">
-              <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">
+              <p className="text-base font-semibold text-foreground tabular-nums leading-none">
                 {currentIndex + 1} / {total}
               </p>
-              <p className="text-[10px] text-gray-400 mt-0.5">Flashcards Progress</p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Flashcards Progress</p>
             </div>
 
             <div className="flex items-center gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={() => onRegenerate?.(data)}
               className={actionButtonClass}
             >
               <span className={actionIconClass}><RefreshIcon /></span>
               Regenerate
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
               onClick={handleSave}
               disabled={saveStatus === 'saving' || saveStatus === 'saved'}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs transition-colors ${
+              className={`rounded-lg px-3 py-1.5 h-auto gap-1.5 text-xs ${
                 saveStatus === 'saved'
-                  ? 'border-green-300 text-green-700 bg-green-50 cursor-default'
+                  ? 'border-green-300 text-green-700 bg-green-50 cursor-default hover:bg-green-50'
                   : saveStatus === 'error'
-                    ? 'border-red-300 text-red-600 hover:bg-red-50'
-                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    ? 'border-destructive/30 text-destructive hover:bg-destructive/10'
+                    : 'border-border text-muted-foreground hover:bg-muted'
               }`}
             >
               <span className={actionIconClass}><BookmarkIcon /></span>
               {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved ✓' : saveStatus === 'error' ? 'Retry Save' : 'Save'}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
               onClick={handleExportPdf}
               disabled={!generationId || exportStatus === 'exporting'}
               className={actionButtonClass}
@@ -524,10 +545,11 @@ export default function FlashcardViewer({
               <span className={actionIconClass}><DownloadIcon /></span>
               {exportStatus === 'exporting' ? 'Exporting…' : 'Export'}
               <span className={actionIconClass}><ChevronDownIcon /></span>
-            </button>
+            </Button>
             {notionConnected && (
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={handleNotionClick}
                 disabled={notionExporting}
                 className={actionButtonClass}
@@ -539,11 +561,12 @@ export default function FlashcardViewer({
                   <rect x="7" y="15" width="8" height="1.5" rx=".75"/>
                 </svg>
                 {notionExporting ? "Exporting…" : "Notion"}
-              </button>
+              </Button>
             )}
             {gdriveConnected && (
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={handleGDriveClick}
                 disabled={gdriveExporting}
                 className={actionButtonClass}
@@ -557,18 +580,19 @@ export default function FlashcardViewer({
                   <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
                 </svg>
                 {gdriveExporting ? "Exporting…" : "Drive"}
-              </button>
+              </Button>
             )}
             </div>
           </div>
 
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={onClose}
-            className="absolute right-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            className="absolute right-0 h-auto w-auto rounded-lg p-1.5 text-muted-foreground hover:text-foreground"
           >
             <XIcon />
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -586,219 +610,254 @@ export default function FlashcardViewer({
           >
             {/* Front face */}
             <div
-              className="bg-white rounded-2xl shadow-md border border-gray-100 overflow-hidden"
+              className="bg-background rounded-2xl shadow-md border border-border overflow-hidden"
               style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
             >
               {/* Card top bar */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-50">
-                <button
+              <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={(e) => { e.stopPropagation(); setShowHint((h) => !h); }}
-                  className="flex items-center gap-1.5 text-xs text-indigo-500 hover:text-indigo-700 transition-colors"
+                  className="h-auto w-auto rounded-md gap-1.5 px-0 py-0 text-xs text-primary hover:bg-transparent hover:text-accent-foreground"
                 >
                   <LightbulbIcon />
                   Get a hint
-                </button>
+                </Button>
                 <div className="flex items-center gap-1">
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     onClick={(e) => e.stopPropagation()}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                    className="h-auto w-auto rounded-lg p-1.5 text-muted-foreground hover:text-foreground"
                   >
                     <SpeakerIcon />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="I knew this — schedule it for a later review"
-                    title="I knew this — schedules the card to return later (spaced repetition)"
-                    onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
-                  >
-                    <ThumbUpIcon />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Needs review — bring this card back soon"
-                    title="Needs review — brings this card back tomorrow (spaced repetition)"
-                    onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
-                  >
-                    <ThumbDownIcon />
-                  </button>
+                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        aria-label="I knew this — schedule it for a later review"
+                        onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
+                        className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50 hover:bg-green-50' : 'border-border text-muted-foreground hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
+                      >
+                        <ThumbUpIcon />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>I knew this — schedules the card to return later (spaced repetition)</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        aria-label="Needs review — bring this card back soon"
+                        onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
+                        className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'down' ? 'border-destructive/50 text-destructive bg-destructive/10 hover:bg-destructive/10' : 'border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive hover:bg-destructive/10'}`}
+                      >
+                        <ThumbDownIcon />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Needs review — brings this card back tomorrow (spaced repetition)</TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
 
               {/* Card body */}
               <div className="flex flex-col items-center justify-center px-10 py-16 min-h-[350px]">
                 {showHint && hint && (
-                  <p className="text-xs text-indigo-400 italic mb-6 text-center">Hint: {hint}</p>
+                  <p className="text-xs text-primary/70 italic mb-6 text-center">Hint: {hint}</p>
                 )}
-                <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-4">Front</p>
-                <p className="text-xl font-semibold text-gray-900 text-center leading-snug">{front}</p>
+                <p className="text-[10px] font-bold text-primary uppercase tracking-widest mb-4">Front</p>
+                <p className="text-xl font-semibold text-foreground text-center leading-snug">{front}</p>
               </div>
 
               {/* Flip bar */}
-              <div className="bg-indigo-600 rounded-b-2xl px-6 py-3 text-center">
-                <p className="text-sm text-white/90">Click the card to flip</p>
+              <div className="bg-primary rounded-b-2xl px-6 py-3 text-center">
+                <p className="text-sm text-primary-foreground/90">Click the card to flip</p>
               </div>
             </div>
 
             {/* Back face */}
             <div
-              className="absolute inset-0 bg-white rounded-2xl shadow-md border border-gray-100 overflow-hidden"
+              className="absolute inset-0 bg-background rounded-2xl shadow-md border border-border overflow-hidden"
               style={{
                 backfaceVisibility: 'hidden',
                 WebkitBackfaceVisibility: 'hidden',
                 transform: 'rotateY(180deg)',
               }}
             >
-              {whitingOut && <div className="absolute inset-0 bg-white z-10 rounded-2xl" />}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-50">
-                <span className="text-xs text-gray-400">Answer</span>
+              {whitingOut && <div className="absolute inset-0 bg-background z-10 rounded-2xl" />}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+                <span className="text-xs text-muted-foreground">Answer</span>
                 <div className="flex items-center gap-1">
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     onClick={(e) => e.stopPropagation()}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                    className="h-auto w-auto rounded-lg p-1.5 text-muted-foreground hover:text-foreground"
                   >
                     <SpeakerIcon />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="I knew this — schedule it for a later review"
-                    title="I knew this — schedules the card to return later (spaced repetition)"
-                    onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50' : 'border-gray-200 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
-                  >
-                    <ThumbUpIcon />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Needs review — bring this card back soon"
-                    title="Needs review — brings this card back tomorrow (spaced repetition)"
-                    onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
-                    className={`p-1.5 rounded-lg border transition-colors ${ratings[ratingKey] === 'down' ? 'border-red-400 text-red-600 bg-red-50' : 'border-gray-200 text-gray-400 hover:border-red-400 hover:text-red-600 hover:bg-red-50'}`}
-                  >
-                    <ThumbDownIcon />
-                  </button>
+                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        aria-label="I knew this — schedule it for a later review"
+                        onClick={(e) => { e.stopPropagation(); rateCard('up'); }}
+                        className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'up' ? 'border-green-400 text-green-600 bg-green-50 hover:bg-green-50' : 'border-border text-muted-foreground hover:border-green-400 hover:text-green-600 hover:bg-green-50'}`}
+                      >
+                        <ThumbUpIcon />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>I knew this — schedules the card to return later (spaced repetition)</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        aria-label="Needs review — bring this card back soon"
+                        onClick={(e) => { e.stopPropagation(); rateCard('down'); }}
+                        className={`h-auto w-auto rounded-lg p-1.5 border ${ratings[ratingKey] === 'down' ? 'border-destructive/50 text-destructive bg-destructive/10 hover:bg-destructive/10' : 'border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive hover:bg-destructive/10'}`}
+                      >
+                        <ThumbDownIcon />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Needs review — brings this card back tomorrow (spaced repetition)</TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
 
               <div className="flex flex-col items-center justify-center px-10 py-16 min-h-[350px]">
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-4">Back</p>
-                <p className="text-base text-gray-700 text-center leading-relaxed">{back}</p>
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-4">Back</p>
+                <p className="text-base text-foreground/80 text-center leading-relaxed">{back}</p>
               </div>
 
-              <div className="bg-indigo-600 rounded-b-2xl px-6 py-3 text-center">
-                <p className="text-sm text-white/90">Click to flip back</p>
+              <div className="bg-primary rounded-b-2xl px-6 py-3 text-center">
+                <p className="text-sm text-primary-foreground/90">Click to flip back</p>
               </div>
             </div>
           </div>
 
           {/* Spaced-repetition hint — tells users that rating schedules reviews */}
-          <p className="mt-5 text-center text-xs text-gray-400">
+          <p className="mt-5 text-center text-xs text-muted-foreground">
             Rate each card with <span className="font-medium text-green-600">👍</span> /{' '}
-            <span className="font-medium text-red-500">👎</span> — we’ll schedule it to come back for review using spaced repetition.
+            <span className="font-medium text-destructive">👎</span> — we’ll schedule it to come back for review using spaced repetition.
           </p>
         </div>
       </main>
 
       {/* ── Bottom navigation ── */}
-      <footer className="bg-white/80 backdrop-blur border-t border-gray-100 px-8 py-4">
+      <footer className="bg-background/80 backdrop-blur border-t border-border px-8 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
 
           {/* Track progress toggle */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">Track progress</span>
-            <button
+            <span className="text-xs text-muted-foreground">Track progress</span>
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => setTrackProgress((t) => !t)}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                trackProgress ? 'bg-indigo-500' : 'bg-gray-200'
+              className={`relative inline-flex h-5 w-9 items-center rounded-full p-0 transition-colors focus:outline-none ${
+                trackProgress ? 'bg-primary hover:bg-primary' : 'bg-muted hover:bg-muted'
               }`}
             >
-              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-background shadow-sm transition-transform ${
                 trackProgress ? 'translate-x-4' : 'translate-x-0.5'
               }`} />
-            </button>
+            </Button>
             {trackProgress && total > 0 && (
-              <span className="text-[10px] text-gray-400 tabular-nums">{seen.size}/{total}</span>
+              <span className="text-[10px] text-muted-foreground tabular-nums">{seen.size}/{total}</span>
             )}
           </div>
 
           {/* Prev / Next */}
           <div className="flex items-center gap-3">
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={goPrev}
               disabled={currentIndex === 0}
-              className="w-10 h-10 flex items-center justify-center rounded-full border border-gray-200 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="h-10 w-10 rounded-full border-border text-muted-foreground hover:border-primary/40 hover:text-primary hover:bg-accent disabled:opacity-30"
             >
               <ChevronLeftIcon />
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
               onClick={goNext}
               disabled={currentIndex === total - 1}
-              className="w-10 h-10 flex items-center justify-center rounded-full border border-gray-200 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="h-10 w-10 rounded-full border-border text-muted-foreground hover:border-primary/40 hover:text-primary hover:bg-accent disabled:opacity-30"
             >
               <ChevronRightIcon />
-            </button>
+            </Button>
           </div>
 
           {/* Play / Shuffle */}
           <div className="flex items-center gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={() => setPlaying((p) => !p)}
               aria-label={playing ? 'Pause' : 'Play'}
-              className={`w-9 h-9 flex items-center justify-center rounded-full border transition-colors ${
+              className={`h-9 w-9 rounded-full ${
                 playing
-                  ? 'border-indigo-400 text-indigo-600 bg-indigo-50'
-                  : 'border-gray-200 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'
+                  ? 'border-primary/40 text-primary bg-accent'
+                  : 'border-border text-muted-foreground hover:border-primary/40 hover:text-primary hover:bg-accent'
               }`}
             >
               <PlayIcon />
-            </button>
-            <select
-              value={playInterval}
-              onChange={(e) => setPlayInterval(Number(e.target.value))}
-              className="text-xs border border-gray-200 rounded-md px-1.5 py-1 text-gray-500 bg-white hover:border-indigo-400 focus:outline-none focus:border-indigo-400 cursor-pointer"
-              aria-label="Play speed"
+            </Button>
+            <Select
+              value={String(playInterval)}
+              onValueChange={(v) => setPlayInterval(Number(v))}
             >
-              {[1, 2, 3, 4, 5, 8, 10, 15].map((s) => (
-                <option key={s} value={s}>{s}s</option>
-              ))}
-            </select>
-            <button
+              <SelectTrigger
+                size="sm"
+                aria-label="Play speed"
+                className="h-auto rounded-md border-border px-1.5 py-1 text-xs text-muted-foreground bg-background hover:border-primary/40"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[1, 2, 3, 4, 5, 8, 10, 15].map((s) => (
+                  <SelectItem key={s} value={String(s)}>{s}s</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
               type="button"
+              variant="outline"
               onClick={toggleShuffle}
-              className={`w-9 h-9 flex items-center justify-center rounded-full border transition-colors ${
+              className={`h-9 w-9 rounded-full ${
                 shuffled
-                  ? 'border-indigo-400 text-indigo-600 bg-indigo-50'
-                  : 'border-gray-200 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'
+                  ? 'border-primary/40 text-primary bg-accent'
+                  : 'border-border text-muted-foreground hover:border-primary/40 hover:text-primary hover:bg-accent'
               }`}
             >
               <ShuffleIcon />
-            </button>
+            </Button>
           </div>
 
         </div>
       </footer>
 
       {onGoToTab && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-gray-200 shadow-lg z-20">
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-background/70 backdrop-blur-md border border-border shadow-lg z-20">
           <ToolbarItem icon="📄" label="Materials" onClick={() => onGoToTab('materials')} />
-          <div className="w-px h-6 bg-gray-200" />
+          <div className="w-px h-6 bg-border" />
           <ToolbarItem icon="💬" label="Chat" onClick={() => onGoToTab('chat')} />
-          <div className="w-px h-6 bg-gray-200" />
+          <div className="w-px h-6 bg-border" />
           <ToolbarItem icon="💡" label="Generate" onClick={() => onGoToTab('generate')} />
         </div>
       )}
 
       {notionBanner && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
-          notionBanner.ok ? "bg-gray-900 text-white" : "bg-red-600 text-white"
+          notionBanner.ok ? "bg-foreground text-background" : "bg-destructive text-white"
         }`}>
           {notionBanner.ok ? (
             <>
@@ -810,9 +869,9 @@ export default function FlashcardViewer({
           ) : (
             <span>{notionBanner.message}</span>
           )}
-          <button type="button" onClick={() => setNotionBanner(null)} className="ml-2 opacity-60 hover:opacity-100">
+          <Button type="button" variant="ghost" onClick={() => setNotionBanner(null)} className="h-auto w-auto ml-2 p-0 opacity-60 hover:opacity-100 hover:bg-transparent">
             <XIcon />
-          </button>
+          </Button>
         </div>
       )}
 
@@ -830,7 +889,7 @@ export default function FlashcardViewer({
 
       {gdriveBanner && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
-          gdriveBanner.ok ? "bg-gray-900 text-white" : "bg-red-600 text-white"
+          gdriveBanner.ok ? "bg-foreground text-background" : "bg-destructive text-white"
         }`}>
           {gdriveBanner.ok ? (
             <>
@@ -842,9 +901,9 @@ export default function FlashcardViewer({
           ) : (
             <span>{gdriveBanner.message}</span>
           )}
-          <button type="button" onClick={() => setGdriveBanner(null)} className="ml-2 opacity-60 hover:opacity-100">
+          <Button type="button" variant="ghost" onClick={() => setGdriveBanner(null)} className="h-auto w-auto ml-2 p-0 opacity-60 hover:opacity-100 hover:bg-transparent">
             <XIcon />
-          </button>
+          </Button>
         </div>
       )}
 
@@ -860,5 +919,6 @@ export default function FlashcardViewer({
         />
       )}
     </div>
+    </TooltipProvider>
   );
 }

@@ -4,6 +4,10 @@ import { getMaterialUrl } from './utils/materialUtils';
 import ReportsViewer from './ReportsViewer';
 import GenerationConfirmModal from './components/GenerationConfirmModal.jsx';
 import { PROVIDER_MODELS } from './modelCatalog.js';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 // ─── icons ────────────────────────────────────────────────────────────────────
 
@@ -109,7 +113,7 @@ const FILE_TYPE_MAP = {
   jpeg: { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
   gif:  { label: 'IMG', bg: 'bg-purple-100', text: 'text-purple-600' },
   svg:  { label: 'SVG', bg: 'bg-orange-100', text: 'text-orange-600' },
-  txt:  { label: 'TXT', bg: 'bg-gray-100',   text: 'text-gray-500'   },
+  txt:  { label: 'TXT', bg: 'bg-muted',      text: 'text-muted-foreground' },
 };
 
 function NotionBadgeIcon() {
@@ -129,13 +133,13 @@ function FileTypeBadge({ name, sourceType }) {
 
   if (!mapped && sourceType === 'notion') {
     return (
-      <span className="flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded bg-gray-100 text-gray-600">
+      <span className="flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded bg-muted text-muted-foreground">
         <NotionBadgeIcon />
       </span>
     );
   }
 
-  const style = mapped || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-gray-100', text: 'text-gray-500' };
+  const style = mapped || { label: ext.slice(0, 3).toUpperCase() || 'DOC', bg: 'bg-muted', text: 'text-muted-foreground' };
   return (
     <span className={`flex-shrink-0 inline-flex items-center justify-center w-[22px] h-[16px] rounded text-[7px] font-bold tracking-tight ${style.bg} ${style.text}`}>
       {style.label}
@@ -143,19 +147,33 @@ function FileTypeBadge({ name, sourceType }) {
   );
 }
 
+function SourceName({ name }) {
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="flex-1 truncate min-w-0 text-xs cursor-default">{name}</span>
+        </TooltipTrigger>
+        <TooltipContent side="top">{name}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 function SourceToggle({ checked, onToggle }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       onClick={(e) => { e.stopPropagation(); onToggle(); }}
-      className={`flex-shrink-0 relative inline-flex h-4 w-7 items-center rounded-full transition-colors focus:outline-none ${
-        checked ? 'bg-indigo-500' : 'bg-gray-200'
+      className={`flex-shrink-0 relative inline-flex h-4 w-7 p-0 items-center rounded-full transition-colors focus:outline-none hover:bg-transparent ${
+        checked ? 'bg-primary' : 'bg-muted'
       }`}
     >
-      <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow-sm transition-transform ${
+      <span className={`inline-block h-3 w-3 transform rounded-full bg-background shadow-sm transition-transform ${
         checked ? 'translate-x-3.5' : 'translate-x-0.5'
       }`} />
-    </button>
+    </Button>
   );
 }
 
@@ -666,27 +684,29 @@ export default function Reports({ course, onAddSource }) {
     <div className="flex gap-4 items-start">
 
       {/* ── Sources sidebar ── */}
-      <div className="w-[220px] flex-shrink-0 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden" style={{ minHeight: '520px' }}>
+      <div className="w-[220px] flex-shrink-0 bg-background rounded-2xl border border-border shadow-sm flex flex-col overflow-hidden" style={{ minHeight: '520px' }}>
         <div className="px-4 py-3">
           <div className="flex items-center justify-between gap-3">
-            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Sources</span>
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Sources</span>
             {materials.length > 0 && (
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-gray-400 tabular-nums whitespace-nowrap">{selectedCount} selected</span>
-                <button
+                <span className="text-[10px] text-muted-foreground tabular-nums whitespace-nowrap">{selectedCount} selected</span>
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => setAllMaterialsSelected(true)}
-                  className="text-[10px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors whitespace-nowrap"
+                  className="h-auto w-auto p-0 rounded-md text-[10px] font-medium text-primary hover:text-accent-foreground hover:bg-transparent transition-colors whitespace-nowrap"
                 >
                   All
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => setAllMaterialsSelected(false)}
-                  className="text-[10px] font-medium text-gray-500 hover:text-gray-700 transition-colors whitespace-nowrap"
+                  className="h-auto w-auto p-0 rounded-md text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors whitespace-nowrap"
                 >
                   Clear
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -694,10 +714,10 @@ export default function Reports({ course, onAddSource }) {
 
         <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
           {materialsLoading && (
-            <p className="px-3 py-2 text-[10px] text-gray-400">Loading…</p>
+            <p className="px-3 py-2 text-[10px] text-muted-foreground">Loading…</p>
           )}
           {!materialsLoading && materials.length === 0 && (
-            <p className="px-3 py-2 text-[10px] text-gray-400 italic">No materials yet.</p>
+            <p className="px-3 py-2 text-[10px] text-muted-foreground italic">No materials yet.</p>
           )}
           {(() => {
             const myMats = materials.filter((m) => !m.collaborator);
@@ -707,14 +727,14 @@ export default function Reports({ course, onAddSource }) {
                 {myMats.map((m) => (
                   <div
                     key={m.id}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
-                      m.selected ? 'border-indigo-400' : 'border-transparent'
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-muted transition-colors cursor-default border-l-2 ${
+                      m.selected ? 'border-primary' : 'border-transparent'
                     }`}
                   >
                     <FileTypeBadge name={m.name} sourceType={m.source_type} />
-                    <span className="flex-1 truncate min-w-0 text-xs">{m.name}</span>
+                    <SourceName name={m.name} />
                     {(() => { const url = getMaterialUrl(m); return url ? (
-                      <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 p-0.5 rounded text-gray-300 hover:text-indigo-500 transition-colors" onClick={(e) => e.stopPropagation()}>
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 p-0.5 rounded text-muted-foreground hover:text-primary transition-colors" onClick={(e) => e.stopPropagation()}>
                         <ExternalLinkIcon />
                       </a>
                     ) : null; })()}
@@ -724,19 +744,19 @@ export default function Reports({ course, onAddSource }) {
                 {collabMats.length > 0 && (
                   <>
                     <div className="px-3 pt-2 pb-0.5">
-                      <span className="text-[9px] font-semibold text-gray-300 uppercase tracking-wider">From collaborators</span>
+                      <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">From collaborators</span>
                     </div>
                     {collabMats.map((m) => (
                       <div
                         key={m.id}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors cursor-default border-l-2 ${
-                          m.selected ? 'border-indigo-300' : 'border-transparent'
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-muted transition-colors cursor-default border-l-2 ${
+                          m.selected ? 'border-primary' : 'border-transparent'
                         }`}
                       >
                         <FileTypeBadge name={m.name} sourceType={m.source_type} />
-                        <span className="flex-1 truncate min-w-0 text-xs">{m.name}</span>
+                        <SourceName name={m.name} />
                         {(() => { const url = getMaterialUrl(m); return url ? (
-                          <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 p-0.5 rounded text-gray-300 hover:text-indigo-500 transition-colors" onClick={(e) => e.stopPropagation()}>
+                          <a href={url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 p-0.5 rounded text-muted-foreground hover:text-primary transition-colors" onClick={(e) => e.stopPropagation()}>
                             <ExternalLinkIcon />
                           </a>
                         ) : null; })()}
@@ -750,53 +770,55 @@ export default function Reports({ course, onAddSource }) {
           })()}
         </div>
 
-      <div className="px-3 pb-3 pt-2 flex-shrink-0 border-t border-gray-100 bg-white">
-          <button
+      <div className="px-3 pb-3 pt-2 flex-shrink-0 border-t border-border bg-background">
+          <Button
             type="button"
+            variant="outline"
             onClick={onAddSource}
-          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            className="w-full h-auto flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-foreground hover:bg-muted transition-colors"
           >
             <PlusIcon />
             Add Source
-          </button>
+          </Button>
         </div>
       </div>
 
       {/* ── Report config form ── */}
-      <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 flex flex-col gap-5">
+      <div className="flex-1 min-w-0 bg-background rounded-2xl border border-border shadow-sm p-6 flex flex-col gap-5">
         <div>
-          <h2 className="text-xl font-bold text-gray-900 mb-1">Custom Report Generator</h2>
-          <p className="text-sm text-gray-500">Choose a report template or write your own prompt to generate a document from your sources.</p>
+          <h2 className="text-xl font-bold text-foreground mb-1">Custom Report Generator</h2>
+          <p className="text-sm text-muted-foreground">Choose a report template or write your own prompt to generate a document from your sources.</p>
         </div>
 
         {/* Template grid */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Template</label>
+          <Label className="block text-sm font-medium text-foreground mb-2">Template</Label>
           <div className="grid grid-cols-2 gap-3">
             {TEMPLATES.map(({ id, label, description, Icon }) => {
               const active = template === id;
               return (
-                <button
+                <Button
                   key={id}
                   type="button"
+                  variant="outline"
                   onClick={() => setTemplate(id)}
-                  className={`relative text-left p-4 rounded-xl border transition-colors ${
+                  className={`relative h-auto block text-left p-4 rounded-xl transition-colors whitespace-normal ${
                     active
-                      ? 'bg-indigo-50 border-indigo-300'
-                      : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                      ? 'bg-accent border-ring'
+                      : 'bg-background border-border hover:border-muted-foreground hover:bg-muted'
                   }`}
                 >
                   {active && (
-                    <span className="absolute top-3 right-3 w-3 h-3 rounded-full bg-indigo-600 flex-shrink-0" />
+                    <span className="absolute top-3 right-3 w-3 h-3 rounded-full bg-primary flex-shrink-0" />
                   )}
-                  <span className={`block mb-2 ${active ? 'text-indigo-600' : 'text-gray-400'}`}>
+                  <span className={`block mb-2 ${active ? 'text-primary' : 'text-muted-foreground'}`}>
                     <Icon />
                   </span>
-                  <p className={`text-sm font-semibold mb-0.5 ${active ? 'text-indigo-700' : 'text-gray-800'}`}>
+                  <p className={`text-sm font-semibold mb-0.5 ${active ? 'text-accent-foreground' : 'text-foreground'}`}>
                     {label}
                   </p>
-                  <p className="text-xs text-gray-500 leading-snug">{description}</p>
-                </button>
+                  <p className="text-xs text-muted-foreground leading-snug">{description}</p>
+                </Button>
               );
             })}
           </div>
@@ -805,53 +827,55 @@ export default function Reports({ course, onAddSource }) {
         {/* Custom prompt */}
         {isCustom && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Custom Prompt</label>
-            <textarea
+            <Label className="block text-sm font-medium text-foreground mb-1.5">Custom Prompt</Label>
+            <Textarea
               value={customPrompt}
               onChange={(e) => setCustomPrompt(e.target.value)}
               rows={4}
               placeholder="Describe what you'd like the report to cover. Be as specific as possible — e.g. 'Create a comparative analysis of SLAM algorithms covered in the lectures'"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 transition-colors resize-none"
+              className="w-full min-h-0 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-ring transition-colors resize-none"
             />
-            <p className="text-[10px] text-gray-400 mt-1">{customPrompt.length} characters</p>
+            <p className="text-[10px] text-muted-foreground mt-1">{customPrompt.length} characters</p>
           </div>
         )}
 
         {/* Summary info */}
-        <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-indigo-50 border border-indigo-100">
+        <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-accent border border-accent">
           <SparkleIcon />
-          <div className="text-xs text-indigo-700">
+          <div className="text-xs text-accent-foreground">
             <span>Generating a </span>
             <span className="font-semibold">{activeTemplate?.label}</span>
-            <p className="text-indigo-500 mt-0.5">AI will analyze your selected sources and produce a well-structured document.</p>
+            <p className="text-primary mt-0.5">AI will analyze your selected sources and produce a well-structured document.</p>
           </div>
         </div>
 
         {availableProviders.length > 0 && (
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-2">AI Model</label>
+            <Label className="block text-xs font-medium text-muted-foreground mb-2">AI Model</Label>
             <div className="relative inline-block" ref={providerDropdownRef}>
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => setProviderDropdownOpen((open) => !open)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs text-gray-700 hover:border-indigo-400 transition-colors"
+                className="h-auto flex items-center gap-2 px-3 py-2 rounded-lg bg-background text-xs text-foreground hover:border-ring transition-colors"
               >
                 <span className="font-medium">{MODEL_LABELS[selectedProvider] || selectedProvider}</span>
-                <span className="text-gray-400">·</span>
+                <span className="text-muted-foreground">·</span>
                 <span>{(PROVIDER_MODELS[selectedProvider] || []).find((m) => m.id === selectedModelId)?.label || selectedModelId}</span>
                 <ChevronDownIcon />
-              </button>
+              </Button>
               {providerDropdownOpen && (
-                <div className="absolute z-20 mt-1 left-0 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-[220px] max-h-[280px] overflow-y-auto">
+                <div className="absolute z-20 mt-1 left-0 bg-background border border-border rounded-xl shadow-lg py-1 min-w-[220px] max-h-[280px] overflow-y-auto">
                   {availableProviders.map((provider) => (
                     <div key={provider}>
-                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                         {MODEL_LABELS[provider] || provider}
                       </p>
                       {(PROVIDER_MODELS[provider] || []).map((model) => (
-                        <button
+                        <Button
                           key={model.id}
                           type="button"
+                          variant="ghost"
                           onClick={() => {
                             setSelectedProvider(provider);
                             setSelectedModelId(model.id);
@@ -859,12 +883,12 @@ export default function Reports({ course, onAddSource }) {
                             localStorage.setItem('reports_selected_model_id', model.id);
                             setProviderDropdownOpen(false);
                           }}
-                          className={`w-full text-left px-4 py-1.5 text-xs hover:bg-indigo-50 transition-colors ${
-                            model.id === selectedModelId ? 'text-indigo-600 font-medium' : 'text-gray-700'
+                          className={`w-full h-auto block rounded-none text-left px-4 py-1.5 text-xs hover:bg-accent transition-colors ${
+                            model.id === selectedModelId ? 'text-primary font-medium' : 'text-foreground'
                           }`}
                         >
                           {model.label}
-                        </button>
+                        </Button>
                       ))}
                     </div>
                   ))}
@@ -875,20 +899,20 @@ export default function Reports({ course, onAddSource }) {
         )}
 
         {/* History */}
-        <div className="bg-white rounded-xl border border-gray-200 p-3">
+        <div className="bg-background rounded-xl border border-border p-3">
           <div className="flex items-center justify-between gap-3 mb-2">
-            <p className="text-xs font-semibold text-gray-900">Generated & Drafted Reports</p>
+            <p className="text-xs font-semibold text-foreground">Generated & Drafted Reports</p>
             {historyLoading ? (
-              <p className="text-[10px] text-gray-400">Loading…</p>
+              <p className="text-[10px] text-muted-foreground">Loading…</p>
             ) : (
-              <p className="text-[10px] text-gray-400">{historyGenerations.length} saved</p>
+              <p className="text-[10px] text-muted-foreground">{historyGenerations.length} saved</p>
             )}
           </div>
 
           {historyLoading ? (
-            <p className="text-[10px] text-gray-400">Fetching your reports…</p>
+            <p className="text-[10px] text-muted-foreground">Fetching your reports…</p>
           ) : historyGenerations.length === 0 ? (
-            <p className="text-[10px] text-gray-400 italic">No report history yet.</p>
+            <p className="text-[10px] text-muted-foreground italic">No report history yet.</p>
           ) : (
             <div className="space-y-2">
               {historyGenerations.map((g) => {
@@ -898,10 +922,10 @@ export default function Reports({ course, onAddSource }) {
                   : (isPolling ? 'generating' : (g.status || 'ready'));
                 const badgeClass =
                   status === 'ready'    ? 'border-green-200 bg-green-50 text-green-700'
-                  : status === 'failed' ? 'border-red-200 bg-red-50 text-red-600'
+                  : status === 'failed' ? 'border-destructive/20 bg-destructive/10 text-destructive'
                   : status === 'draft'  ? 'border-amber-200 bg-amber-50 text-amber-800'
                   : status === 'queued' ? 'border-purple-200 bg-purple-50 text-purple-700'
-                  :                       'border-indigo-200 bg-indigo-50 text-indigo-700';
+                  :                       'border-ring bg-accent text-accent-foreground';
 
                 const templateLabel = TEMPLATES.find((t) => t.id === g.template_id)?.label
                   || (g.template_id ? g.template_id : 'Report');
@@ -921,11 +945,11 @@ export default function Reports({ course, onAddSource }) {
                 const createdAt = formatDateTime(g.created_at);
 
                 return (
-                  <div key={g.generation_id} className="rounded-lg border border-gray-200 p-2.5">
+                  <div key={g.generation_id} className="rounded-lg border border-border p-2.5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-xs font-semibold text-gray-900 truncate">{rowTitle}</p>
-                        <p className="text-[10px] text-gray-500 mt-0.5 truncate">
+                        <p className="text-xs font-semibold text-foreground truncate">{rowTitle}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
                           {g.provider || 'provider'} · {g.model_id || 'model'} · {createdAt}
                         </p>
                       </div>
@@ -939,36 +963,38 @@ export default function Reports({ course, onAddSource }) {
                           )}
                           {status}
                         </span>
-                        <button
+                        <Button
                           type="button"
+                          variant="ghost"
                           onClick={() => deleteGeneration(g.generation_id)}
-                          className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                          className="h-auto w-auto p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                           aria-label="Delete"
                         >
                           <TrashIcon />
-                        </button>
+                        </Button>
                       </div>
                     </div>
 
                     <div className="mt-2 flex items-center justify-between gap-3">
-                      <p className="text-[10px] text-gray-500">
-                        Tokens: <span className="font-medium text-gray-700">{tokenText}</span>
+                      <p className="text-[10px] text-muted-foreground">
+                        Tokens: <span className="font-medium text-foreground">{tokenText}</span>
                       </p>
                       <div className="flex items-center gap-2">
                         {status === 'generating' ? (
-                          <p className="text-[10px] text-indigo-600 italic">Processing…</p>
+                          <p className="text-[10px] text-primary italic">Processing…</p>
                         ) : status === 'queued' ? (
                           <p className="text-[10px] text-purple-600 italic">Queued…</p>
                         ) : status === 'ready' ? (
-                          <button
+                          <Button
                             type="button"
+                            variant="outline"
                             onClick={() => reopenFromHistory(g)}
-                            className="px-2 py-1 rounded-lg border border-gray-200 text-[10px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                            className="h-auto px-2 py-1 rounded-lg text-[10px] font-medium text-foreground hover:bg-muted transition-colors"
                           >
                             Open
-                          </button>
+                          </Button>
                         ) : status === 'failed' ? (
-                          <p className="text-[10px] text-red-500 italic truncate max-w-[120px]" title={g.error}>
+                          <p className="text-[10px] text-destructive italic truncate max-w-[120px]" title={g.error}>
                             {g.error ? g.error.slice(0, 40) : 'Failed'}
                           </p>
                         ) : null}
@@ -983,15 +1009,15 @@ export default function Reports({ course, onAddSource }) {
 
         {/* Error */}
         {generateError && (
-          <p className="text-xs text-red-600">{generateError}</p>
+          <p className="text-xs text-destructive">{generateError}</p>
         )}
 
         {/* Generate button — no longer blocked by in-progress generation */}
-        <button
+        <Button
           type="button"
           onClick={() => handleEstimate()}
           disabled={isEstimating || isQueueing || selectedCount === 0 || (isCustom && !customPrompt.trim())}
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+          className="w-full h-auto flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
         >
           {isEstimating ? (
             <>
@@ -1007,12 +1033,12 @@ export default function Reports({ course, onAddSource }) {
               Generate {activeTemplate?.label}
             </>
           )}
-        </button>
+        </Button>
 
-        <p className="text-[10px] text-gray-400 flex items-center gap-1.5">
+        <p className="text-[10px] text-muted-foreground flex items-center gap-1.5">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
           AI responses are based on your selected course materials.{' '}
-          <a href="#" className="text-indigo-500 hover:underline">Learn more</a>
+          <a href="#" className="text-primary hover:underline">Learn more</a>
         </p>
       </div>
 

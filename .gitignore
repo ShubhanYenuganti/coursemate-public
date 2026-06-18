@@ -1,6 +1,7 @@
 .claude
 .codex
 .cursor
+.superpowers/
 .github
 node_modules/
 dist/

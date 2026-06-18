@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
 import { formatDateTime } from "./utils/dateUtils";
 import {
   buildBulkSyncDocTypes,
@@ -8,489 +7,29 @@ import {
   buildSyncFilesPayload,
   removeSyncJob,
 } from "./utils/syncWorkflow";
-
-// ─── constants ───────────────────────────────────────────────────────────────
-
-const DOCUMENT_TYPES = [
-  { value: "general", label: "General / other" },
-  { value: "lecture_slide", label: "Lecture slides" },
-  { value: "lecture_note", label: "Lecture notes" },
-  { value: "discussion_note", label: "Discussion notes" },
-  { value: "reading", label: "Reading" },
-  { value: "hw_instruction", label: "Homework instructions" },
-  { value: "hw_solution", label: "Homework solutions" },
-  { value: "quiz", label: "Quiz" },
-  { value: "exam", label: "Exam" },
-  { value: "coding_spec", label: "Coding project spec" },
-  { value: "code_file", label: "Code file" },
-];
-
-const ACCEPTED_TYPES = new Set([
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "text/plain",
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/svg+xml",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "text/csv",
-]);
-
-const TYPE_META = {
-  "application/pdf": {
-    label: "PDF",
-    color: "text-red-600",
-    bg: "bg-red-50",
-    border: "border-red-200",
-    accent: "bg-red-500",
-  },
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
-    label: "DOCX",
-    color: "text-blue-600",
-    bg: "bg-blue-50",
-    border: "border-blue-200",
-    accent: "bg-blue-500",
-  },
-  "text/plain": {
-    label: "TXT",
-    color: "text-gray-600",
-    bg: "bg-gray-50",
-    border: "border-gray-200",
-    accent: "bg-gray-400",
-  },
-  "image/jpeg": {
-    label: "JPG",
-    color: "text-emerald-600",
-    bg: "bg-emerald-50",
-    border: "border-emerald-200",
-    accent: "bg-emerald-500",
-  },
-  "image/png": {
-    label: "PNG",
-    color: "text-emerald-600",
-    bg: "bg-emerald-50",
-    border: "border-emerald-200",
-    accent: "bg-emerald-500",
-  },
-  "image/gif": {
-    label: "GIF",
-    color: "text-purple-600",
-    bg: "bg-purple-50",
-    border: "border-purple-200",
-    accent: "bg-purple-500",
-  },
-  "image/svg+xml": {
-    label: "SVG",
-    color: "text-orange-600",
-    bg: "bg-orange-50",
-    border: "border-orange-200",
-    accent: "bg-orange-500",
-  },
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
-    label: "XLSX",
-    color: "text-teal-600",
-    bg: "bg-teal-50",
-    border: "border-teal-200",
-    accent: "bg-teal-500",
-  },
-  "text/csv": {
-    label: "CSV",
-    color: "text-teal-600",
-    bg: "bg-teal-50",
-    border: "border-teal-200",
-    accent: "bg-teal-500",
-  },
-};
-
-function getMeta(type) {
-  return (
-    TYPE_META[type] ?? {
-      label: "FILE",
-      color: "text-gray-500",
-      bg: "bg-gray-50",
-      border: "border-gray-200",
-      accent: "bg-gray-400",
-    }
-  );
-}
-
-function fmtSize(bytes) {
-  if (!bytes) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1048576).toFixed(1)} MB`;
-}
-
-let _seq = 0;
-function uid() {
-  return ++_seq;
-}
-
-// ─── small shared pieces ─────────────────────────────────────────────────────
-
-function FileTypeIcon({ type, large = false }) {
-  const { label, color, bg, border } = getMeta(type);
-  const w = large ? 52 : 40;
-  const h = large ? 62 : 48;
-  return (
-    <div
-      className={`flex flex-col items-center justify-between rounded border ${bg} ${border} shrink-0`}
-      style={{ width: w, height: h, padding: "4px 3px 3px" }}
-    >
-      <svg
-        width={large ? 22 : 18}
-        height={large ? 26 : 21}
-        viewBox="0 0 20 24"
-        fill="none"
-        className={color}
-      >
-        <path
-          d="M2 0C.9 0 0 .9 0 2v20c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7L13 0H2Z"
-          fill="currentColor"
-          opacity=".12"
-        />
-        <path d="M13 0v7h7L13 0Z" fill="currentColor" opacity=".35" />
-        <rect
-          x="3"
-          y="11"
-          width="14"
-          height="1.5"
-          rx=".75"
-          fill="currentColor"
-          opacity=".45"
-        />
-        <rect
-          x="3"
-          y="14"
-          width="9"
-          height="1.5"
-          rx=".75"
-          fill="currentColor"
-          opacity=".45"
-        />
-        <rect
-          x="3"
-          y="17"
-          width="11"
-          height="1.5"
-          rx=".75"
-          fill="currentColor"
-          opacity=".45"
-        />
-      </svg>
-      <span
-        className={`font-bold leading-none ${color}`}
-        style={{ fontSize: large ? 10 : 8 }}
-      >
-        {label}
-      </span>
-    </div>
-  );
-}
-
-function Spinner({ size = 16, className = "text-indigo-500" }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      className={`animate-spin ${className}`}
-      style={{ animationDuration: "0.75s" }}
-    >
-      <circle
-        cx="12"
-        cy="12"
-        r="9"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeDasharray="42 14"
-      />
-    </svg>
-  );
-}
-
-function VisibilityToggle({
-  isPublic,
-  onChange,
-  disabled = false,
-  size = "md",
-}) {
-  const track = size === "sm" ? "h-4 w-7" : "h-5 w-9";
-  const knob =
-    size === "sm"
-      ? `h-3 w-3 ${isPublic ? "translate-x-[14px]" : "translate-x-0.5"}`
-      : `h-3.5 w-3.5 ${isPublic ? "translate-x-[18px]" : "translate-x-0.5"}`;
-
-  return (
-    <button
-      type="button"
-      onClick={() => !disabled && onChange(!isPublic)}
-      disabled={disabled}
-      title={
-        isPublic
-          ? "Public — click to make private"
-          : "Private — click to make public"
-      }
-      className={`relative inline-flex shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-1 ${track} ${
-        isPublic ? "bg-indigo-500" : "bg-gray-300"
-      } ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
-    >
-      <span
-        className={`inline-block rounded-full bg-white shadow-sm transform transition-transform duration-200 ${knob}`}
-      />
-    </button>
-  );
-}
-
-function TrashIcon({ size = 16 }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <polyline points="3 6 5 6 21 6" />
-      <path d="M19 6l-1 14H6L5 6" />
-      <path d="M10 11v6M14 11v6" />
-      <path d="M9 6V4h6v2" />
-    </svg>
-  );
-}
-
-// ─── upload drop zone ────────────────────────────────────────────────────────
-
-function UploadZone({ onFiles, disabled }) {
-  const [dragging, setDragging] = useState(false);
-  const inputRef = useRef(null);
-
-  const handleDrop = useCallback(
-    (e) => {
-      e.preventDefault();
-      setDragging(false);
-      if (disabled) return;
-      const files = [...e.dataTransfer.files].filter((f) =>
-        ACCEPTED_TYPES.has(f.type),
-      );
-      if (files.length) onFiles(files);
-    },
-    [onFiles, disabled],
-  );
-
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    if (!disabled) setDragging(true);
-  };
-  const handleDragLeave = () => setDragging(false);
-
-  return (
-    <div className="space-y-2">
-      <div>
-        <h3 className="text-sm font-semibold text-gray-800">Upload Files</h3>
-        <p className="text-xs text-gray-500 mt-0.5">
-          PDF, DOCX, TXT, JPEG, PNG, GIF, SVG, XLSX, CSV
-        </p>
-      </div>
-
-      <div
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onClick={() => !disabled && inputRef.current?.click()}
-        className={`relative flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed py-10 transition-all cursor-pointer select-none
-          ${
-            dragging
-              ? "border-indigo-400 bg-indigo-50"
-              : "border-gray-200 bg-gray-50/60 hover:border-indigo-300 hover:bg-indigo-50/30"
-          }
-          ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-      >
-        <div
-          className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${
-            dragging ? "bg-indigo-200" : "bg-gray-200/80"
-          }`}
-        >
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={dragging ? "text-indigo-600" : "text-gray-500"}
-          >
-            <path d="M12 19V5M5 12l7-7 7 7" />
-          </svg>
-        </div>
-        <p className="text-sm text-gray-500">
-          <span className="text-indigo-600 font-medium">Browse</span> or drag
-          files here
-        </p>
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept={[...ACCEPTED_TYPES].join(",")}
-          className="sr-only"
-          onChange={(e) => {
-            const files = [...e.target.files].filter((f) =>
-              ACCEPTED_TYPES.has(f.type),
-            );
-            if (files.length) onFiles(files);
-            e.target.value = "";
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
-// ─── upload item row ──────────────────────────────────────────────────────────
-
-function UploadItemRow({ item, onVisibilityChange, onDismiss }) {
-  const isLoading = item.status === "uploading";
-  const isDone = item.status === "done";
-  const isError = item.status === "error";
-
-  return (
-    <div
-      className={`rounded-lg border bg-white transition-all ${
-        isError ? "border-red-200 bg-red-50/40" : "border-gray-200"
-      }`}
-    >
-      {/* Main row */}
-      <div className="flex items-center gap-3 px-3 py-2.5">
-        <FileTypeIcon type={item.file.type} />
-
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-800 truncate">
-            {item.file.name}
-          </p>
-          <p className="text-xs text-gray-400">{fmtSize(item.file.size)}</p>
-        </div>
-
-        {/* State indicator */}
-        <div className="flex items-center gap-2 shrink-0">
-          {isLoading && (
-            <span className="flex items-center gap-1.5 text-xs text-indigo-500 font-medium">
-              <Spinner size={13} />
-              Uploading…
-            </span>
-          )}
-          {isDone && (
-            <span className="text-xs text-emerald-600 font-medium">✓ Done</span>
-          )}
-          {isError && (
-            <span
-              className="text-xs text-red-500 font-medium"
-              title={item.error}
-            >
-              Failed
-            </span>
-          )}
-
-          <button
-            type="button"
-            onClick={() => onDismiss(item.id)}
-            className="p-1 rounded text-gray-300 hover:text-gray-500 transition-colors"
-            title="Dismiss"
-          >
-            <TrashIcon size={14} />
-          </button>
-        </div>
-      </div>
-
-      {/* Loading progress banner — shown while uploading */}
-      {isLoading && (
-        <div className="mx-3 mb-2.5 h-1 rounded-full bg-gray-100 overflow-hidden">
-          <div
-            className="h-full bg-indigo-400 rounded-full animate-[loading-bar_1.6s_ease-in-out_infinite]"
-            style={{ width: "60%" }}
-          />
-        </div>
-      )}
-
-      {/* Visibility toggle row — shown only after confirmed done */}
-      {isDone && (
-        <div className="flex items-center justify-between px-3 pb-2.5">
-          <span className="text-xs text-gray-400">
-            {item.visibilityUpdating
-              ? "Saving…"
-              : item.isPublic
-                ? "Public"
-                : "Private"}
-          </span>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-gray-400">Private</span>
-            <VisibilityToggle
-              isPublic={item.isPublic}
-              onChange={(val) => onVisibilityChange(item.id, val)}
-              disabled={item.visibilityUpdating}
-              size="sm"
-            />
-            <span className="text-[11px] text-gray-400">Public</span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── staging item row (pre-upload, doc type selection) ───────────────────────
-
-function StagingItemRow({ item, onDocTypeChange, onUpload, onRemove }) {
-  return (
-    <div className="flex items-center gap-3 rounded-lg border border-indigo-100 bg-indigo-50/30 px-3 py-2.5">
-      <FileTypeIcon type={item.file.type} />
-
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-gray-800 truncate">
-          {item.file.name}
-        </p>
-        <p className="text-xs text-gray-400">{fmtSize(item.file.size)}</p>
-      </div>
-
-      <select
-        value={item.docType}
-        onChange={(e) => onDocTypeChange(item.id, e.target.value)}
-        className="text-xs rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400 shrink-0"
-      >
-        {DOCUMENT_TYPES.map((dt) => (
-          <option key={dt.value} value={dt.value}>
-            {dt.label}
-          </option>
-        ))}
-      </select>
-
-      <button
-        type="button"
-        onClick={() => onUpload(item)}
-        disabled={!item.docType}
-        className="shrink-0 px-3 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        Upload
-      </button>
-
-      <button
-        type="button"
-        onClick={() => onRemove(item.id)}
-        className="p-1 rounded text-gray-300 hover:text-gray-500 transition-colors shrink-0"
-        title="Remove"
-      >
-        <TrashIcon size={14} />
-      </button>
-    </div>
-  );
-}
+import {
+  DOCUMENT_TYPES,
+  ACCEPTED_TYPES,
+  fmtSize,
+  uid,
+} from "./MaterialsPage/constants";
+import { Spinner, TrashIcon } from "./MaterialsPage/atoms";
+import MaterialCard from "./MaterialsPage/MaterialCard";
+import UploadZone from "./MaterialsPage/UploadZone";
+import UploadItemRow from "./MaterialsPage/UploadItemRow";
+import StagingItemRow from "./MaterialsPage/StagingItemRow";
+import SyncModal from "./MaterialsPage/SyncModal";
+import ProgressPanel from "./MaterialsPage/ProgressPanel";
+import FilterBar from "./MaterialsPage/FilterBar";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 function normalizeSyncRows(provider, rawFiles) {
   const sourceType = provider === "notion" ? "notion" : "gdrive";
@@ -504,593 +43,6 @@ function normalizeSyncRows(provider, rawFiles) {
       doc_type: row.doc_type ?? null,
       source_type: sourceType,
     }));
-}
-
-function SyncModal({
-  provider,
-  sourcePointTitle,
-  rows,
-  page,
-  hasMore,
-  loading,
-  toggles,
-  docTypes = {},
-  error,
-  onToggle,
-  onDocTypeChange,
-  onSetAllDocTypes,
-  onPrevPage,
-  onNextPage,
-  onSync,
-  onSyncAll,
-  onClose,
-}) {
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-gray-800">Sync Modal</h3>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {provider === "notion" ? "Notion" : "Google Drive"} ·{" "}
-            {sourcePointTitle || "Source point"}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
-        >
-          Close
-        </button>
-      </div>
-
-      {error && <p className="text-xs text-red-500">{error}</p>}
-
-      {loading ? (
-        <div className="py-8 flex items-center justify-center">
-          <Spinner size={22} className="text-indigo-400" />
-        </div>
-      ) : rows.length === 0 ? (
-        <p className="text-sm text-gray-500 py-6">
-          No files found for this source point.
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {rows.length > 1 && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-indigo-100 bg-indigo-50/50">
-              <span className="text-xs text-gray-500 shrink-0">Set all to:</span>
-              <select
-                defaultValue=""
-                onChange={(e) => {
-                  if (e.target.value) onSetAllDocTypes(e.target.value);
-                }}
-                className="text-xs rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-              >
-                <option value="" disabled>— pick type —</option>
-                {DOCUMENT_TYPES.map((dt) => (
-                  <option key={dt.value} value={dt.value}>{dt.label}</option>
-                ))}
-              </select>
-              <div className="flex-1" />
-              <button
-                type="button"
-                onClick={onSyncAll}
-                disabled={loading}
-                className="shrink-0 px-3 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                Sync all
-              </button>
-            </div>
-          )}
-          {rows.map((row) => {
-            const enabled = toggles[row.external_id] ?? row.sync !== false;
-            return (
-              <div
-                key={row.external_id}
-                className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2.5"
-              >
-                <FileTypeIcon type={row.mime_type} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-gray-800 truncate">
-                    {row.name}
-                  </p>
-                  <p className="text-xs text-gray-400 truncate">
-                    {row.external_id}
-                  </p>
-                </div>
-                <select
-                  value={
-                    docTypes[row.external_id] ?? row.doc_type ?? "general"
-                  }
-                  onChange={(e) =>
-                    onDocTypeChange(row.external_id, e.target.value)
-                  }
-                  className="text-xs rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400 shrink-0"
-                >
-                  {DOCUMENT_TYPES.map((dt) => (
-                    <option key={dt.value} value={dt.value}>
-                      {dt.label}
-                    </option>
-                  ))}
-                </select>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`text-xs font-medium ${enabled ? "text-emerald-600" : "text-gray-400"}`}
-                  >
-                    {enabled ? "Sync ON" : "Sync OFF"}
-                  </span>
-                  <VisibilityToggle
-                    isPublic={enabled}
-                    onChange={(next) => onToggle(row.external_id, next)}
-                    size="sm"
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between pt-1">
-        <div className="text-xs text-gray-400">Page {page}</div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onPrevPage}
-            disabled={page <= 1 || loading}
-            className="px-2.5 py-1 rounded border border-gray-200 text-xs text-gray-600 disabled:opacity-40 hover:bg-gray-50"
-          >
-            Prev
-          </button>
-          <button
-            type="button"
-            onClick={onNextPage}
-            disabled={!hasMore || loading}
-            className="px-2.5 py-1 rounded border border-gray-200 text-xs text-gray-600 disabled:opacity-40 hover:bg-gray-50"
-          >
-            Next
-          </button>
-        </div>
-      </div>
-
-      <div className="pt-1">
-        <button
-          type="button"
-          onClick={onSync}
-          disabled={loading || rows.length === 0}
-          className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-        >
-          Sync
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── source type badge ───────────────────────────────────────────────────────
-
-const SOURCE_TYPE_META = {
-  notion: {
-    label: "Notion",
-    className: "text-purple-600 bg-purple-50 border-purple-200",
-  },
-  gdrive: {
-    label: "Drive",
-    className: "text-green-600 bg-green-50 border-green-200",
-  },
-  upload: {
-    label: "Upload",
-    className: "text-blue-500 bg-blue-50 border-blue-200",
-  },
-  generated: {
-    label: "Generated",
-    className: "text-indigo-600 bg-indigo-50 border-indigo-200",
-  },
-};
-
-function SourceTypeBadge({ sourceType }) {
-  const meta = SOURCE_TYPE_META[sourceType];
-  if (!meta) return null;
-  return (
-    <span
-      className={`inline-flex items-center text-[10px] font-medium border rounded-full px-1.5 py-0.5 leading-none ${meta.className}`}
-    >
-      {meta.label}
-    </span>
-  );
-}
-
-// ─── embed status badge ───────────────────────────────────────────────────────
-
-function EmbedStatusBadge({ status, sourceType }) {
-  // Integration-sourced material with no embed job yet: the poller is still
-  // generating + uploading before it can enqueue the embed step.
-  if (!status && sourceType === "notion") {
-    return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-purple-600 bg-purple-50 border border-purple-200 rounded-full px-1.5 py-0.5 leading-none">
-        <Spinner size={9} className="text-purple-500" />
-        Syncing…
-      </span>
-    );
-  }
-
-  if (!status || status === "done") return null;
-
-  if (status === "pending" || status === "processing") {
-    return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5 leading-none">
-        <Spinner size={9} className="text-amber-500" />
-        {status === "processing" ? "Indexing…" : "Queued"}
-      </span>
-    );
-  }
-  if (status === "failed") {
-    return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-red-500 bg-red-50 border border-red-200 rounded-full px-1.5 py-0.5 leading-none">
-        ✕ Index failed
-      </span>
-    );
-  }
-  if (status === "skipped") {
-    return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-gray-400 bg-gray-50 border border-gray-200 rounded-full px-1.5 py-0.5 leading-none">
-        — Not indexed
-      </span>
-    );
-  }
-  return null;
-}
-
-// ─── progress panel ───────────────────────────────────────────────────────────
-
-function ProgressPanel({
-  syncJobs,
-  uploadItems,
-  embedStatusMap,
-  onClearDone,
-  onCancelSyncJob,
-}) {
-  function deriveSyncStatus(item) {
-    const status = embedStatusMap[item.external_id];
-    if (!status) return { label: "Syncing…", spinner: true, color: "indigo" };
-    switch (status) {
-      case "pending":
-        return { label: "Queued", spinner: true, color: "amber" };
-      case "processing":
-        return { label: "Indexing…", spinner: true, color: "amber" };
-      case "done":
-        return { label: "Done", spinner: false, color: "emerald" };
-      case "failed":
-        return { label: "Failed", spinner: false, color: "red" };
-      case "skipped":
-        return { label: "Skipped", spinner: false, color: "gray" };
-      default:
-        return { label: "Syncing…", spinner: true, color: "indigo" };
-    }
-  }
-
-  const colorClasses = {
-    indigo: "text-indigo-600 bg-indigo-50 border-indigo-200",
-    amber: "text-amber-600 bg-amber-50 border-amber-200",
-    emerald: "text-emerald-600 bg-emerald-50 border-emerald-200",
-    red: "text-red-500 bg-red-50 border-red-200",
-    gray: "text-gray-400 bg-gray-50 border-gray-200",
-  };
-
-  const uploadStatusLabel = (status) => {
-    switch (status) {
-      case "uploading":
-      case "confirming":
-        return { label: status === "uploading" ? "Uploading…" : "Confirming…", spinner: true, color: "indigo" };
-      case "done":
-        return { label: "Done", spinner: false, color: "emerald" };
-      case "error":
-        return { label: "Failed", spinner: false, color: "red" };
-      default:
-        return { label: status, spinner: false, color: "gray" };
-    }
-  };
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-800">Processing</h3>
-        <button
-          type="button"
-          onClick={onClearDone}
-          className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-        >
-          Clear done
-        </button>
-      </div>
-
-      {syncJobs.map((job) => (
-        <div key={job.jobId} className="space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide truncate">
-              {job.provider === "notion" ? "Notion" : "Google Drive"} · {job.label}
-            </p>
-            <button
-              type="button"
-              onClick={() => onCancelSyncJob(job)}
-              className="text-xs text-red-500 hover:text-red-700 font-medium shrink-0"
-            >
-              Give up
-            </button>
-          </div>
-          {job.items.map((item) => {
-            const st = deriveSyncStatus(item);
-            return (
-              <div
-                key={item.external_id}
-                className="flex items-center gap-2.5 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs text-gray-700 truncate">{item.name}</p>
-                </div>
-                <span
-                  className={`inline-flex items-center gap-1 text-[10px] font-medium border rounded-full px-1.5 py-0.5 leading-none shrink-0 ${colorClasses[st.color]}`}
-                >
-                  {st.spinner && <Spinner size={9} className="opacity-80" />}
-                  {st.label}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      ))}
-
-      {uploadItems.length > 0 && (
-        <div className="space-y-1.5">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-            Uploads
-          </p>
-          {uploadItems.map((item) => {
-            const st =
-              item.status === "indexing"
-                ? deriveSyncStatus({ external_id: String(item.materialId) })
-                : uploadStatusLabel(item.status);
-            return (
-              <div
-                key={item.id}
-                className="flex items-center gap-2.5 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs text-gray-700 truncate">
-                    {item.name || item.file?.name || item.id}
-                  </p>
-                </div>
-                <span
-                  className={`inline-flex items-center gap-1 text-[10px] font-medium border rounded-full px-1.5 py-0.5 leading-none shrink-0 ${colorClasses[st.color]}`}
-                >
-                  {st.spinner && <Spinner size={9} className="opacity-80" />}
-                  {st.label}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── material grid card (existing materials) ──────────────────────────────────
-
-function MaterialCard({
-  material,
-  courseId,
-  onVisibilityChange,
-  onDelete,
-  isOwner,
-}) {
-  const [deleting, setDeleting] = useState(false);
-  const navigate = useNavigate();
-
-  const quizGenMatch = material?.file_url?.match(
-    /^quiz:\/\/generation\/(\d+)$/,
-  );
-  const quizGenerationId = quizGenMatch ? quizGenMatch[1] : null;
-  const flashcardsGenMatch = material?.file_url?.match(
-    /^flashcards:\/\/generation\/(\d+)$/,
-  );
-  const flashcardsGenerationId = flashcardsGenMatch
-    ? flashcardsGenMatch[1]
-    : null;
-  const reportGenMatch = material?.file_url?.match(
-    /^report:\/\/generation\/(\d+)$/,
-  );
-  const reportGenerationId = reportGenMatch ? reportGenMatch[1] : null;
-  const driveFallbackUrl = material?.external_id
-    ? `https://drive.google.com/file/d/${material.external_id}/view`
-    : null;
-  const materialOpenUrl =
-    material?.source_type === "gdrive"
-      ? material?.outsourced_url || driveFallbackUrl || material?.download_url
-      : material?.source_type !== "upload" && material?.outsourced_url
-        ? material.outsourced_url
-        : material?.download_url;
-  const isIntegrationMaterial =
-    material?.source_type === "gdrive" || material?.source_type === "notion";
-  const lastEditedAt = isIntegrationMaterial
-    ? formatDateTime(material?.external_last_edited)
-    : "";
-  const lastUpdatedAt = isIntegrationMaterial
-    ? formatDateTime(material?.updated_at)
-    : "";
-
-  return (
-    <div className="flex rounded-lg border border-gray-200 bg-white overflow-hidden hover:shadow-md transition-shadow group">
-      {/* Blue left accent matching PDF_modal_ex.png */}
-      <div className={`w-1 shrink-0 ${getMeta(material.file_type).accent}`} />
-
-      {/* Icon area */}
-      <div className="flex items-center justify-center px-4 py-4 bg-gray-50/70 border-r border-gray-100">
-        <FileTypeIcon type={material.file_type} large />
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 min-w-0 px-4 py-3 flex flex-col justify-center gap-0.5">
-        {quizGenerationId ? (
-          <button
-            type="button"
-            onClick={() =>
-              navigate(`/course/${courseId}/quiz/${quizGenerationId}`)
-            }
-            className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug text-left"
-          >
-            {material.name}
-          </button>
-        ) : flashcardsGenerationId ? (
-          <button
-            type="button"
-            onClick={() =>
-              navigate(
-                `/course/${courseId}/flashcards/${flashcardsGenerationId}`,
-              )
-            }
-            className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug text-left"
-          >
-            {material.name}
-          </button>
-        ) : reportGenerationId ? (
-          <button
-            type="button"
-            onClick={() =>
-              navigate(`/course/${courseId}/reports/${reportGenerationId}`)
-            }
-            className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug text-left"
-          >
-            {material.name}
-          </button>
-        ) : (
-          <a
-            href={materialOpenUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm font-bold text-gray-900 hover:text-indigo-700 hover:underline underline-offset-2 line-clamp-2 leading-snug"
-          >
-            {material.name}
-          </a>
-        )}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <p className="text-xs text-gray-400">
-            {getMeta(material.file_type).label}
-            {material.visibility === "public" ? " · Public" : " · Private"}
-          </p>
-          <SourceTypeBadge sourceType={material.source_type} />
-        </div>
-        {lastEditedAt && (
-          <p className="text-xs text-gray-400">
-            Last Edited At: {lastEditedAt}
-          </p>
-        )}
-        {lastUpdatedAt && (
-          <p className="text-xs text-gray-400">
-            Last Updated At: {lastUpdatedAt}
-          </p>
-        )}
-      </div>
-
-      {/* Actions */}
-      <div className="flex flex-col items-end justify-between px-3 py-3 shrink-0">
-        {isOwner && (
-          <button
-            type="button"
-            onClick={async () => {
-              setDeleting(true);
-              await onDelete(material);
-            }}
-            disabled={deleting}
-            className="p-1 rounded text-gray-300 hover:text-red-500 transition-colors"
-            title="Delete material"
-          >
-            {deleting ? (
-              <Spinner size={14} className="text-gray-400" />
-            ) : (
-              <TrashIcon size={14} />
-            )}
-          </button>
-        )}
-
-        {isOwner && (
-          <div className="flex items-center gap-1 mt-auto">
-            <VisibilityToggle
-              isPublic={material.visibility === "public"}
-              onChange={(val) => onVisibilityChange(material.id, val)}
-              disabled={material.updating}
-              size="sm"
-            />
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── main component ───────────────────────────────────────────────────────────
-
-// ─── filter pill bar ──────────────────────────────────────────────────────────
-
-function FilterBar({ ownerFilter, setOwnerFilter, typeFilter, setTypeFilter }) {
-  const ownerPills = [
-    { id: "all", label: "All materials" },
-    { id: "mine", label: "My materials" },
-  ];
-  const typePills = [
-    { id: "all", label: "All types", prefix: null },
-    { id: "uploaded", label: "Uploaded", prefix: "↑" },
-    { id: "generated", label: "Generated", prefix: "✦" },
-  ];
-
-  return (
-    <div className="flex items-center gap-2 px-2 py-1.5 rounded-full bg-white border border-gray-200 shadow-sm w-fit flex-wrap">
-      {/* Owner group */}
-      <div className="flex items-center gap-0.5">
-        {ownerPills.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => setOwnerFilter(p.id)}
-            className={`px-3.5 py-1 rounded-full text-sm font-medium transition-colors duration-150 focus:outline-none ${
-              ownerFilter === p.id
-                ? "bg-indigo-600 text-white"
-                : "text-gray-500 hover:text-gray-800"
-            }`}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Divider */}
-      <div className="w-px h-5 bg-gray-200" />
-
-      {/* Type group label */}
-      <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest select-none pl-1">
-        Show
-      </span>
-
-      {/* Type group */}
-      <div className="flex items-center gap-0.5">
-        {typePills.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => setTypeFilter(p.id)}
-            className={`flex items-center gap-1 px-3.5 py-1 rounded-full text-sm font-medium transition-colors duration-150 focus:outline-none ${
-              typeFilter === p.id
-                ? "bg-indigo-600 text-white"
-                : "text-gray-500 hover:text-gray-800"
-            }`}
-          >
-            {p.prefix && <span className="text-xs">{p.prefix}</span>}
-            {p.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 // ─── main component ───────────────────────────────────────────────────────────
@@ -1957,8 +909,8 @@ export default function MaterialsPage({
 
   return (
     <div className="space-y-8 pb-4">
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="flex border-b border-gray-100">
+      <div className="bg-background rounded-xl border border-border shadow-sm overflow-hidden">
+        <div className="flex border-b border-border">
           {["gdrive", "notion"].map((p) => (
             <button
               key={p}
@@ -1972,8 +924,8 @@ export default function MaterialsPage({
               }}
               className={`flex-1 py-2.5 text-xs font-medium transition-colors ${
                 syncProvider === p
-                  ? "bg-indigo-50 text-indigo-700 border-b-2 border-indigo-500"
-                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                  ? "bg-accent text-accent-foreground border-b-2 border-primary"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
               }`}
             >
               {p === "gdrive" ? "Google Drive" : "Notion"}
@@ -1983,7 +935,7 @@ export default function MaterialsPage({
         <div className="p-4 space-y-3">
           {/* Search to add a new source point */}
           <div className="relative">
-            <input
+            <Input
               type="text"
               value={sourceSearch}
               onChange={(e) => {
@@ -1995,7 +947,7 @@ export default function MaterialsPage({
                   ? "Search Notion databases to add…"
                   : "Search Drive folders to add…"
               }
-              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+              className="text-sm"
             />
             {sourceSearching && (
               <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
@@ -2004,7 +956,7 @@ export default function MaterialsPage({
             )}
           </div>
           {sourceSearch.trim() !== "" && sourceSearchResults.length > 0 && (
-            <div className="border border-gray-100 rounded-lg overflow-hidden max-h-44 overflow-y-auto">
+            <div className="border border-border rounded-lg overflow-hidden max-h-44 overflow-y-auto">
               {sourceSearchResults.map((r) => {
                 const isDuplicate = providerSourcePoints.some(
                   (sp) => String(sp.external_id) === String(r.id),
@@ -2017,10 +969,10 @@ export default function MaterialsPage({
                       if (!isDuplicate) handleAddSourcePoint(r);
                     }}
                     disabled={isDuplicate}
-                    className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm border-b border-gray-50 last:border-0 transition-colors ${
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm border-b border-border/30 last:border-0 transition-colors ${
                       isDuplicate
-                        ? "text-gray-400 bg-gray-50 cursor-default"
-                        : "text-gray-800 hover:bg-indigo-50 hover:text-indigo-700"
+                        ? "text-muted-foreground bg-accent/50 cursor-default"
+                        : "text-foreground hover:bg-accent hover:text-accent-foreground"
                     }`}
                   >
                     <span className="flex-1 truncate">
@@ -2029,7 +981,7 @@ export default function MaterialsPage({
                         : r.name || "Untitled"}
                     </span>
                     {isDuplicate ? (
-                      <span className="ml-2 text-xs text-gray-400 shrink-0">
+                      <span className="ml-2 text-xs text-muted-foreground shrink-0">
                         Already added
                       </span>
                     ) : (
@@ -2044,34 +996,36 @@ export default function MaterialsPage({
               })}
             </div>
           )}
-          {addError && <p className="text-xs text-red-500">{addError}</p>}
+          {addError && <p className="text-xs text-destructive">{addError}</p>}
           <div className="space-y-2">
             {sourcePointsLoading ? (
               <div className="flex justify-center py-4">
                 <Spinner size={20} />
               </div>
             ) : providerSourcePoints.length === 0 ? (
-              <p className="text-xs text-gray-400 text-center py-4">
+              <p className="text-xs text-muted-foreground text-center py-4">
                 No source points added yet.
               </p>
             ) : (
               providerSourcePoints.map((sp) => (
                 <div
                   key={sp.id}
-                  className="flex items-center gap-2 p-2.5 rounded-lg border border-gray-100 bg-gray-50 group"
+                  className="flex items-center gap-2 p-2.5 rounded-lg border border-border bg-accent/50 group"
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 truncate">
+                    <p className="text-sm font-medium text-foreground truncate">
                       {sp.external_title || sp.external_id}
                     </p>
                     {sp.last_synced_at && (
-                      <p className="text-xs text-gray-400 mt-0.5">
+                      <p className="text-xs text-muted-foreground mt-0.5">
                         Last synced {formatDateTime(sp.last_synced_at)}
                       </p>
                     )}
                   </div>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() =>
                       handleToggleSourcePoint(sp.id, sp.is_active !== false)
                     }
@@ -2080,47 +1034,55 @@ export default function MaterialsPage({
                         ? "Pause ingestion"
                         : "Resume ingestion"
                     }
-                    className={`px-2 py-1 text-xs rounded border transition-colors shrink-0 ${
+                    className={`px-2 py-1 text-xs shrink-0 ${
                       sp.is_active !== false
-                        ? "border-green-200 bg-green-50 text-green-700 hover:bg-red-50 hover:text-red-600 hover:border-red-200"
-                        : "border-gray-200 bg-gray-100 text-gray-500 hover:bg-green-50 hover:text-green-600 hover:border-green-200"
+                        ? "border-green-200 bg-green-50 text-green-700 hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
+                        : "border-border bg-accent/50 text-muted-foreground hover:bg-green-50 hover:text-green-600 hover:border-green-200"
                     }`}
                   >
                     {sp.is_active !== false ? "Active" : "Paused"}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => openSyncModalForId(sp.id)}
-                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-600 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 transition-colors shrink-0"
+                    className="px-2 py-1 text-xs hover:bg-accent hover:text-accent-foreground shrink-0"
                   >
                     Sync
-                  </button>
+                  </Button>
                   {confirmRemoveId === sp.id ? (
                     <div className="flex items-center gap-1 shrink-0">
-                      <button
+                      <Button
                         type="button"
+                        variant="destructive"
+                        size="sm"
                         onClick={() => handleRemoveSourcePoint(sp.id)}
-                        className="px-2 py-1 text-xs rounded bg-red-600 text-white hover:bg-red-700"
+                        className="px-2 py-1 text-xs"
                       >
                         Remove
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
+                        variant="outline"
+                        size="sm"
                         onClick={() => setConfirmRemoveId(null)}
-                        className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-gray-100"
+                        className="px-2 py-1 text-xs"
                       >
                         Cancel
-                      </button>
+                      </Button>
                     </div>
                   ) : (
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
                       onClick={() => setConfirmRemoveId(sp.id)}
-                      className="p-1.5 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                      className="p-1.5 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all shrink-0"
                       title="Remove source point"
                     >
                       <TrashIcon size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               ))
@@ -2130,36 +1092,40 @@ export default function MaterialsPage({
       </div>
 
       {/* Upload section */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+      <div className="bg-background rounded-xl border border-border shadow-sm p-5 space-y-4">
         <UploadZone onFiles={handleFiles} disabled={false} />
 
         {/* Staging queue — doc type selection before upload starts */}
         {stagingItems.length > 0 && (
           <div className="space-y-2">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
               Ready to upload
             </p>
             {stagingItems.length > 1 && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-indigo-100 bg-indigo-50/50">
-                <span className="text-xs text-gray-500 shrink-0">Set all to:</span>
-                <select
-                  defaultValue=""
-                  onChange={(e) => { if (e.target.value) handleSetAllDocTypes(e.target.value); }}
-                  className="text-xs rounded border border-gray-200 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-accent/30">
+                <span className="text-xs text-muted-foreground shrink-0">Set all to:</span>
+                <Select
+                  value="__none__"
+                  onValueChange={(v) => { if (v !== "__none__") handleSetAllDocTypes(v); }}
                 >
-                  <option value="" disabled>— pick type —</option>
-                  {DOCUMENT_TYPES.map((dt) => (
-                    <option key={dt.value} value={dt.value}>{dt.label}</option>
-                  ))}
-                </select>
+                  <SelectTrigger className="h-7 w-36 text-xs shrink-0">
+                    <SelectValue placeholder="— pick type —" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DOCUMENT_TYPES.map((dt) => (
+                      <SelectItem key={dt.value} value={dt.value}>{dt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <div className="flex-1" />
-                <button
+                <Button
                   type="button"
+                  size="sm"
                   onClick={handleUploadAll}
-                  className="shrink-0 px-3 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                  className="shrink-0 text-xs"
                 >
                   Upload all
-                </button>
+                </Button>
               </div>
             )}
             {stagingItems.map((item) => (
@@ -2175,31 +1141,30 @@ export default function MaterialsPage({
         )}
       </div>
 
-      {/* Sync Modal (overlay-style card, rendered when open) */}
-      {syncModalOpen && (
-        <SyncModal
-          provider={syncProvider}
-          sourcePointTitle={
-            selectedSourcePoint?.external_title ||
-            selectedSourcePoint?.external_id
-          }
-          rows={syncRows}
-          page={syncPage}
-          hasMore={syncHasMore}
-          loading={syncRowsLoading}
-          toggles={syncToggles}
-          docTypes={syncDocTypes}
-          error={syncRowsError}
-          onToggle={handleSyncToggle}
-          onDocTypeChange={handleSyncDocTypeChange}
-          onSetAllDocTypes={handleSetAllSyncDocTypes}
-          onPrevPage={() => fetchSyncRowsPage(Math.max(1, syncPage - 1))}
-          onNextPage={() => fetchSyncRowsPage(syncPage + 1)}
-          onSync={handleSyncConfirm}
-          onSyncAll={handleSyncAll}
-          onClose={closeSyncModal}
-        />
-      )}
+      {/* Sync Modal */}
+      <SyncModal
+        open={syncModalOpen}
+        provider={syncProvider}
+        sourcePointTitle={
+          selectedSourcePoint?.external_title ||
+          selectedSourcePoint?.external_id
+        }
+        rows={syncRows}
+        page={syncPage}
+        hasMore={syncHasMore}
+        loading={syncRowsLoading}
+        toggles={syncToggles}
+        docTypes={syncDocTypes}
+        error={syncRowsError}
+        onToggle={handleSyncToggle}
+        onDocTypeChange={handleSyncDocTypeChange}
+        onSetAllDocTypes={handleSetAllSyncDocTypes}
+        onPrevPage={() => fetchSyncRowsPage(Math.max(1, syncPage - 1))}
+        onNextPage={() => fetchSyncRowsPage(syncPage + 1)}
+        onSync={handleSyncConfirm}
+        onSyncAll={handleSyncAll}
+        onClose={closeSyncModal}
+      />
 
       {/* Progress panel — between upload section and materials grid */}
       {(syncJobs.length > 0 || uploadItems.length > 0) && !panelDismissed && (
@@ -2217,11 +1182,11 @@ export default function MaterialsPage({
         {/* Header + filter bar */}
         <div className="flex flex-col gap-3 mb-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-gray-800">
+            <h2 className="text-base font-semibold text-foreground">
               Course Materials
             </h2>
             {!loadingMats && (
-              <span className="text-xs text-gray-400">
+              <span className="text-xs text-muted-foreground">
                 {visibleMaterials.length} file
                 {visibleMaterials.length !== 1 ? "s" : ""}
               </span>
@@ -2237,10 +1202,10 @@ export default function MaterialsPage({
 
         {loadingMats ? (
           <div className="flex items-center justify-center py-16">
-            <Spinner size={28} className="text-indigo-400" />
+            <Spinner size={28} className="text-primary" />
           </div>
         ) : visibleMaterials.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <svg
               width="40"
               height="40"

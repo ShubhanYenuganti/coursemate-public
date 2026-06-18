@@ -2,6 +2,10 @@ import { useState, useMemo } from 'react';
 import { formatDateTime } from './utils/dateUtils';
 import NotionTargetPicker from './components/NotionTargetPicker';
 import GDriveTargetPicker from './components/GDriveTargetPicker';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Card } from '@/components/ui/card';
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -81,7 +85,7 @@ function SpeakerIcon() {
 function MCQContent({ options, selected, onSelect, revealed, correct }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Choose an answer</p>
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Choose an answer</p>
       <div className="grid grid-cols-2 gap-2">
         {(options || []).map((opt, i) => {
           const optText = typeof opt === 'string' ? opt : (opt.text || opt.label || String(opt));
@@ -89,19 +93,20 @@ function MCQContent({ options, selected, onSelect, revealed, correct }) {
           const isCorrect = revealed && (optText === correct || i === correct);
           const isWrong = revealed && isSelected && !isCorrect;
           return (
-            <button
+            <Button
               key={i}
               type="button"
+              variant="outline"
               onClick={() => !revealed && onSelect(optText)}
-              className={`px-4 py-3 rounded-lg border text-sm text-center transition-colors ${
-                isCorrect ? 'border-green-400 bg-green-50 text-green-700' :
-                isWrong   ? 'border-red-300 bg-red-50 text-red-600' :
-                isSelected ? 'border-indigo-400 bg-indigo-50 text-indigo-700' :
-                'border-gray-200 bg-white text-gray-700 hover:border-indigo-300 hover:bg-indigo-50'
+              className={`h-auto px-4 py-3 rounded-lg border text-sm text-center font-normal whitespace-normal transition-colors ${
+                isCorrect ? 'border-green-400 bg-green-50 text-green-700 hover:bg-green-50' :
+                isWrong   ? 'border-red-300 bg-red-50 text-red-600 hover:bg-red-50' :
+                isSelected ? 'border-primary bg-accent text-accent-foreground hover:bg-accent' :
+                'border text-muted-foreground hover:border-primary/50 hover:bg-accent'
               } ${revealed ? 'cursor-default' : 'cursor-pointer'}`}
             >
               {optText}
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -112,26 +117,27 @@ function MCQContent({ options, selected, onSelect, revealed, correct }) {
 function TrueFalseContent({ selected, onSelect, revealed, correct }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Choose an answer</p>
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Choose an answer</p>
       <div className="flex flex-col gap-2">
         {['True', 'False'].map((opt) => {
           const isSelected = selected === opt;
           const isCorrect = revealed && String(correct).toLowerCase() === opt.toLowerCase();
           const isWrong = revealed && isSelected && !isCorrect;
           return (
-            <button
+            <Button
               key={opt}
               type="button"
+              variant="outline"
               onClick={() => !revealed && onSelect(opt)}
-              className={`w-full px-4 py-3 rounded-lg border text-sm text-center transition-colors ${
-                isCorrect ? 'border-green-400 bg-green-50 text-green-700' :
-                isWrong   ? 'border-red-300 bg-red-50 text-red-600' :
-                isSelected ? 'border-indigo-400 bg-indigo-50 text-indigo-700' :
-                'border-gray-200 bg-white text-gray-700 hover:border-indigo-300 hover:bg-indigo-50'
+              className={`w-full h-auto px-4 py-3 rounded-lg border text-sm text-center font-normal transition-colors ${
+                isCorrect ? 'border-green-400 bg-green-50 text-green-700 hover:bg-green-50' :
+                isWrong   ? 'border-red-300 bg-red-50 text-red-600 hover:bg-red-50' :
+                isSelected ? 'border-primary bg-accent text-accent-foreground hover:bg-accent' :
+                'border text-muted-foreground hover:border-primary/50 hover:bg-accent'
               } ${revealed ? 'cursor-default' : 'cursor-pointer'}`}
             >
               {opt}
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -142,27 +148,27 @@ function TrueFalseContent({ selected, onSelect, revealed, correct }) {
 function ShortAnswerContent({ value, onChange, revealed, expectedAnswer, explanation }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Your answer</p>
-      <input
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Your answer</p>
+      <Input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={revealed}
         placeholder="Type your answer here..."
-        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 disabled:bg-gray-50 disabled:text-gray-500 transition-colors"
+        className="w-full rounded-lg text-sm"
       />
       {revealed && (
         <div className="mt-3 space-y-2">
           <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Expected</p>
-            <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-sm text-gray-800 whitespace-pre-wrap">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Expected</p>
+            <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-sm text-foreground whitespace-pre-wrap">
               {expectedAnswer || ''}
             </div>
           </div>
           {explanation && (
             <div>
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Explanation</p>
-              <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700 whitespace-pre-wrap">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Explanation</p>
+              <div className="rounded-lg border bg-muted px-3 py-2 text-sm text-muted-foreground whitespace-pre-wrap">
                 {explanation}
               </div>
             </div>
@@ -176,27 +182,27 @@ function ShortAnswerContent({ value, onChange, revealed, expectedAnswer, explana
 function LongAnswerContent({ value, onChange, revealed, expectedAnswer, explanation }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Your answer</p>
-      <textarea
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Your answer</p>
+      <Textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={revealed}
         placeholder="Type your detailed answer here..."
         rows={4}
-        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 disabled:bg-gray-50 disabled:text-gray-500 transition-colors resize-none"
+        className="w-full rounded-lg text-sm resize-none"
       />
       {revealed && (
         <div className="mt-3 space-y-2">
           <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Expected</p>
-            <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-sm text-gray-800 whitespace-pre-wrap">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Expected</p>
+            <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-sm text-foreground whitespace-pre-wrap">
               {expectedAnswer || ''}
             </div>
           </div>
           {explanation && (
             <div>
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Explanation</p>
-              <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700 whitespace-pre-wrap">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Explanation</p>
+              <div className="rounded-lg border bg-muted px-3 py-2 text-sm text-muted-foreground whitespace-pre-wrap">
                 {explanation}
               </div>
             </div>
@@ -216,18 +222,18 @@ function QuestionCard({ question, index, total, answer, onAnswer, revealed, onRe
   const hasAnswer = answer !== undefined && answer !== null && String(answer).trim() !== '';
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+    <Card className="rounded-2xl border shadow-sm ring-0 p-6 gap-0 [--card-spacing:0px]">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-indigo-600 tracking-widest uppercase">Term</span>
-          <span className="text-gray-400">
+          <span className="text-xs font-bold text-primary tracking-widest uppercase">Term</span>
+          <span className="text-muted-foreground">
             <SpeakerIcon />
           </span>
         </div>
-        <span className="text-xs text-gray-400 tabular-nums">{index + 1} of {total}</span>
+        <span className="text-xs text-muted-foreground tabular-nums">{index + 1} of {total}</span>
       </div>
 
-      <p className="text-sm font-medium text-gray-900 mb-5 leading-relaxed">{questionText}</p>
+      <p className="text-sm font-medium text-foreground mb-5 leading-relaxed">{questionText}</p>
 
       {(type === 'mcq' || type === 'multiple_choice') && (
         <MCQContent
@@ -267,8 +273,8 @@ function QuestionCard({ question, index, total, answer, onAnswer, revealed, onRe
 
       {revealed && isSelectType && question.explanation && (
         <div className="mt-4">
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Explanation</p>
-          <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Explanation</p>
+          <div className="rounded-lg border bg-muted px-3 py-2 text-sm text-muted-foreground">
             {question.explanation}
           </div>
         </div>
@@ -276,16 +282,17 @@ function QuestionCard({ question, index, total, answer, onAnswer, revealed, onRe
 
       {!revealed && (
         <div className="mt-4 text-center">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={onReveal}
-            className="text-xs text-indigo-500 hover:text-indigo-700 hover:underline transition-colors"
+            className="h-auto p-0 text-xs text-primary hover:underline hover:bg-transparent hover:text-primary/80"
           >
             {hasAnswer ? 'Show the answer' : 'Show the answer'}
-          </button>
+          </Button>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -562,11 +569,11 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
   }
 
   const actionButtonClass =
-    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
-  const actionIconClass = "text-gray-500";
+    "rounded-lg border-border bg-background px-3 py-1.5 h-auto gap-1.5 text-xs font-medium text-foreground hover:bg-muted";
+  const actionIconClass = "text-muted-foreground";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-blue-50 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-accent via-purple-50 to-blue-50 flex flex-col">
       {parentGenerationId && (
         <div className="bg-amber-50 border-b border-amber-200 px-8 py-3">
           <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
@@ -574,114 +581,121 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
               New version generated. What would you like to do with the previous version?
             </p>
             <div className="flex items-center gap-2 flex-shrink-0">
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => handleResolve('save_both')}
                 disabled={resolving}
-                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                className="rounded-lg border-amber-300 bg-transparent px-3 py-1.5 h-auto text-xs font-medium text-amber-800 hover:bg-amber-100"
               >
                 Save Both
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => handleResolve('replace')}
                 disabled={resolving}
-                className="px-3 py-1.5 rounded-lg border border-amber-300 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                className="rounded-lg border-amber-300 bg-transparent px-3 py-1.5 h-auto text-xs font-medium text-amber-800 hover:bg-amber-100"
               >
                 Replace Previous
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={() => handleResolve('revert')}
                 disabled={resolving}
-                className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 transition-colors disabled:opacity-50"
+                className="rounded-lg bg-amber-600 px-3 py-1.5 h-auto text-xs font-medium text-white hover:bg-amber-700"
               >
                 Revert
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       )}
       {/* Header */}
-      <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-gray-100 px-8 py-3">
+      <header className="sticky top-0 z-10 bg-background/80 backdrop-blur border-b border-border px-8 py-3">
         <div className="max-w-5xl mx-auto relative flex items-center justify-center">
           <div className="flex items-center gap-10">
             <div className="text-center">
               {viewMode === 'quiz' ? (
                 <>
-                  <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">{answeredCount} / {total}</p>
-                  <p className="text-[10px] text-gray-400 mt-0.5">Quiz Progress</p>
+                  <p className="text-base font-semibold text-foreground tabular-nums leading-none">{answeredCount} / {total}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Quiz Progress</p>
                 </>
               ) : viewMode === 'attempts' ? (
                 <>
-                  <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">{attemptsList.length}</p>
-                  <p className="text-[10px] text-gray-400 mt-0.5">Attempts</p>
+                  <p className="text-base font-semibold text-foreground tabular-nums leading-none">{attemptsList.length}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Attempts</p>
                 </>
               ) : (
                 <>
-                  <p className="text-base font-semibold text-gray-900 tabular-nums leading-none">
+                  <p className="text-base font-semibold text-foreground tabular-nums leading-none">
                     {selectedAttempt ? `${(selectedAttempt.score_percent ?? 0).toFixed(0)}%` : '—'}
                   </p>
-                  <p className="text-[10px] text-gray-400 mt-0.5">Score</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Score</p>
                 </>
               )}
             </div>
 
             <div className="flex items-center gap-2">
               {viewMode !== 'quiz' ? (
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={backToQuiz}
                   className={actionButtonClass}
                 >
                   <span className={actionIconClass}><ArrowLeftIcon /></span>
                   Back to Quiz
-                </button>
+                </Button>
               ) : (
                 <>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => onRegenerate?.(quiz)}
                     className={actionButtonClass}
                   >
                     <span className={actionIconClass}><RefreshIcon /></span>
                     Regenerate
-                  </button>
+                  </Button>
 
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={handleSubmitAttempt}
                     disabled={attemptStatus === 'submitting' || !generationId}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    className={`rounded-lg px-3 py-1.5 h-auto gap-1.5 text-xs font-medium ${
                       attemptStatus === 'submitted'
-                        ? 'border border-green-200 bg-green-50 text-green-700 cursor-default'
+                        ? 'border-green-200 bg-green-50 text-green-700 cursor-default hover:bg-green-50'
                         : attemptStatus === 'error'
-                          ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-50'
-                          : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-                    } disabled:opacity-50 disabled:cursor-not-allowed`}
+                          ? 'border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/10'
+                          : 'border-border bg-background text-foreground hover:bg-muted'
+                    }`}
                   >
                     <span className={actionIconClass}><ClockIcon /></span>
                     {attemptStatus === 'submitting' ? 'Grading…' : 'Submit Attempt'}
-                  </button>
+                  </Button>
 
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={handleSave}
                     disabled={saveStatus === 'saving' || saveStatus === 'saved'}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                    className={`rounded-lg px-3 py-1.5 h-auto gap-1.5 text-xs font-medium ${
                       saveStatus === 'saved'
-                        ? 'border-green-300 text-green-700 bg-green-50 cursor-default'
+                        ? 'border-green-300 text-green-700 bg-green-50 cursor-default hover:bg-green-50'
                         : saveStatus === 'error'
-                          ? 'border-red-300 text-red-600 hover:bg-red-50'
-                          : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                          ? 'border-destructive/40 text-destructive hover:bg-destructive/10'
+                          : 'border-border text-muted-foreground hover:bg-muted'
                     }`}
                   >
                     <span className={actionIconClass}><BookmarkIcon /></span>
                     {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved ✓' : saveStatus === 'error' ? 'Retry Save' : 'Save'}
-                  </button>
+                  </Button>
 
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={handleExportPdf}
                     disabled={!generationId || exportStatus === 'exporting'}
                     className={actionButtonClass}
@@ -689,10 +703,11 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                     <span className={actionIconClass}><DownloadIcon /></span>
                     {exportStatus === 'exporting' ? 'Exporting…' : 'Export'}
                     <span className={actionIconClass}><ChevronDownIcon /></span>
-                  </button>
+                  </Button>
                   {notionConnected && (
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
                       onClick={handleNotionClick}
                       disabled={notionExporting}
                       className={actionButtonClass}
@@ -704,11 +719,12 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                         <rect x="7" y="15" width="8" height="1.5" rx=".75"/>
                       </svg>
                       {notionExporting ? "Exporting…" : "Notion"}
-                    </button>
+                    </Button>
                   )}
                   {gdriveConnected && (
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
                       onClick={handleGDriveClick}
                       disabled={gdriveExporting}
                       className={actionButtonClass}
@@ -722,29 +738,31 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                         <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
                       </svg>
                       {gdriveExporting ? "Exporting…" : "Drive"}
-                    </button>
+                    </Button>
                   )}
                 </>
               )}
 
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={showAttempts}
                 className={actionButtonClass}
               >
                 <span className={actionIconClass}><ClockIcon /></span>
                 Attempts
-              </button>
+              </Button>
             </div>
           </div>
 
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={onClose}
-            className="absolute right-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            className="absolute right-0 h-auto w-auto rounded-lg p-1.5 text-muted-foreground hover:text-foreground"
           >
             <XIcon />
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -755,8 +773,8 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
         {viewMode === 'quiz' && (
           <div className="max-w-2xl mx-auto flex flex-col gap-6">
             {attemptResult && (
-              <div className="mb-2 rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-xs font-semibold text-gray-900">
+              <div className="mb-2 rounded-xl border bg-background px-4 py-3">
+                <div className="text-xs font-semibold text-foreground">
                   Score: {typeof attemptResult.score_percent === 'number' ? `${attemptResult.score_percent.toFixed(0)}%` : 'N/A'}
                 </div>
                 {attemptResult.manual_review_required && (
@@ -767,7 +785,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
               </div>
             )}
             {questions.length === 0 && (
-              <p className="text-center text-sm text-gray-400 py-12">No questions generated.</p>
+              <p className="text-center text-sm text-muted-foreground py-12">No questions generated.</p>
             )}
             {questions.map((q, i) => (
               <QuestionCard
@@ -787,36 +805,37 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
         {/* ── Attempts list ── */}
         {viewMode === 'attempts' && (
           <div className="max-w-2xl mx-auto">
-            <h2 className="text-base font-semibold text-gray-900 mb-4">Past Attempts</h2>
+            <h2 className="text-base font-semibold text-foreground mb-4">Past Attempts</h2>
             {attemptsLoading && (
               <div className="flex justify-center py-12">
-                <div className="w-8 h-8 border-4 border-gray-200 border-t-indigo-500 rounded-full animate-spin" />
+                <div className="w-8 h-8 border-4 border-muted border-t-primary rounded-full animate-spin" />
               </div>
             )}
             {!attemptsLoading && attemptsList.length === 0 && (
-              <p className="text-sm text-gray-400 italic text-center py-12">No attempts yet. Submit the quiz to record your first attempt.</p>
+              <p className="text-sm text-muted-foreground italic text-center py-12">No attempts yet. Submit the quiz to record your first attempt.</p>
             )}
             {!attemptsLoading && attemptsList.map((a) => {
               const score = typeof a.score_percent === 'number' ? a.score_percent : null;
-              const scoreColor = score === null ? 'text-gray-500' : score >= 70 ? 'text-green-600' : score >= 40 ? 'text-amber-600' : 'text-red-600';
+              const scoreColor = score === null ? 'text-muted-foreground' : score >= 70 ? 'text-green-600' : score >= 40 ? 'text-amber-600' : 'text-red-600';
               return (
-                <div key={a.attempt_id} className="flex items-center justify-between gap-4 bg-white rounded-xl border border-gray-200 px-4 py-3 mb-3">
+                <div key={a.attempt_id} className="flex items-center justify-between gap-4 bg-background rounded-xl border px-4 py-3 mb-3">
                   <div>
                     <p className={`text-lg font-bold ${scoreColor}`}>
                       {score !== null ? `${score.toFixed(0)}%` : 'N/A'}
                     </p>
-                    <p className="text-[11px] text-gray-400 mt-0.5">
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
                       {formatDateTime(a.submitted_at)}
                       {a.manual_review_count > 0 && <span className="ml-2 text-amber-600">· {a.manual_review_count} manual review</span>}
                     </p>
                   </div>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => openAttemptDetail(a.attempt_id)}
-                    className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                    className="rounded-lg px-3 py-1.5 h-auto text-xs font-medium text-foreground hover:bg-muted"
                   >
                     Review
-                  </button>
+                  </Button>
                 </div>
               );
             })}
@@ -828,25 +847,25 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
           <div className="max-w-2xl mx-auto flex flex-col gap-4">
             {attemptDetailLoading && (
               <div className="flex justify-center py-12">
-                <div className="w-8 h-8 border-4 border-gray-200 border-t-indigo-500 rounded-full animate-spin" />
+                <div className="w-8 h-8 border-4 border-muted border-t-primary rounded-full animate-spin" />
               </div>
             )}
             {!attemptDetailLoading && selectedAttempt && (
               <>
                 {/* Score summary */}
-                <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center justify-between">
+                <div className="bg-background rounded-xl border px-4 py-3 flex items-center justify-between">
                   <div>
-                    <p className="text-xs text-gray-500">Score</p>
+                    <p className="text-xs text-muted-foreground">Score</p>
                     <p className={`text-2xl font-bold ${
                       typeof selectedAttempt.score_percent === 'number'
                         ? selectedAttempt.score_percent >= 70 ? 'text-green-600' : selectedAttempt.score_percent >= 40 ? 'text-amber-600' : 'text-red-600'
-                        : 'text-gray-500'
+                        : 'text-muted-foreground'
                     }`}>
                       {typeof selectedAttempt.score_percent === 'number' ? `${selectedAttempt.score_percent.toFixed(0)}%` : 'N/A'}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-[11px] text-gray-400">{formatDateTime(selectedAttempt.submitted_at)}</p>
+                    <p className="text-[11px] text-muted-foreground">{formatDateTime(selectedAttempt.submitted_at)}</p>
                     {selectedAttempt.manual_review_count > 0 && (
                       <p className="text-[11px] text-amber-600 mt-0.5">{selectedAttempt.manual_review_count} question(s) need manual review</p>
                     )}
@@ -858,21 +877,21 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                   const hasAnswer = q.user_response !== null && q.user_response !== undefined;
                   const isCorrect = q.is_correct === true;
                   const isSkipped = q.skipped === true || !hasAnswer;
-                  const borderColor = isCorrect ? 'border-green-200' : isSkipped ? 'border-gray-200' : 'border-red-200';
+                  const borderColor = isCorrect ? 'border-green-200' : isSkipped ? 'border' : 'border-red-200';
                   const badge = isCorrect
                     ? <span className="px-2 py-0.5 rounded-full bg-green-50 border border-green-200 text-green-700 text-[10px] font-medium">Correct</span>
                     : isSkipped
-                      ? <span className="px-2 py-0.5 rounded-full bg-gray-50 border border-gray-200 text-gray-500 text-[10px] font-medium">Skipped</span>
+                      ? <span className="px-2 py-0.5 rounded-full bg-muted border text-muted-foreground text-[10px] font-medium">Skipped</span>
                       : <span className="px-2 py-0.5 rounded-full bg-red-50 border border-red-200 text-red-600 text-[10px] font-medium">Incorrect</span>;
 
                   return (
-                    <div key={i} className={`bg-white rounded-2xl border ${borderColor} shadow-sm p-5`}>
+                    <div key={i} className={`bg-background rounded-2xl border ${borderColor} shadow-sm p-5`}>
                       <div className="flex items-start justify-between gap-3 mb-3">
-                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">{i + 1} of {selectedAttempt.per_question.length}</span>
+                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">{i + 1} of {selectedAttempt.per_question.length}</span>
                         {badge}
                       </div>
 
-                      <p className="text-sm font-medium text-gray-900 mb-4 leading-relaxed">{q.question_text}</p>
+                      <p className="text-sm font-medium text-foreground mb-4 leading-relaxed">{q.question_text}</p>
 
                       {/* MCQ options */}
                       {q.question_type === 'mcq' && Array.isArray(q.options) && (
@@ -884,7 +903,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                               <div key={oi} className={`px-3 py-2 rounded-lg border text-sm text-center ${
                                 isOpt ? 'border-green-400 bg-green-50 text-green-700' :
                                 isUserWrong ? 'border-red-300 bg-red-50 text-red-600' :
-                                'border-gray-100 text-gray-600'
+                                'border text-muted-foreground'
                               }`}>
                                 {opt}
                               </div>
@@ -903,7 +922,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                               <div key={opt} className={`flex-1 px-3 py-2 rounded-lg border text-sm text-center ${
                                 isOpt ? 'border-green-400 bg-green-50 text-green-700' :
                                 isUserWrong ? 'border-red-300 bg-red-50 text-red-600' :
-                                'border-gray-100 text-gray-600'
+                                'border text-muted-foreground'
                               }`}>
                                 {opt}
                               </div>
@@ -916,11 +935,11 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                       {(q.question_type === 'sa' || q.question_type === 'la') && (
                         <div className="mb-4 space-y-2">
                           <div>
-                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Your answer</p>
+                            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Your answer</p>
                             <div className={`rounded-lg border px-3 py-2 text-sm whitespace-pre-wrap ${
-                              isSkipped ? 'border-gray-100 text-gray-400 italic' :
-                              isCorrect ? 'border-green-200 bg-green-50/60 text-gray-800' :
-                              'border-red-200 bg-red-50/60 text-gray-800'
+                              isSkipped ? 'border text-muted-foreground italic' :
+                              isCorrect ? 'border-green-200 bg-green-50/60 text-foreground' :
+                              'border-red-200 bg-red-50/60 text-foreground'
                             }`}>
                               {q.user_response || 'No answer given'}
                             </div>
@@ -931,16 +950,16 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
                       {/* Correct answer + explanation for all types */}
                       {!isCorrect && (
                         <div className="mt-1">
-                          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Correct answer</p>
-                          <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-sm text-gray-800">
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Correct answer</p>
+                          <div className="rounded-lg border border-green-200 bg-green-50/70 px-3 py-2 text-sm text-foreground">
                             {q.correct_answer}
                           </div>
                         </div>
                       )}
                       {q.explanation && (
                         <div className="mt-3">
-                          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">Explanation</p>
-                          <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Explanation</p>
+                          <div className="rounded-lg border bg-muted px-3 py-2 text-sm text-muted-foreground">
                             {q.explanation}
                           </div>
                         </div>
@@ -957,7 +976,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
 
       {notionBanner && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
-          notionBanner.ok ? "bg-gray-900 text-white" : "bg-red-600 text-white"
+          notionBanner.ok ? "bg-foreground text-background" : "bg-destructive text-white"
         }`}>
           {notionBanner.ok ? (
             <>
@@ -969,9 +988,9 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
           ) : (
             <span>{notionBanner.message}</span>
           )}
-          <button type="button" onClick={() => setNotionBanner(null)} className="ml-2 opacity-60 hover:opacity-100">
+          <Button type="button" variant="ghost" onClick={() => setNotionBanner(null)} className="h-auto w-auto ml-2 p-0 opacity-60 hover:opacity-100 hover:bg-transparent">
             <XIcon />
-          </button>
+          </Button>
         </div>
       )}
 
@@ -989,7 +1008,7 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
 
       {gdriveBanner && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${
-          gdriveBanner.ok ? "bg-gray-900 text-white" : "bg-red-600 text-white"
+          gdriveBanner.ok ? "bg-foreground text-background" : "bg-destructive text-white"
         }`}>
           {gdriveBanner.ok ? (
             <>
@@ -1001,9 +1020,9 @@ export default function QuizViewer({ quiz, courseId, generationId, parentGenerat
           ) : (
             <span>{gdriveBanner.message}</span>
           )}
-          <button type="button" onClick={() => setGdriveBanner(null)} className="ml-2 opacity-60 hover:opacity-100">
+          <Button type="button" variant="ghost" onClick={() => setGdriveBanner(null)} className="h-auto w-auto ml-2 p-0 opacity-60 hover:opacity-100 hover:bg-transparent">
             <XIcon />
-          </button>
+          </Button>
         </div>
       )}
 
